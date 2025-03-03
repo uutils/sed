@@ -1,4 +1,4 @@
-// This file is part of the uutils procps package.
+// This file is part of the uutils sed package.
 //
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
@@ -140,7 +140,7 @@ fn gen_completions<T: uucore::Args>(
     args: impl Iterator<Item = OsString>,
     util_map: &UtilityMap<T>,
 ) -> ! {
-    let all_utilities: Vec<_> = std::iter::once("procps")
+    let all_utilities: Vec<_> = std::iter::once("sed")
         .chain(util_map.keys().copied())
         .collect();
 
@@ -161,8 +161,8 @@ fn gen_completions<T: uucore::Args>(
     let utility = matches.get_one::<String>("utility").unwrap();
     let shell = *matches.get_one::<Shell>("shell").unwrap();
 
-    let mut command = if utility == "procps" {
-        gen_procps_app(util_map)
+    let mut command = if utility == "sed" {
+        gen_sed_app(util_map)
     } else {
         util_map.get(utility).unwrap().1()
     };
@@ -178,7 +178,7 @@ fn gen_manpage<T: uucore::Args>(
     args: impl Iterator<Item = OsString>,
     util_map: &UtilityMap<T>,
 ) -> ! {
-    let all_utilities: Vec<_> = std::iter::once("procps")
+    let all_utilities: Vec<_> = std::iter::once("sed")
         .chain(util_map.keys().copied())
         .collect();
 
@@ -193,8 +193,8 @@ fn gen_manpage<T: uucore::Args>(
 
     let utility = matches.get_one::<String>("utility").unwrap();
 
-    let command = if utility == "procps" {
-        gen_procps_app(util_map)
+    let command = if utility == "sed" {
+        gen_sed_app(util_map)
     } else {
         util_map.get(utility).unwrap().1()
     };
@@ -206,8 +206,8 @@ fn gen_manpage<T: uucore::Args>(
     process::exit(0);
 }
 
-fn gen_procps_app<T: uucore::Args>(util_map: &UtilityMap<T>) -> Command {
-    let mut command = Command::new("procps");
+fn gen_sed_app<T: uucore::Args>(util_map: &UtilityMap<T>) -> Command {
+    let mut command = Command::new("sed");
     for (name, (_, sub_app)) in util_map {
         // Recreate a small subcommand with only the relevant info
         // (name & short description)

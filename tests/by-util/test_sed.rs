@@ -11,6 +11,20 @@ fn test_invalid_arg() {
 }
 
 #[test]
-fn test_sed() {
-    new_ucmd!().succeeds();
+fn test_debug() {
+    new_ucmd!().arg("--debug").arg("").succeeds();
+}
+
+#[test]
+fn test_missing_script_argument() {
+    new_ucmd!()
+        .fails()
+        .code_is(1)
+        .stderr_contains("the following required arguments were not provided")
+        .stderr_contains("<script>");
+}
+
+#[test]
+fn test_required_script_argument() {
+    new_ucmd!().arg("").succeeds().code_is(0);
 }

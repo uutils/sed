@@ -7,7 +7,7 @@
 
 # sed
 
-Rust reimplementation of the sed project
+Rust reimplementation of the [sed utility](https://pubs.opengroup.org/onlinepubs/9799919799/).
 
 ## Installation
 

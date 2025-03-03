@@ -2350,7 +2350,7 @@ pub fn whoami() -> String {
 /// Add prefix 'g' for `util_name` if not on linux
 #[cfg(unix)]
 pub fn host_name_for(util_name: &str) -> Cow<str> {
-    // In some environments, e.g. macOS/freebsd, the GNU sed are prefixed with "g"
+    // In some environments, e.g. macOS/freebsd, the GNU sed is prefixed with "g"
     // to not interfere with the BSD counterparts already in `$PATH`.
     #[cfg(not(target_os = "linux"))]
     {
@@ -2365,15 +2365,12 @@ pub fn host_name_for(util_name: &str) -> Cow<str> {
     util_name.into()
 }
 
-// GNU procps version 8.32 is the reference version since it is the latest version and the
-// GNU test suite in "procps/.github/workflows/GnuTests.yml" runs against it.
-// However, here 8.30 was chosen because right now there's no ubuntu image for the github actions
-// CICD available with a higher version than 8.30.
-// GNU procps versions from the CICD images for comparison:
-// ubuntu-2004: 8.30 (latest)
-// ubuntu-1804: 8.28
-// macos-latest: 8.32
-const VERSION_MIN: &str = "8.30"; // minimum Version for the reference `coreutil` in `$PATH`
+// TODO: Document reference version and test suite.
+// GNU sed versions from the CICD images for comparison:
+// ubuntu-2004: XXX (latest)
+// ubuntu-1804: XXX
+// macos-latest: XXX
+const VERSION_MIN: &str = "XXX"; // minimum Version for the reference `coreutil` in `$PATH`
 
 const UUTILS_WARNING: &str = "uutils-tests-warning";
 const UUTILS_INFO: &str = "uutils-tests-info";
@@ -2384,7 +2381,7 @@ const UUTILS_INFO: &str = "uutils-tests-info";
 ///     * the version cannot be parsed
 ///     * the version is too low
 ///
-/// This is used by `expected_result` to check if the procps version is >= `VERSION_MIN`.
+/// This is used by `expected_result` to check if the sed version is >= `VERSION_MIN`.
 /// It makes sense to use this manually in a test if a feature
 /// is tested that was introduced after `VERSION_MIN`
 ///
@@ -2410,7 +2407,7 @@ pub fn check_coreutil_version(
 ) -> std::result::Result<String, String> {
     // example:
     // $ id --version | head -n 1
-    // id (GNU procps) 8.32.162-4eda
+    // id (GNU sed) 8.32.162-4eda
 
     let util_name = &host_name_for(util_name);
     log_info("run", format!("{util_name} --version"));
@@ -2429,9 +2426,9 @@ pub fn check_coreutil_version(
         .map_or_else(
             || Err(format!("{UUTILS_WARNING}: unexpected output format for reference coreutil: '{util_name} --version'")),
             |s| {
-                if s.contains(&format!("(GNU procps) {version_expected}")) {
+                if s.contains(&format!("(GNU sed) {version_expected}")) {
                     Ok(format!("{UUTILS_INFO}: {s}"))
-                } else if s.contains("(GNU procps)") {
+                } else if s.contains("(GNU sed)") {
                     let version_found = parse_coreutil_version(s);
                     let version_expected = version_expected.parse::<f32>().unwrap_or_default();
                     if version_found > version_expected {
@@ -2439,13 +2436,13 @@ pub fn check_coreutil_version(
                     } else {
                     Err(format!("{UUTILS_WARNING}: version for the reference coreutil '{util_name}' does not match; expected: {version_expected}, found: {version_found}")) }
                 } else {
-                    Err(format!("{UUTILS_WARNING}: no procps version string found for reference procps '{util_name} --version'"))
+                    Err(format!("{UUTILS_WARNING}: no sed version string found for reference sed '{util_name} --version'"))
                 }
             },
         )
 }
 
-// simple heuristic to parse the procps SemVer string, e.g. "id (GNU procps) 8.32.263-0475"
+// simple heuristic to parse the sed SemVer string, e.g. "id (GNU sed) 8.32.263-0475"
 fn parse_coreutil_version(version_string: &str) -> f32 {
     version_string
         .split_whitespace()
@@ -2459,9 +2456,9 @@ fn parse_coreutil_version(version_string: &str) -> f32 {
         .unwrap_or_default()
 }
 
-/// This runs the GNU procps `util_name` binary in `$PATH` in order to
+/// This runs the GNU sed `util_name` binary in `$PATH` in order to
 /// dynamically gather reference values on the system.
-/// If the `util_name` in `$PATH` doesn't include a procps version string,
+/// If the `util_name` in `$PATH` doesn't include a sed version string,
 /// or the version is too low, this returns an error and the test should be skipped.
 ///
 /// Example:
@@ -2519,7 +2516,7 @@ pub fn expected_result(ts: &TestScenario, args: &[&str]) -> std::result::Result<
 
 /// This is a convenience wrapper to run a ucmd with root permissions.
 /// It can be used to test programs when being root is needed
-/// This runs `sudo -E --non-interactive target/debug/procps util_name args`
+/// This runs `sudo -E --non-interactive target/debug/sed util_name args`
 /// This is primarily designed to run in an environment where whoami is in $path
 /// and where non-interactive sudo is possible.
 /// To check if i) non-interactive sudo is possible and ii) if sudo works, this runs:
@@ -2968,27 +2965,24 @@ mod tests {
     fn test_parse_coreutil_version() {
         use std::assert_eq;
         assert_eq!(
-            parse_coreutil_version("id (GNU procps) 9.0.123-0123").to_string(),
+            parse_coreutil_version("id (GNU sed) 9.0.123-0123").to_string(),
             "9"
         );
         assert_eq!(
-            parse_coreutil_version("id (GNU procps) 8.32.263-0475").to_string(),
+            parse_coreutil_version("id (GNU sed) 8.32.263-0475").to_string(),
             "8.32"
         );
         assert_eq!(
-            parse_coreutil_version("id (GNU procps) 8.25.123-0123").to_string(),
+            parse_coreutil_version("id (GNU sed) 8.25.123-0123").to_string(),
             "8.25"
         );
+        assert_eq!(parse_coreutil_version("id (GNU sed) 9.0").to_string(), "9");
         assert_eq!(
-            parse_coreutil_version("id (GNU procps) 9.0").to_string(),
-            "9"
-        );
-        assert_eq!(
-            parse_coreutil_version("id (GNU procps) 8.32").to_string(),
+            parse_coreutil_version("id (GNU sed) 8.32").to_string(),
             "8.32"
         );
         assert_eq!(
-            parse_coreutil_version("id (GNU procps) 8.25").to_string(),
+            parse_coreutil_version("id (GNU sed) 8.25").to_string(),
             "8.25"
         );
     }
