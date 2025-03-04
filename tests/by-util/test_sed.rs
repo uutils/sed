@@ -16,15 +16,29 @@ fn test_debug() {
 }
 
 #[test]
+fn test_silent_alias() {
+    new_ucmd!().arg("--silent").arg("").succeeds();
+}
+
+#[test]
 fn test_missing_script_argument() {
     new_ucmd!()
         .fails()
         .code_is(1)
-        .stderr_contains("the following required arguments were not provided")
-        .stderr_contains("<script>");
+        .stderr_contains("missing script");
 }
 
 #[test]
-fn test_required_script_argument() {
-    new_ucmd!().arg("").succeeds().code_is(0);
+fn test_positional_script_ok() {
+    new_ucmd!().arg("l").succeeds().code_is(0);
+}
+
+#[test]
+fn test_e_script_ok() {
+    new_ucmd!().arg("-e").arg("l").succeeds();
+}
+
+#[test]
+fn test_f_script_ok() {
+    new_ucmd!().arg("-f").arg("/dev/null").succeeds();
 }
