@@ -23,11 +23,9 @@ use uucore::format_usage;
 const ABOUT: &str = "Stream editor for filtering and transforming text";
 const USAGE: &str = "sed [OPTION]... [script] [file]...";
 
-/*
- * Iterate through script and file arguments specified in matches and
- * return vectors of all scripts and input files in the specified order.
- * If no script is specified fail with "missing script" error.
- */
+// Iterate through script and file arguments specified in matches and
+// return vectors of all scripts and input files in the specified order.
+// If no script is specified fail with "missing script" error.
 fn get_scripts_files(matches: &ArgMatches) -> UResult<(Vec<ScriptValue>, Vec<PathBuf>)> {
     let mut indexed_scripts: Vec<(usize, ScriptValue)> = Vec::new();
     let mut files: Vec<PathBuf> = Vec::new();
@@ -101,10 +99,10 @@ fn get_scripts_files(matches: &ArgMatches) -> UResult<(Vec<ScriptValue>, Vec<Pat
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
     let (scripts, files) = get_scripts_files(&matches)?;
-    let _context = build_context(&matches);
+    let mut context = build_context(&matches);
 
-    let executable = compile(scripts)?;
-    process(executable, files)?;
+    let executable = compile(scripts, &mut context)?;
+    process(executable, files, &mut context)?;
     Ok(())
 }
 
