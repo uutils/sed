@@ -8,15 +8,9 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+use crate::command::ScriptValue;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::path::PathBuf;
-
-#[derive(Debug, Clone)]
-pub enum ScriptValue {
-    StringVal(String),
-    PathVal(PathBuf),
-}
 
 pub struct ScriptLineProvider {
     sources: Vec<ScriptValue>,
