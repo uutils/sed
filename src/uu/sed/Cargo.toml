@@ -16,6 +16,7 @@ categories = ["command-line-utilities"]
 uucore = { workspace = true }
 clap = { workspace = true }
 regex = { workspace = true }
+tempfile = { workspace = true }
 
 [lib]
 path = "src/sed.rs"
