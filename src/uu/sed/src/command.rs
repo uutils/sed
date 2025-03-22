@@ -117,25 +117,6 @@ enum CommandData {
 }
 
 /*
- * Types of command arguments recognized by the parser
- */
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CommandArgs {
-    Empty,      // d D g G h H l n N p P q x = \0
-    Text,       // a c i
-    NonSelect,  // !
-    Group,      // {
-    EndGroup,   // }
-    Comment,    // #
-    Branch,     // b t
-    Label,      // :
-    ReadFile,   // r
-    WriteFile,  // w
-    Substitute, // s
-    Translate,  // y
-}
-
-/*
  * Structure containing things to append before a line is read
  */
 #[derive(Debug)]
