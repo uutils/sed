@@ -1,7 +1,10 @@
 // Definitions for the compiled code data structures
 //
-// This file is part of the uutils sed package.
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Diomidis Spinellis
 //
+// This file is part of the uutils sed package.
+// It is licensed under the MIT License.
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -12,6 +15,29 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf; // For file descriptors and equivalent
+
+// Compilation and processing context
+#[derive(Debug)]
+pub struct Context {
+    // Input file/string and position
+    pub input: String,
+    pub line: usize,
+
+    // Command-line flags with corresponding names
+    pub all_output_files: bool,
+    pub debug: bool,
+    pub regexp_extended: bool,
+    pub follow_symlinks: bool,
+    pub in_place: bool,
+    pub in_place_suffix: Option<String>,
+    pub length: usize,
+    pub quiet: bool,
+    pub posix: bool,
+    pub separate: bool,
+    pub sandbox: bool,
+    pub unbuffered: bool,
+    pub null_data: bool,
+}
 
 // The specification of a script: through a string or a file
 #[derive(Debug, PartialEq)]

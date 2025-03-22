@@ -1,5 +1,10 @@
-// This file is part of the uutils sed package.
+// Program entry point and CLI processing
 //
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Diomidis Spinellis
+//
+// This file is part of the uutils sed package.
+// It is licensed under the MIT License.
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -7,7 +12,7 @@ pub mod command;
 pub mod compiler;
 pub mod processor;
 
-use crate::command::ScriptValue;
+use crate::command::{Context, ScriptValue};
 use crate::compiler::compile;
 use crate::processor::process;
 use clap::{arg, Arg, ArgMatches, Command};
@@ -96,6 +101,8 @@ fn get_scripts_files(matches: &ArgMatches) -> UResult<(Vec<ScriptValue>, Vec<Pat
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
     let (scripts, files) = get_scripts_files(&matches)?;
+    let _context = build_context(&matches);
+
     let executable = compile(scripts)?;
     process(executable, files)?;
     Ok(())
@@ -123,7 +130,8 @@ pub fn uu_app() -> Command {
                 .short('E')
                 .long("regexp-extended")
                 .short_alias('r')
-                .help("Use extended regular expressions."),
+                .help("Use extended regular expressions.")
+                .action(clap::ArgAction::SetTrue),
             arg!(-e --expression <SCRIPT> "Add script to executed commands.")
                 .action(clap::ArgAction::Append),
             // Access with .get_many::<PathBuf>("file")
@@ -158,6 +166,38 @@ pub fn uu_app() -> Command {
                 .help("Separate lines by NUL characters.")
                 .action(clap::ArgAction::SetTrue),
         ])
+}
+
+// Parse CLI flag arguments and return a Context struct based on them
+fn build_context(matches: &ArgMatches) -> Context {
+    Context {
+        input: String::new(),
+        line: 1,
+
+        // Flags
+        all_output_files: matches.get_flag("all-output-files"),
+        debug: matches.get_flag("debug"),
+        regexp_extended: matches.get_flag("regexp-extended"),
+        follow_symlinks: matches.get_flag("follow-symlinks"),
+        in_place: matches.contains_id("in-place"),
+        in_place_suffix: matches.get_one::<String>("in-place").and_then(|s| {
+            if s.is_empty() {
+                None
+            } else {
+                Some(s.clone())
+            }
+        }),
+        length: matches
+            .get_one::<u32>("length")
+            .map(|v| *v as usize)
+            .unwrap_or(70),
+        quiet: matches.get_flag("quiet"),
+        posix: matches.get_flag("posix"),
+        separate: matches.get_flag("separate"),
+        sandbox: matches.get_flag("sandbox"),
+        unbuffered: matches.get_flag("unbuffered"),
+        null_data: matches.get_flag("null-data"),
+    }
 }
 
 #[cfg(test)]
@@ -256,5 +296,88 @@ mod tests {
             vec![ScriptValue::StringVal("s/foo/bar/".to_string())]
         );
         assert_eq!(files, vec![PathBuf::from("-")]); // Stdin should be used
+    }
+
+    fn test_matches(args: &[&str]) -> ArgMatches {
+        uu_app().get_matches_from(["sed"].into_iter().chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn test_defaults() {
+        let matches = test_matches(&[]);
+        let ctx = build_context(&matches);
+
+        assert_eq!(ctx.input.len(), 0);
+        assert_eq!(ctx.line, 1);
+        assert!(!ctx.all_output_files);
+        assert!(!ctx.debug);
+        assert!(!ctx.regexp_extended);
+        assert!(!ctx.follow_symlinks);
+        assert!(!ctx.in_place);
+        assert_eq!(ctx.in_place_suffix, None);
+        assert_eq!(ctx.length, 70);
+        assert!(!ctx.quiet);
+        assert!(!ctx.posix);
+        assert!(!ctx.separate);
+        assert!(!ctx.sandbox);
+        assert!(!ctx.unbuffered);
+        assert!(!ctx.null_data);
+    }
+
+    #[test]
+    fn test_all_flags() {
+        let matches = test_matches(&[
+            "--all-output-files",
+            "--debug",
+            "-E",
+            "--follow-symlinks",
+            "-i",
+            "-l",
+            "80",
+            "-n",
+            "--posix",
+            "-s",
+            "--sandbox",
+            "-u",
+            "-z",
+        ]);
+
+        let ctx = build_context(&matches);
+
+        assert_eq!(ctx.input.len(), 0);
+        assert!(ctx.all_output_files);
+        assert!(ctx.debug);
+        assert!(ctx.regexp_extended);
+        assert!(ctx.follow_symlinks);
+        assert!(ctx.in_place);
+        assert!(ctx.in_place_suffix.is_none());
+        assert_eq!(ctx.length, 80);
+        assert!(ctx.quiet);
+        assert!(ctx.posix);
+        assert!(ctx.separate);
+        assert!(ctx.sandbox);
+        assert!(ctx.unbuffered);
+        assert!(ctx.null_data);
+    }
+
+    #[test]
+    fn test_in_place_with_suffix() {
+        let matches = test_matches(&["-i", ".bak"]);
+        let ctx = build_context(&matches);
+
+        assert!(ctx.in_place);
+        assert_eq!(ctx.in_place_suffix, Some(".bak".to_string()));
+    }
+
+    #[test]
+    fn test_length_default_and_custom() {
+        let matches_default = test_matches(&[]);
+        let matches_custom = test_matches(&["-l", "120"]);
+
+        let ctx_default = build_context(&matches_default);
+        let ctx_custom = build_context(&matches_custom);
+
+        assert_eq!(ctx_default.length, 70);
+        assert_eq!(ctx_custom.length, 120);
     }
 }
