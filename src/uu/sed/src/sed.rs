@@ -11,6 +11,7 @@
 pub mod command;
 pub mod compiler;
 pub mod processor;
+pub mod script_line_provider;
 
 use crate::command::{Context, ScriptValue};
 use crate::compiler::compile;
