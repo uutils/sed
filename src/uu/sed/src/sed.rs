@@ -118,7 +118,6 @@ pub fn uu_app() -> Command {
                 .short('a')
                 .help("Create or truncate all output files before processing.")
                 .action(clap::ArgAction::SetTrue),
-            arg!(-b --binary "Treat files as binary: do not process CR+LFs."),
             arg!(--debug "Annotate program execution."),
             Arg::new("regexp-extended")
                 .short('E')
