@@ -19,10 +19,6 @@ use std::path::PathBuf; // For file descriptors and equivalent
 // Compilation and processing context
 #[derive(Debug)]
 pub struct Context {
-    // Input file/string and position
-    pub input: String,
-    pub line: usize,
-
     // Command-line flags with corresponding names
     pub all_output_files: bool,
     pub debug: bool,

@@ -28,6 +28,8 @@ enum State {
     Active {
         index: usize,
         reader: Box<dyn BufRead>,
+        input_name: String,
+        line_number: usize,
     },
     Done,
 }
@@ -40,20 +42,38 @@ impl ScriptLineProvider {
         }
     }
 
+    pub fn get_line_number(&self) -> usize {
+        match &self.state {
+            State::Active { line_number, .. } => *line_number,
+            _ => 0,
+        }
+    }
+
+    pub fn get_input_name(&self) -> &str {
+        match &self.state {
+            State::Active { input_name, .. } => input_name.as_str(),
+            _ => "",
+        }
+    }
+
     pub fn next_line(&mut self) -> io::Result<Option<String>> {
         let mut line = String::new();
 
         loop {
             let advance = match &mut self.state {
-                State::NotStarted => {
-                    Some(0)
-                }
-                State::Active { index, reader } => {
+                State::NotStarted => Some(0),
+                State::Active {
+                    index,
+                    reader,
+                    line_number,
+                    ..
+                } => {
                     line.clear();
                     let bytes = reader.read_line(&mut line)?;
                     if bytes == 0 {
                         Some(*index + 1) // finished reading this source
                     } else {
+                        *line_number += 1;
                         return Ok(Some(line));
                     }
                 }
@@ -74,12 +94,23 @@ impl ScriptLineProvider {
             return Ok(());
         }
 
+        fn truncate_with_ellipsis(input: &str) -> String {
+            const MAX_LEN: usize = 20;
+            if input.chars().count() <= MAX_LEN {
+                input.to_string()
+            } else {
+                input.chars().take(MAX_LEN).collect::<String>() + "..."
+            }
+        }
+
         match &self.sources[next_index] {
             ScriptValue::StringVal(s) => {
                 let cursor = std::io::Cursor::new(s.clone());
                 self.state = State::Active {
                     index: next_index,
                     reader: Box::new(BufReader::new(cursor)),
+                    input_name: truncate_with_ellipsis(s),
+                    line_number: 0,
                 };
             }
             ScriptValue::PathVal(p) => {
@@ -87,12 +118,16 @@ impl ScriptLineProvider {
                     self.state = State::Active {
                         index: next_index,
                         reader: Box::new(BufReader::new(io::stdin())),
+                        input_name: "<stdin>".to_string(),
+                        line_number: 0,
                     };
                 } else {
                     let file = File::open(p)?;
                     self.state = State::Active {
                         index: next_index,
                         reader: Box::new(BufReader::new(file)),
+                        input_name: p.to_string_lossy().to_string(),
+                        line_number: 0,
                     };
                 }
             }
@@ -104,8 +139,8 @@ impl ScriptLineProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_string_source() {
@@ -120,10 +155,7 @@ mod tests {
             lines.push(line.trim_end().to_string());
         }
 
-        assert_eq!(
-            lines,
-            vec!["line one", "line two", "line three"]
-        );
+        assert_eq!(lines, vec!["line one", "line two", "line three"]);
     }
 
     #[test]
@@ -132,9 +164,7 @@ mod tests {
         writeln!(temp_file, "file line 1").unwrap();
         writeln!(temp_file, "file line 2").unwrap();
 
-        let input = vec![
-            ScriptValue::PathVal(temp_file.path().to_path_buf()),
-        ];
+        let input = vec![ScriptValue::PathVal(temp_file.path().to_path_buf())];
         let mut provider = ScriptLineProvider::new(input);
 
         let mut lines = Vec::new();
@@ -167,13 +197,49 @@ mod tests {
             lines.push(line.trim_end().to_string());
         }
 
-        assert_eq!(lines, vec![
-            "file line 1",
-            "file line 2",
-            "script line 1",
-            "file line 1",
-            "file line 2",
-            "other script line 1",
-        ]);
+        assert_eq!(
+            lines,
+            vec![
+                "file line 1",
+                "file line 2",
+                "script line 1",
+                "file line 1",
+                "file line 2",
+                "other script line 1",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_getters() {
+        let input = vec![
+            ScriptValue::StringVal("l1\nl2\n".to_string()),
+            ScriptValue::StringVal("l3".to_string()),
+        ];
+        let mut provider = ScriptLineProvider::new(input);
+
+        if let Some(line) = provider.next_line().unwrap() {
+            assert_eq!(line.trim(), "l1");
+            assert_eq!(provider.get_line_number(), 1);
+            assert_eq!(provider.get_input_name(), "l1\nl2\n");
+        } else {
+            panic!("Expected a line");
+        }
+
+        if let Some(line) = provider.next_line().unwrap() {
+            assert_eq!(line.trim(), "l2");
+            assert_eq!(provider.get_line_number(), 2);
+            assert_eq!(provider.get_input_name(), "l1\nl2\n");
+        } else {
+            panic!("Expected a line");
+        }
+
+        if let Some(line) = provider.next_line().unwrap() {
+            assert_eq!(line.trim(), "l3");
+            assert_eq!(provider.get_line_number(), 1);
+            assert_eq!(provider.get_input_name(), "l3");
+        } else {
+            panic!("Expected a line");
+        }
     }
 }

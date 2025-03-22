@@ -170,10 +170,6 @@ fn get_scripts_files(matches: &ArgMatches) -> UResult<(Vec<ScriptValue>, Vec<Pat
 // Parse CLI flag arguments and return a Context struct based on them
 fn build_context(matches: &ArgMatches) -> Context {
     Context {
-        input: String::new(),
-        line: 1,
-
-        // Flags
         all_output_files: matches.get_flag("all-output-files"),
         debug: matches.get_flag("debug"),
         regexp_extended: matches.get_flag("regexp-extended"),
@@ -306,8 +302,6 @@ mod tests {
         let matches = test_matches(&[]);
         let ctx = build_context(&matches);
 
-        assert_eq!(ctx.input.len(), 0);
-        assert_eq!(ctx.line, 1);
         assert!(!ctx.all_output_files);
         assert!(!ctx.debug);
         assert!(!ctx.regexp_extended);
@@ -343,7 +337,6 @@ mod tests {
 
         let ctx = build_context(&matches);
 
-        assert_eq!(ctx.input.len(), 0);
         assert!(ctx.all_output_files);
         assert!(ctx.debug);
         assert!(ctx.regexp_extended);
