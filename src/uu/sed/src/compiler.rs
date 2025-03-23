@@ -10,8 +10,12 @@
 
 use crate::command::{Command, Context, ScriptValue};
 use crate::script_line_provider::ScriptLineProvider;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use uucore::error::UResult;
+
+// A global, immutable map of command properties, initialized on first access
+static CMD_MAP: Lazy<HashMap<char, SFormat>> = Lazy::new(build_command_map);
 
 // Types of command arguments recognized by the parser
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,12 +80,11 @@ fn build_command_map() -> HashMap<char, SFormat> {
 }
 
 // Look up a command format by its command code.
-fn lookup_command(cmd: char, map: &HashMap<char, SFormat>) -> Option<&SFormat> {
-    map.get(&cmd)
+fn lookup_command(cmd: char) -> Option<&'static SFormat> {
+    CMD_MAP.get(&cmd)
 }
 
 pub fn compile(scripts: Vec<ScriptValue>, _context: &mut Context) -> UResult<Option<Command>> {
-    let _cmd_map = build_command_map();
     let mut _line_provider = ScriptLineProvider::new(scripts);
 
     // TODO
@@ -94,104 +97,91 @@ mod tests {
 
     #[test]
     fn test_lookup_empty_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('d', &cmd_map).unwrap();
+        let cmd = lookup_command('d').unwrap();
         assert_eq!(cmd.n_addr, 2);
         assert_eq!(cmd.args, CommandArgs::Empty);
     }
 
     #[test]
     fn test_lookup_text_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('a', &cmd_map).unwrap();
+        let cmd = lookup_command('a').unwrap();
         assert_eq!(cmd.n_addr, 1);
         assert_eq!(cmd.args, CommandArgs::Text);
     }
 
     #[test]
     fn test_lookup_nonselect_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('!', &cmd_map).unwrap();
+        let cmd = lookup_command('!').unwrap();
         assert_eq!(cmd.n_addr, 2);
         assert_eq!(cmd.args, CommandArgs::NonSelect);
     }
 
     #[test]
     fn test_lookup_group_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('{', &cmd_map).unwrap();
+        let cmd = lookup_command('{').unwrap();
         assert_eq!(cmd.n_addr, 2);
         assert_eq!(cmd.args, CommandArgs::Group);
     }
 
     #[test]
     fn test_lookup_endgroup_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('}', &cmd_map).unwrap();
+        let cmd = lookup_command('}').unwrap();
         assert_eq!(cmd.n_addr, 0);
         assert_eq!(cmd.args, CommandArgs::EndGroup);
     }
 
     #[test]
     fn test_lookup_comment_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('#', &cmd_map).unwrap();
+        let cmd = lookup_command('#').unwrap();
         assert_eq!(cmd.n_addr, 0);
         assert_eq!(cmd.args, CommandArgs::Comment);
     }
 
     #[test]
     fn test_lookup_branch_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('b', &cmd_map).unwrap();
+        let cmd = lookup_command('b').unwrap();
         assert_eq!(cmd.n_addr, 2);
         assert_eq!(cmd.args, CommandArgs::Branch);
     }
 
     #[test]
     fn test_lookup_label_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command(':', &cmd_map).unwrap();
+        let cmd = lookup_command(':').unwrap();
         assert_eq!(cmd.n_addr, 0);
         assert_eq!(cmd.args, CommandArgs::Label);
     }
 
     #[test]
     fn test_lookup_readfile_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('r', &cmd_map).unwrap();
+        let cmd = lookup_command('r').unwrap();
         assert_eq!(cmd.n_addr, 1);
         assert_eq!(cmd.args, CommandArgs::ReadFile);
     }
 
     #[test]
     fn test_lookup_writefile_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('w', &cmd_map).unwrap();
+        let cmd = lookup_command('w').unwrap();
         assert_eq!(cmd.n_addr, 2);
         assert_eq!(cmd.args, CommandArgs::WriteFile);
     }
 
     #[test]
     fn test_lookup_substitute_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('s', &cmd_map).unwrap();
+        let cmd = lookup_command('s').unwrap();
         assert_eq!(cmd.n_addr, 2);
         assert_eq!(cmd.args, CommandArgs::Substitute);
     }
 
     #[test]
     fn test_lookup_translate_command() {
-        let cmd_map = build_command_map();
-        let cmd = lookup_command('y', &cmd_map).unwrap();
+        let cmd = lookup_command('y').unwrap();
         assert_eq!(cmd.n_addr, 2);
         assert_eq!(cmd.args, CommandArgs::Translate);
     }
 
     #[test]
     fn test_lookup_invalid_command() {
-        let cmd_map = build_command_map();
-        let result = lookup_command('Z', &cmd_map);
+        let result = lookup_command('Z');
         assert!(result.is_none());
     }
 }
