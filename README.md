@@ -7,7 +7,9 @@
 
 # sed
 
-Rust reimplementation of the [sed utility](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sed.html).
+Rust reimplementation of the [sed utility](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sed.html)
+with some [GNU sed](https://www.gnu.org/software/sed/manual/sed.html)
+and [FreeBSD sed](https://man.freebsd.org/cgi/man.cgi?sed(1)) extensions.
 
 ## Installation
 
