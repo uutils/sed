@@ -4,6 +4,8 @@
 // file that was distributed with this source code.
 
 use crate::common::util::TestScenario;
+use std::io::Write;
+use tempfile::NamedTempFile;
 
 // Test application's invocation
 #[test]
@@ -41,5 +43,9 @@ fn test_e_script_ok() {
 
 #[test]
 fn test_f_script_ok() {
-    new_ucmd!().arg("-f").arg("/dev/null").succeeds();
+    let mut temp = NamedTempFile::new().expect("Failed to create temp file");
+    writeln!(temp, "l").expect("Failed to write to temp file");
+    let path = temp.path();
+
+    new_ucmd!().arg("-f").arg(path).succeeds();
 }
