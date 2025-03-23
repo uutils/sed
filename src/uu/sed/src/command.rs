@@ -46,7 +46,7 @@ pub enum ScriptValue {
  * Types of address specifications
  */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AddressType {
+pub enum AddressType {
     Re,      // Line that matches regex
     Line,    // Specific line
     RelLine, // Relative line
@@ -57,14 +57,14 @@ enum AddressType {
  * Format of an address
  */
 #[derive(Debug)]
-struct Address {
-    atype: AddressType,  // Address type
-    value: AddressValue, // Line number or regex
+pub struct Address {
+    pub atype: AddressType,  // Address type
+    pub value: AddressValue, // Line number or regex
 }
 
 #[derive(Debug)]
-enum AddressValue {
-    LineNumber(u64),
+pub enum AddressValue {
+    LineNumber(usize),
     Regex(Regex),
 }
 
@@ -72,25 +72,23 @@ enum AddressValue {
  * Substitution command
  */
 #[derive(Debug)]
-struct Substitution {
-    occurrence: usize,             // Which occurrence to substitute
-    print_flag: bool,              // True if 'p' flag
-    ignore_case: bool,             // True if 'I' flag
-    write_file: Option<PathBuf>,   // Path to file if 'w' flag is used
-    file_descriptor: Option<File>, // Cached file descriptor
-    regex: Regex,                  // Regular expression
-    max_backref: u32,              // Largest backreference
-    line_number: u64,              // Line number
-    replacement: String,           // Replacement text
+pub struct Substitution {
+    pub occurrence: usize,             // Which occurrence to substitute
+    pub print_flag: bool,              // True if 'p' flag
+    pub ignore_case: bool,             // True if 'I' flag
+    pub write_file: Option<PathBuf>,   // Path to file if 'w' flag is used
+    pub file_descriptor: Option<File>, // Cached file descriptor
+    pub regex: Regex,                  // Regular expression
+    pub max_backref: u32,              // Largest backreference
+    pub line_number: usize,            // Line number
+    pub replacement: String,           // Replacement text
 }
 
-/*
- * Translate command.
- */
+// Transliteration command (y)
 #[derive(Debug)]
-struct TranslateCommand {
-    byte_table: [u8; 256],          // Byte translation table
-    multi_map: HashMap<char, char>, // Direct mapping from one char to another
+pub struct Transliteration {
+    pub byte_table: [u8; 256],          // Byte translation table
+    pub multi_map: HashMap<char, char>, // Direct mapping from one char to another
 }
 
 /*
@@ -98,35 +96,36 @@ struct TranslateCommand {
  */
 #[derive(Debug)]
 pub struct Command {
-    next: Option<Box<Command>>, // Pointer to next command
-    addr1: Option<Address>,     // Start address
-    addr2: Option<Address>,     // End address
-    start_line: Option<u64>,    // Start line number (or None)
-    text: Option<String>,       // Text for ':', 'a', 'c', 'i', 'r', 'w'
-    data: CommandData,          // Union equivalent
-    code: char,                 // Command code
-    non_select: bool,           // True if '!'
+    pub code: char,                 // Command code
+    pub addr1: Option<Address>,     // Start address
+    pub addr2: Option<Address>,     // End address
+    pub non_select: bool,           // True if '!'
+    pub start_line: Option<usize>,  // Start line number (or None)
+    pub text: Option<String>,       // Text for ':', 'a', 'c', 'i', 'r', 'w'
+    pub data: CommandData,          // Command-specific data
+    pub next: Option<Box<Command>>, // Pointer to next command
 }
 
 #[derive(Debug)]
-enum CommandData {
-    SubCommands(Vec<Command>),        // Commands for 'b', 't', '{'
-    Substitution(Box<Substitution>),  // Substitute command
-    Translate(Box<TranslateCommand>), // Replace command array
-    WriteFileDescriptor(File),        // File descriptor for 'w'
+pub enum CommandData {
+    None,
+    SubCommands(Vec<Command>),             // Commands for 'b', 't', '{'
+    Substitution(Box<Substitution>),       // Substitute command 's'
+    Transliteration(Box<Transliteration>), // Transliteration command 'y'
+    WriteFileDescriptor(File),             // File descriptor for 'w'
 }
 
 /*
  * Structure containing things to append before a line is read
  */
 #[derive(Debug)]
-struct AppendBuffer {
+pub struct AppendBuffer {
     append_type: AppendType,
     content: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AppendType {
+pub enum AppendType {
     String,
     File,
 }
@@ -135,7 +134,7 @@ enum AppendType {
  * Special flag for space modifications
  */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SpaceFlag {
+pub enum SpaceFlag {
     Append,  // Append to contents
     Replace, // Replace contents
 }
@@ -144,9 +143,9 @@ enum SpaceFlag {
  * Structure for a processing space (process, hold, otherwise).
  */
 #[derive(Debug)]
-struct Space {
-    current: String,      // Current space content
-    deleted: bool,        // Whether content was deleted
-    append_newline: bool, // Whether originally terminated by \n
-    backup: String,       // Backing memory
+pub struct Space {
+    pub current: String,      // Current space content
+    pub deleted: bool,        // Whether content was deleted
+    pub append_newline: bool, // Whether originally terminated by \n
+    pub backup: String,       // Backing memory
 }

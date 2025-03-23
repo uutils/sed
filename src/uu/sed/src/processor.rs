@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use uucore::error::UResult;
 
 pub fn process(
-    _code: Option<Command>,
+    _code: Option<Box<Command>>,
     _files: Vec<PathBuf>,
     _context: &mut Context,
 ) -> UResult<()> {

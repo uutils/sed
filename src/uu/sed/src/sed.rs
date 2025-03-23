@@ -199,7 +199,7 @@ fn build_context(matches: &ArgMatches) -> Context {
 mod tests {
     use super::*; // Allows access to private functions/items in this module
 
-    // Test the get_scripts_files function
+    // get_scripts_files
 
     // Helper function for supplying arguments
     fn get_test_matches(args: &[&str]) -> ArgMatches {
@@ -293,6 +293,7 @@ mod tests {
         assert_eq!(files, vec![PathBuf::from("-")]); // Stdin should be used
     }
 
+    // build_context
     fn test_matches(args: &[&str]) -> ArgMatches {
         uu_app().get_matches_from(["sed"].into_iter().chain(args.iter().copied()))
     }

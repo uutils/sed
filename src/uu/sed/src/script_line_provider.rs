@@ -237,3 +237,18 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+impl ScriptLineProvider {
+    pub fn with_active_state(input_name: &str, line_number: usize) -> Self {
+        Self {
+            sources: vec![],
+            state: State::Active {
+                input_name: input_name.to_string(),
+                line_number,
+                index: 0,
+                reader: Box::new(BufReader::new(io::stdin())),
+            },
+        }
+    }
+}
