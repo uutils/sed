@@ -13,7 +13,7 @@ pub mod compiler;
 pub mod processor;
 pub mod script_line_provider;
 
-use crate::command::{Context, ScriptValue};
+use crate::command::{CliOptions, ScriptValue};
 use crate::compiler::compile;
 use crate::processor::process;
 use clap::{arg, Arg, ArgMatches, Command};
@@ -28,10 +28,10 @@ const USAGE: &str = "sed [OPTION]... [script] [file]...";
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
     let (scripts, files) = get_scripts_files(&matches)?;
-    let mut context = build_context(&matches);
+    let mut cli_options = build_context(&matches);
 
-    let executable = compile(scripts, &mut context)?;
-    process(executable, files, &mut context)?;
+    let executable = compile(scripts, &mut cli_options)?;
+    process(executable, files, &mut cli_options)?;
     Ok(())
 }
 
@@ -167,9 +167,9 @@ fn get_scripts_files(matches: &ArgMatches) -> UResult<(Vec<ScriptValue>, Vec<Pat
     Ok((scripts, files))
 }
 
-// Parse CLI flag arguments and return a Context struct based on them
-fn build_context(matches: &ArgMatches) -> Context {
-    Context {
+// Parse CLI flag arguments and return a CliOptions struct based on them
+fn build_context(matches: &ArgMatches) -> CliOptions {
+    CliOptions {
         all_output_files: matches.get_flag("all-output-files"),
         debug: matches.get_flag("debug"),
         regexp_extended: matches.get_flag("regexp-extended"),

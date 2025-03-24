@@ -8,7 +8,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{Command, CommandData, Context, ScriptValue};
+use crate::command::{CliOptions, Command, CommandData, ScriptValue};
 use crate::script_line_provider::ScriptLineProvider;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -197,10 +197,13 @@ enum ContinueAction {
     NextChar,
 }
 
-pub fn compile(scripts: Vec<ScriptValue>, context: &mut Context) -> UResult<Option<Box<Command>>> {
+pub fn compile(
+    scripts: Vec<ScriptValue>,
+    cli_options: &mut CliOptions,
+) -> UResult<Option<Box<Command>>> {
     let mut line_provider = ScriptLineProvider::new(scripts);
 
-    let result = compile_thread(&mut line_provider, context)?;
+    let result = compile_thread(&mut line_provider, cli_options)?;
     // TODO: fix-up labels, check used labels, setup append & match structures
     Ok(result)
 }
@@ -208,7 +211,7 @@ pub fn compile(scripts: Vec<ScriptValue>, context: &mut Context) -> UResult<Opti
 // Compile provided scripts into a thread of commands
 fn compile_thread(
     lines: &mut ScriptLineProvider,
-    _context: &mut Context,
+    _cli_options: &mut CliOptions,
 ) -> UResult<Option<Box<Command>>> {
     // Initialize the head of the list as None
     let mut head: Option<Box<Command>> = None;
@@ -227,7 +230,7 @@ fn compile_thread(
                 let line: Vec<char> = line_string.chars().collect();
                 let mut pos: usize = 0;
 
-                // TODO: set context.quiet for StringVal starting with #n
+                // TODO: set cli_options.quiet for StringVal starting with #n
                 'next_char: loop {
                     eat_spaces(&line, &mut pos);
                     if pos == line.len() || line[pos] == '#' {

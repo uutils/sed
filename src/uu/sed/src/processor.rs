@@ -8,15 +8,15 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+use crate::command::CliOptions;
 use crate::command::Command;
-use crate::command::Context;
 use std::path::PathBuf;
 use uucore::error::UResult;
 
 pub fn process(
     _code: Option<Box<Command>>,
     _files: Vec<PathBuf>,
-    _context: &mut Context,
+    _cli_options: &mut CliOptions,
 ) -> UResult<()> {
     // TODO
     Ok(())

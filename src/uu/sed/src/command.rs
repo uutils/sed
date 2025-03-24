@@ -16,9 +16,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf; // For file descriptors and equivalent
 
-// Compilation and processing context
+// Compilation and processing options provided mostly through the
+// command-line interface
 #[derive(Debug)]
-pub struct Context {
+pub struct CliOptions {
     // Command-line flags with corresponding names
     pub all_output_files: bool,
     pub debug: bool,
