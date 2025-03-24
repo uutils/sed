@@ -9,6 +9,7 @@
 // file that was distributed with this source code.
 
 use crate::command::{CliOptions, Command, CommandData, ScriptValue};
+use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -213,9 +214,7 @@ fn compile_thread(
     lines: &mut ScriptLineProvider,
     _cli_options: &mut CliOptions,
 ) -> UResult<Option<Box<Command>>> {
-    // Initialize the head of the list as None
     let mut head: Option<Box<Command>> = None;
-
     // A mutable reference to the place we’ll insert next
     let mut next_p = &mut head;
 
@@ -226,19 +225,18 @@ fn compile_thread(
                 return Ok(head);
             }
             Some(line_string) => {
-                // Line as a vector we can index through pos
-                let line: Vec<char> = line_string.chars().collect();
-                let mut pos: usize = 0;
+                let mut line = ScriptCharProvider::new(&line_string);
 
                 // TODO: set cli_options.quiet for StringVal starting with #n
                 'next_char: loop {
-                    eat_spaces(&line, &mut pos);
-                    if pos == line.len() || line[pos] == '#' {
+                    line.eat_spaces();
+                    if line.eol() || line.current() == '#' {
                         continue 'next_line;
-                    } else if line[pos] == ';' {
-                        pos += 1;
+                    } else if line.current() == ';' {
+                        line.advance();
                         continue 'next_char;
                     }
+
                     let mut cmd = Box::new(Command {
                         next: None,
                         addr1: None,
@@ -250,18 +248,19 @@ fn compile_thread(
                         non_select: false,
                     });
 
-                    let n_addr = compile_addresses(&line, &mut pos, &mut cmd);
-                    let mut cmd_spec = get_cmd_spec(lines, &line, pos, n_addr)?;
+                    let n_addr = compile_addresses(&mut line, &mut cmd);
+                    let mut cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
 
                     if cmd_spec.args == CommandArgs::NonSelect {
-                        pos += 1;
-                        eat_spaces(&line, &mut pos);
+                        line.advance();
+                        line.eat_spaces();
                         cmd.non_select = true;
-                        cmd_spec = get_cmd_spec(lines, &line, pos, n_addr)?;
+                        cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
                     }
-                    let action = compile_command(lines, &line, &mut pos, &mut cmd, cmd_spec)?;
 
                     // Move cmd into next_p, transferring its ownership
+                    let action = compile_command(lines, &mut line, &mut cmd, cmd_spec)?;
+
                     *next_p = Some(cmd);
                     next_p = &mut next_p.as_mut().unwrap().next;
 
@@ -275,34 +274,41 @@ fn compile_thread(
     }
 }
 
+// Compile a command's addresses into cmd.
+// Return the number of addresses encountered.
+fn compile_addresses(_line: &mut ScriptCharProvider, _cmd: &mut Command) -> usize {
+    // TODO: implement address parsing
+    0
+}
+
 // Compile the specified command
 fn compile_command(
     lines: &mut ScriptLineProvider,
-    line: &[char],
-    pos: &mut usize,
+    line: &mut ScriptCharProvider,
     cmd: &mut Command,
     cmd_spec: &'static CommandSpec,
 ) -> UResult<ContinueAction> {
-    cmd.code = line[*pos];
-    // TODO
+    cmd.code = line.current();
+
     match cmd_spec.args {
         CommandArgs::Empty => {
-            // d D g G h H l n N p P q x = \0
-            *pos += 1;
-            eat_spaces(line, pos);
-            if *pos < line.len() && line[*pos] == ';' {
-                *pos += 1;
+            // d D g G h H l n N p P q x =
+            line.advance();
+            line.eat_spaces();
+            if !line.eol() && line.current() == ';' {
+                line.advance();
                 // TODO: update link
                 return Ok(ContinueAction::NextChar);
             }
-            if *pos < line.len() {
+            if !line.eol() {
                 return compile_error(
                     lines,
-                    *pos,
+                    line,
                     format!("extra characters at the end of the {} command", cmd.code),
                 );
             }
         }
+        // TODO
         CommandArgs::Text => { // a c i
         }
         CommandArgs::NonSelect => { // !
@@ -326,64 +332,59 @@ fn compile_command(
         CommandArgs::Translate => { // y
         }
     }
+
     Ok(ContinueAction::NextLine)
 }
 
-// Compile a command's addresses into cmd.
-// Return the number of addresses encountered.
-fn compile_addresses(_line: &[char], _pos: &mut usize, _cmd: &mut Command) -> usize {
-    // TODO: let n_addr = 0; ...
-    0
-}
-
 // Fail with msg as a compile error at the current location
-fn compile_error<T>(lines: &ScriptLineProvider, pos: usize, msg: impl ToString) -> UResult<T> {
+fn compile_error<T>(
+    lines: &ScriptLineProvider,
+    line: &ScriptCharProvider,
+    msg: impl ToString,
+) -> UResult<T> {
     Err(USimpleError::new(
         1,
         format!(
             "{}:{}:{}: error: {}",
             lines.get_input_name(),
             lines.get_line_number(),
-            pos,
+            line.get_pos(),
             msg.to_string()
         ),
     ))
 }
 
-// Return the specification for the command letter line[pos]
+// Return the specification for the command letter at the current line position
 // checking for diverse errors.
 fn get_cmd_spec(
     lines: &ScriptLineProvider,
-    line: &[char],
-    pos: usize,
+    line: &ScriptCharProvider,
     n_addr: usize,
 ) -> UResult<&'static CommandSpec> {
-    if pos == line.len() {
-        return compile_error(lines, pos, "command expected");
+    if line.eol() {
+        return compile_error(lines, line, "command expected");
     }
-    let opt_cmd_spec = lookup_command(line[pos]);
+
+    let ch = line.current();
+    let opt_cmd_spec = lookup_command(ch);
+
     if opt_cmd_spec.is_none() {
-        return compile_error(lines, pos, format!("invalid command code {}", line[pos]));
+        return compile_error(lines, line, format!("invalid command code {}", ch));
     }
+
     let cmd_spec = opt_cmd_spec.unwrap();
     if n_addr > cmd_spec.n_addr {
         return compile_error(
             lines,
-            pos,
+            line,
             format!(
                 "command {} expects up to {} address(es), found {}",
-                line[pos], cmd_spec.n_addr, n_addr
+                ch, cmd_spec.n_addr, n_addr
             ),
         );
     }
-    Ok(cmd_spec)
-}
 
-// Advance pos over any white space occuring in chars
-fn eat_spaces(chars: &[char], pos: &mut usize) {
-    while *pos < chars.len() && chars[*pos].is_whitespace() {
-        *pos += 1;
-    }
+    Ok(cmd_spec)
 }
 
 // Look up a command format by its command code.
@@ -486,86 +487,55 @@ mod tests {
         assert!(result.is_none());
     }
 
-    // eat_spaces
-    #[test]
-    fn test_eat_spaces() {
-        let input = "   \t\n  hello";
-        let chars: Vec<char> = input.chars().collect();
-        let mut pos = 0;
-
-        eat_spaces(&chars, &mut pos);
-
-        // Should skip all whitespace and land at 'h'
-        assert_eq!(chars[pos], 'h');
-        assert_eq!(pos, 7); // 3 spaces + 1 tab + 1 newline + 2 spaces
-    }
-
-    #[test]
-    fn test_eat_spaces_only_whitespace() {
-        let input = " \t\n  ";
-        let chars: Vec<char> = input.chars().collect();
-        let mut pos = 0;
-
-        eat_spaces(&chars, &mut pos);
-
-        // Should move pos to the end
-        assert_eq!(pos, chars.len());
-    }
-
-    #[test]
-    fn test_eat_spaces_no_whitespace() {
-        let input = "hello";
-        let chars: Vec<char> = input.chars().collect();
-        let mut pos = 0;
-
-        eat_spaces(&chars, &mut pos);
-
-        // Should not change pos
-        assert_eq!(pos, 0);
+    // Utility to create a ScriptCharProvider from a &str
+    fn char_provider_from(s: &str) -> ScriptCharProvider {
+        ScriptCharProvider::new(s)
     }
 
     // compile_error
     #[test]
     fn test_compile_error_message_format() {
         let lines = ScriptLineProvider::with_active_state("test.sed", 42);
-        let pos = 7;
-        let msg = "unexpected token";
+        let mut line = char_provider_from("whatever");
+        line.advance(); // move to position 1
+        line.advance(); // move to position 2
+        line.advance(); // move to position 3
+        line.advance(); // now at position 4
 
-        let result: UResult<()> = compile_error(&lines, pos, msg);
+        let msg = "unexpected token";
+        let result: UResult<()> = compile_error(&lines, &line, msg);
 
         assert!(result.is_err());
 
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert!(msg.contains("test.sed:42:7: error: unexpected token"));
+        assert!(msg.contains("test.sed:42:4: error: unexpected token"));
     }
 
     #[test]
     fn test_compile_error_with_format_message() {
         let lines = ScriptLineProvider::with_active_state("input.txt", 3);
-        let pos = 1;
+        let mut line = char_provider_from("x");
+        // We're at position 0
 
-        let result: UResult<()> = compile_error(&lines, pos, format!("invalid command '{}'", 'x'));
+        let result: UResult<()> =
+            compile_error(&lines, &line, format!("invalid command '{}'", 'x'));
 
         assert!(result.is_err());
 
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert_eq!(msg, "input.txt:3:1: error: invalid command 'x'");
+        assert_eq!(msg, "input.txt:3:0: error: invalid command 'x'");
     }
 
     // get_cmd_spec
-    fn line_from_str(s: &str) -> Vec<char> {
-        s.chars().collect()
-    }
-
     #[test]
     fn test_missing_command_character() {
         let lines = ScriptLineProvider::with_active_state("test.sed", 1);
-        let line = line_from_str("");
-        let result = get_cmd_spec(&lines, &line, 0, 0);
+        let line = char_provider_from("");
+        let result = get_cmd_spec(&lines, &line, 0);
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -575,8 +545,8 @@ mod tests {
     #[test]
     fn test_invalid_command_character() {
         let lines = ScriptLineProvider::with_active_state("script.sed", 2);
-        let line = line_from_str("@");
-        let result = get_cmd_spec(&lines, &line, 0, 0);
+        let line = char_provider_from("@");
+        let result = get_cmd_spec(&lines, &line, 0);
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -586,8 +556,8 @@ mod tests {
     #[test]
     fn test_too_many_addresses() {
         let lines = ScriptLineProvider::with_active_state("input.sed", 3);
-        let line = line_from_str("q"); // q takes one address
-        let result = get_cmd_spec(&lines, &line, 0, 2);
+        let line = char_provider_from("q"); // q takes one address
+        let result = get_cmd_spec(&lines, &line, 2);
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -599,8 +569,8 @@ mod tests {
     #[test]
     fn test_valid_command_spec() {
         let lines = ScriptLineProvider::with_active_state("input.sed", 4);
-        let line = line_from_str("a"); // valid command
-        let result = get_cmd_spec(&lines, &line, 0, 1);
+        let line = char_provider_from("a"); // valid command
+        let result = get_cmd_spec(&lines, &line, 1);
 
         assert!(result.is_ok());
         let spec = result.unwrap();
