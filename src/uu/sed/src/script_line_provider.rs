@@ -1,4 +1,4 @@
-// Provide the script contents line by line
+//! Provide the script contents line by line
 //
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 Diomidis Spinellis
@@ -12,23 +12,27 @@ use crate::command::ScriptValue;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
+/// The provider of script lines across all specified scripts
+/// Scripts can be specified to sed as files or as strings.
 pub struct ScriptLineProvider {
     sources: Vec<ScriptValue>,
     state: State,
 }
 
+// Encapsulation of the script line provider's state
 enum State {
-    NotStarted,
+    NotStarted, // Processing has not yet started
     Active {
         index: usize,
-        reader: Box<dyn BufRead>,
-        input_name: String,
-        line_number: usize,
+        reader: Box<dyn BufRead>, // Object on which read_line is called
+        input_name: String,       // Input description (path or script string)
+        line_number: usize,       // Current line number
     },
-    Done,
+    Done, // All scripts have been processed
 }
 
 impl ScriptLineProvider {
+    /// Construct the script provider from the specified script sources
     pub fn new(sources: Vec<ScriptValue>) -> Self {
         Self {
             sources,
@@ -36,6 +40,7 @@ impl ScriptLineProvider {
         }
     }
 
+    /// Return the currently processed script line number.
     pub fn get_line_number(&self) -> usize {
         match &self.state {
             State::Active { line_number, .. } => *line_number,
@@ -43,6 +48,7 @@ impl ScriptLineProvider {
         }
     }
 
+    /// Return the currently processed script descriptive name.
     pub fn get_input_name(&self) -> &str {
         match &self.state {
             State::Active { input_name, .. } => input_name.as_str(),
@@ -50,6 +56,7 @@ impl ScriptLineProvider {
         }
     }
 
+    /// Return the next script line to process across all scripts.
     pub fn next_line(&mut self) -> io::Result<Option<String>> {
         let mut line = String::new();
 
@@ -82,6 +89,7 @@ impl ScriptLineProvider {
         }
     }
 
+    // Move to the next available script source.
     fn advance_source(&mut self, next_index: usize) -> io::Result<()> {
         if next_index >= self.sources.len() {
             self.state = State::Done;
@@ -130,6 +138,7 @@ impl ScriptLineProvider {
         Ok(())
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
