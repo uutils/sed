@@ -58,6 +58,8 @@ textwrap = { workspace = true }
 sysinfo = { workspace = true }
 
 sed = { optional = true, version = "0.0.1", package = "uu_sed", path = "src/uu/sed" }
+uutests = "0.0.30"
+ctor = "0.4.1"
 
 [dev-dependencies]
 pretty_assertions = "1"
