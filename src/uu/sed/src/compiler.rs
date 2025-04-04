@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn test_compile_error_with_format_message() {
         let lines = ScriptLineProvider::with_active_state("input.txt", 3);
-        let mut line = char_provider_from("x");
+        let line = char_provider_from("x");
         // We're at position 0
 
         let result: UResult<()> =
