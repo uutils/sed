@@ -16,8 +16,7 @@ repository = "https://github.com/uutils/sed"
 readme = "README.md"
 keywords = ["sed", "uutils", "cross-platform", "cli", "utility"]
 categories = ["command-line-utilities"]
-rust-version = "1.70.0"
-edition = "2021"
+edition = "2024"
 
 build = "build.rs"
 
