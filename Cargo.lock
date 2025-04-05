@@ -853,7 +853,9 @@ name = "uu_sed"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "once_cell",
  "regex",
+ "tempfile",
  "uucore",
 ]
 
