@@ -1,4 +1,4 @@
-// Compile delimited character sequences
+// Parse delimited character sequences
 //
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 Diomidis Spinellis
@@ -14,7 +14,7 @@ use std::char;
 use uucore::error::{UResult, USimpleError};
 
 // Fail with msg as a compile error at the current location
-pub fn compile_error<T>(
+pub fn compilation_error<T>(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
     msg: impl ToString,
@@ -36,14 +36,14 @@ fn is_ascii_octal_digit(c: char) -> bool {
     matches!(c, '0'..='7')
 }
 
-/// Compile a numeric character escape and return the corresponding char.
+/// Parse a numeric character escape and return the corresponding char.
 /// Advance line to the first character not part of the escape.
 /// ndigits is the number of allowed digits and radix is the value's
 /// radix (e.g. 8, 10, 16 for octal, decimal, and hex escapes).
 /// For values up to 3 ndigits is the maximum number of allowed digits,
 /// for values above 3 ndigits is the exact number of allowed digits.
 /// Return `None` if no valid character has been specified.
-fn compile_numeric_escape(
+fn parse_numeric_escape(
     line: &mut ScriptCharProvider,
     is_allowed_char: fn(char) -> bool,
     ndigits: usize,
@@ -99,12 +99,12 @@ fn create_control_char(x: char) -> Option<char> {
     char::from_u32(transformed as u32)
 }
 
-/// Compile a character escape valid in all contexts (RE pattern, substitution,
+/// Parse a character escape valid in all contexts (RE pattern, substitution,
 /// transliterarion) and return the corresponding char.
 /// At entry line.current() must have advanced after the `\\`.
 /// Advance line to the first character not part of the escape.
 /// Return `None` if an invalid escape has been specified.
-fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
+fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
     match line.current() {
         'a' => {
             line.advance();
@@ -146,7 +146,7 @@ fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         'd' => {
             // Decimal escape: \dnnn
             line.advance(); // move past 'd'
-            match compile_numeric_escape(line, |c| c.is_ascii_digit(), 3, 10) {
+            match parse_numeric_escape(line, |c| c.is_ascii_digit(), 3, 10) {
                 Some(decoded) => Some(decoded),
                 None => Some('d'),
             }
@@ -155,7 +155,7 @@ fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         'o' => {
             // Octal escape: \onnn
             line.advance(); // move past 'o'
-            match compile_numeric_escape(line, is_ascii_octal_digit, 3, 8) {
+            match parse_numeric_escape(line, is_ascii_octal_digit, 3, 8) {
                 Some(decoded) => Some(decoded),
                 None => Some('o'),
             }
@@ -164,7 +164,7 @@ fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         'u' => {
             // Short Unicode escape \uXXXX (exactly four hex digits)
             line.advance(); // move past 'x'
-            match compile_numeric_escape(line, |c| c.is_ascii_hexdigit(), 4, 16) {
+            match parse_numeric_escape(line, |c| c.is_ascii_hexdigit(), 4, 16) {
                 Some(decoded) => Some(decoded),
                 None => Some('u'),
             }
@@ -173,7 +173,7 @@ fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         'U' => {
             // Short Unicode escape \UXXXXXXXX (exactly eight heax digits)
             line.advance(); // move past 'x'
-            match compile_numeric_escape(line, |c| c.is_ascii_hexdigit(), 8, 16) {
+            match parse_numeric_escape(line, |c| c.is_ascii_hexdigit(), 8, 16) {
                 Some(decoded) => Some(decoded),
                 None => Some('U'),
             }
@@ -182,7 +182,7 @@ fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         'x' => {
             // Hexadecimal escape: \xnn
             line.advance(); // move past 'x'
-            match compile_numeric_escape(line, |c| c.is_ascii_hexdigit(), 2, 16) {
+            match parse_numeric_escape(line, |c| c.is_ascii_hexdigit(), 2, 16) {
                 Some(decoded) => Some(decoded),
                 None => Some('x'),
             }
@@ -191,11 +191,11 @@ fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
     }
 }
 
-/// Compile a POSIX RE character class returning it as a string.
+/// Parse a POSIX RE character class returning it as a string.
 /// This functionality is needed to avoid terminating delimited
 /// sequences when a delimiter appears within a character class.
 /// While at it, handle escaped characters for the sake of consistency.
-pub fn compile_character_class(
+pub fn parse_character_class(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
 ) -> UResult<String> {
@@ -265,7 +265,7 @@ pub fn compile_character_class(
                     }
 
                     if !terminated {
-                        return compile_error(
+                        return compilation_error(
                             lines,
                             line,
                             "Unterminated POSIX character class, equivalence or collating symbol",
@@ -292,7 +292,7 @@ pub fn compile_character_class(
             if line.eol() {
                 break;
             }
-            match compile_char_escape(line) {
+            match parse_char_escape(line) {
                 Some(decoded) => result.push(decoded),
                 None => {
                     result.push('\\');
@@ -306,18 +306,18 @@ pub fn compile_character_class(
         }
     }
 
-    compile_error(lines, line, "Unterminated bracket expression")
+    compilation_error(lines, line, "Unterminated bracket expression")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // compile_numeric_escape
+    // parse_numeric_escape
     #[test]
     fn test_compile_octal_escape() {
         let mut provider = ScriptCharProvider::new("141rest");
-        let c = compile_numeric_escape(&mut provider, is_ascii_octal_digit, 3, 8);
+        let c = parse_numeric_escape(&mut provider, is_ascii_octal_digit, 3, 8);
         assert_eq!(c, Some('a'));
         assert_eq!(provider.current(), 'r'); // "141" was consumed
     }
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn test_compile_octal_escape_eol() {
         let mut provider = ScriptCharProvider::new("141");
-        let c = compile_numeric_escape(&mut provider, is_ascii_octal_digit, 3, 8);
+        let c = parse_numeric_escape(&mut provider, is_ascii_octal_digit, 3, 8);
         assert_eq!(c, Some('a'));
         assert!(provider.eol()); // "141" was consumed
     }
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn test_compile_decimal_escape() {
         let mut provider = ScriptCharProvider::new("0659");
-        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
+        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
         assert_eq!(c, Some('A'));
         assert_eq!(provider.current(), '9'); // "65" was consumed
     }
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn test_compile_decimal_invalid() {
         let mut provider = ScriptCharProvider::new("QR");
-        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
+        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
         assert_eq!(c, None);
         assert_eq!(provider.current(), 'Q');
     }
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn test_compile_hex_escape() {
         let mut provider = ScriptCharProvider::new("3cZ");
-        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 2, 16);
+        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 2, 16);
         assert_eq!(c, Some('<'));
         assert_eq!(provider.current(), 'Z'); // "41" was consumed
     }
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn test_compile_hex_escape_truncated() {
         let mut provider = ScriptCharProvider::new("4G");
-        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 2, 16);
+        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 2, 16);
         assert_eq!(c, Some('\u{4}')); // Only '4' is valid hex
         assert_eq!(provider.current(), 'G'); // "41" was consumed
     }
@@ -366,7 +366,7 @@ mod tests {
     fn test_compile_unicode_escape_short() {
         // U+2665 = '♥'
         let mut provider = ScriptCharProvider::new("26650");
-        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 4, 16);
+        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 4, 16);
         assert_eq!(c, Some('♥'));
         assert_eq!(provider.current(), '0'); // "2665" was consumed
     }
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn test_compile_unicode_escape_short_invalid() {
         let mut provider = ScriptCharProvider::new("123Q");
-        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 4, 16);
+        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 4, 16);
         assert_eq!(c, None);
         assert_eq!(provider.current(), '1');
     }
@@ -383,7 +383,7 @@ mod tests {
     fn test_compile_unicode_escape_long_invalid() {
         // U+2665 = '♥'
         let mut provider = ScriptCharProvider::new("1234567Q");
-        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 8, 16);
+        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 8, 16);
         assert_eq!(c, None);
         assert_eq!(provider.current(), '1');
     }
@@ -392,7 +392,7 @@ mod tests {
     fn test_compile_unicode_escape_long() {
         // U+1F600 = 😀
         let mut provider = ScriptCharProvider::new("0001F6009");
-        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 8, 16);
+        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 8, 16);
         assert_eq!(c, Some('😀'));
         assert_eq!(provider.current(), '9'); // "0001F600" was consumed
     }
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn test_no_valid_digits() {
         let mut provider = ScriptCharProvider::new("xyz");
-        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
+        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
         assert_eq!(c, None);
         assert_eq!(provider.current(), 'x'); // No advancement
     }
@@ -437,10 +437,10 @@ mod tests {
         assert_eq!(create_control_char('\x7F'), Some('\x3F')); // 0x7F ^ 0x40 = 0x3F
     }
 
-    // compile_char_escape
+    // parse_char_escape
     fn escape_result_with_current(input: &str) -> (Option<char>, Option<char>) {
         let mut provider = ScriptCharProvider::new(input);
-        let result = compile_char_escape(&mut provider);
+        let result = parse_char_escape(&mut provider);
         let current = if provider.eol() {
             None
         } else {
@@ -532,7 +532,7 @@ mod tests {
         assert_eq!(escape_result_with_current("q"), (None, Some('q')));
     }
 
-    // compile_character_class
+    // parse_character_class
     fn char_provider_from(input: &str) -> ScriptCharProvider {
         ScriptCharProvider::new(input)
     }
@@ -545,7 +545,7 @@ mod tests {
     fn test_basic_character_class() {
         let mut line = char_provider_from("[qr]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[qr]");
     }
 
@@ -553,7 +553,7 @@ mod tests {
     fn test_negated_class() {
         let mut line = char_provider_from("[^abc]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[^abc]");
     }
 
@@ -561,7 +561,7 @@ mod tests {
     fn test_leading_close_bracket() {
         let mut line = char_provider_from("[]abc]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[]abc]");
     }
 
@@ -569,7 +569,7 @@ mod tests {
     fn test_leading_negated_close_bracket() {
         let mut line = char_provider_from("[^]abc]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[^]abc]");
     }
 
@@ -577,7 +577,7 @@ mod tests {
     fn test_escaped_character_begin() {
         let mut line = char_provider_from("[\\nabc]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[\nabc]");
     }
 
@@ -585,7 +585,7 @@ mod tests {
     fn test_escaped_character_middle() {
         let mut line = char_provider_from("[a\\nbc]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[a\nbc]");
     }
 
@@ -593,7 +593,7 @@ mod tests {
     fn test_escaped_character_end() {
         let mut line = char_provider_from("[abc\\n]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[abc\n]");
     }
 
@@ -601,7 +601,7 @@ mod tests {
     fn test_escaped_delimiter() {
         let mut line = char_provider_from("[a\\]bc]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[a\\]bc]");
     }
 
@@ -609,7 +609,7 @@ mod tests {
     fn test_posix_class() {
         let mut line = char_provider_from("[[:digit:]]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[[:digit:]]");
     }
 
@@ -617,7 +617,7 @@ mod tests {
     fn test_equivalence_class() {
         let mut line = char_provider_from("[[=a=]]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[[=a=]]");
     }
 
@@ -625,7 +625,7 @@ mod tests {
     fn test_collating_symbol() {
         let mut line = char_provider_from("[[.ch.]]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[[.ch.]]");
     }
 
@@ -633,7 +633,7 @@ mod tests {
     fn test_unterminated_class_error() {
         let mut line = char_provider_from("[abc"); // missing closing ]
         let lines = test_lines();
-        let err = compile_character_class(&lines, &mut line);
+        let err = parse_character_class(&lines, &mut line);
         assert!(err.is_err());
     }
 
@@ -641,7 +641,7 @@ mod tests {
     fn test_unterminated_posix_class_error() {
         let mut line = char_provider_from("[[:digit:]");
         let lines = test_lines();
-        let err = compile_character_class(&lines, &mut line);
+        let err = parse_character_class(&lines, &mut line);
         assert!(err.is_err());
     }
 
@@ -649,7 +649,7 @@ mod tests {
     fn test_unterminated_escape_error() {
         let mut line = char_provider_from("[abc\\"); // missing closing ]
         let lines = test_lines();
-        let err = compile_character_class(&lines, &mut line);
+        let err = parse_character_class(&lines, &mut line);
         assert!(err.is_err());
     }
 
@@ -657,7 +657,7 @@ mod tests {
     fn test_malformed_posix_like_pattern_treated_as_literal() {
         let mut line = char_provider_from("[[x]yz]");
         let lines = test_lines();
-        let result = compile_character_class(&lines, &mut line).unwrap();
+        let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[[x]");
     }
 }

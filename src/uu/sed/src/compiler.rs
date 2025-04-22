@@ -9,7 +9,7 @@
 // file that was distributed with this source code.
 
 use crate::command::{CliOptions, Command, CommandData, ScriptValue};
-use crate::delimited_compiler::compile_error;
+use crate::delimited_parser::compilation_error;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
 use once_cell::sync::Lazy;
@@ -305,7 +305,7 @@ fn compile_command(
                 return Ok(ContinueAction::NextChar);
             }
             if !line.eol() {
-                return compile_error(
+                return compilation_error(
                     lines,
                     line,
                     format!("extra characters at the end of the {} command", cmd.code),
@@ -348,19 +348,19 @@ fn get_cmd_spec(
     n_addr: usize,
 ) -> UResult<&'static CommandSpec> {
     if line.eol() {
-        return compile_error(lines, line, "command expected");
+        return compilation_error(lines, line, "command expected");
     }
 
     let ch = line.current();
     let opt_cmd_spec = lookup_command(ch);
 
     if opt_cmd_spec.is_none() {
-        return compile_error(lines, line, format!("invalid command code {}", ch));
+        return compilation_error(lines, line, format!("invalid command code {}", ch));
     }
 
     let cmd_spec = opt_cmd_spec.unwrap();
     if n_addr > cmd_spec.n_addr {
-        return compile_error(
+        return compilation_error(
             lines,
             line,
             format!(
@@ -478,9 +478,9 @@ mod tests {
         ScriptCharProvider::new(s)
     }
 
-    // compile_error
+    // compilation_error
     #[test]
-    fn test_compile_error_message_format() {
+    fn test_compilation_error_message_format() {
         let lines = ScriptLineProvider::with_active_state("test.sed", 42);
         let mut line = char_provider_from("whatever");
         line.advance(); // move to position 1
@@ -489,7 +489,7 @@ mod tests {
         line.advance(); // now at position 4
 
         let msg = "unexpected token";
-        let result: UResult<()> = compile_error(&lines, &line, msg);
+        let result: UResult<()> = compilation_error(&lines, &line, msg);
 
         assert!(result.is_err());
 
@@ -500,13 +500,13 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_error_with_format_message() {
+    fn test_compilation_error_with_format_message() {
         let lines = ScriptLineProvider::with_active_state("input.txt", 3);
         let line = char_provider_from("x");
         // We're at position 0
 
         let result: UResult<()> =
-            compile_error(&lines, &line, format!("invalid command '{}'", 'x'));
+            compilation_error(&lines, &line, format!("invalid command '{}'", 'x'));
 
         assert!(result.is_err());
 
