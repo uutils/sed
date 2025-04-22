@@ -9,11 +9,12 @@
 // file that was distributed with this source code.
 
 use crate::command::{CliOptions, Command, CommandData, ScriptValue};
+use crate::delimited_compiler::compile_error;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use uucore::error::{UResult, USimpleError};
+use uucore::error::UResult;
 
 // A global, immutable map of command properties, initialized on first access
 static CMD_MAP: Lazy<HashMap<char, CommandSpec>> = Lazy::new(build_command_map);
@@ -337,24 +338,6 @@ fn compile_command(
     }
 
     Ok(ContinueAction::NextLine)
-}
-
-// Fail with msg as a compile error at the current location
-fn compile_error<T>(
-    lines: &ScriptLineProvider,
-    line: &ScriptCharProvider,
-    msg: impl ToString,
-) -> UResult<T> {
-    Err(USimpleError::new(
-        1,
-        format!(
-            "{}:{}:{}: error: {}",
-            lines.get_input_name(),
-            lines.get_line_number(),
-            line.get_pos(),
-            msg.to_string()
-        ),
-    ))
 }
 
 // Return the specification for the command letter at the current line position

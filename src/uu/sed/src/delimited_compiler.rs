@@ -1,4 +1,4 @@
-// Compile escaped character sequences
+// Compile delimited character sequences
 //
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 Diomidis Spinellis
@@ -9,7 +9,27 @@
 // file that was distributed with this source code.
 
 use crate::script_char_provider::ScriptCharProvider;
+use crate::script_line_provider::ScriptLineProvider;
 use std::char;
+use uucore::error::{UResult, USimpleError};
+
+// Fail with msg as a compile error at the current location
+pub fn compile_error<T>(
+    lines: &ScriptLineProvider,
+    line: &ScriptCharProvider,
+    msg: impl ToString,
+) -> UResult<T> {
+    Err(USimpleError::new(
+        1,
+        format!(
+            "{}:{}:{}: error: {}",
+            lines.get_input_name(),
+            lines.get_line_number(),
+            line.get_pos(),
+            msg.to_string()
+        ),
+    ))
+}
 
 /// Return true if c is a valid octal digit
 fn is_ascii_octal_digit(c: char) -> bool {
@@ -81,9 +101,10 @@ fn create_control_char(x: char) -> Option<char> {
 
 /// Compile a character escape valid in all contexts (RE pattern, substitution,
 /// transliterarion) and return the corresponding char.
+/// At entry line.current() must have advanced after the `\\`.
 /// Advance line to the first character not part of the escape.
 /// Return `None` if an invalid escape has been specified.
-pub fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
+fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
     match line.current() {
         'a' => {
             line.advance();
@@ -168,6 +189,124 @@ pub fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         }
         _ => None,
     }
+}
+
+/// Compile a POSIX RE character class returning it as a string.
+/// This functionality is needed to avoid terminating delimited
+/// sequences when a delimiter appears within a character class.
+/// While at it, handle escaped characters for the sake of consistency.
+pub fn compile_character_class(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+) -> UResult<String> {
+    let mut result = String::new();
+
+    if line.eol() || line.current() != '[' {
+        panic!("Invalid character class.");
+    }
+
+    line.advance();
+    result.push('[');
+
+    // Optional negation
+    if !line.eol() && line.current() == '^' {
+        result.push('^');
+        line.advance();
+    }
+
+    // Optional leading ']' inside the class
+    if !line.eol() && line.current() == ']' {
+        result.push(']');
+        line.advance();
+    }
+
+    while !line.eol() {
+        let ch = line.current();
+
+        if ch == ']' {
+            result.push(']');
+            line.advance();
+            return Ok(result);
+        }
+
+        if ch == '[' {
+            line.advance();
+            if !line.eol() {
+                let marker = line.current();
+                // POSIX character class, collating symbol, or equivalence
+                if marker == ':' || marker == '.' || marker == '=' {
+                    line.advance();
+
+                    result.push('[');
+                    result.push(marker);
+
+                    let mut inner = String::new();
+                    let mut terminated = false;
+
+                    while !line.eol() {
+                        let c = line.current();
+                        if c == marker {
+                            line.advance();
+                            if !line.eol() && line.current() == ']' {
+                                line.advance();
+                                result.push_str(&inner);
+                                result.push(marker);
+                                result.push(']');
+                                terminated = true;
+                                break;
+                            } else {
+                                // False alarm, just part of the inner name
+                                inner.push(marker);
+                            }
+                        } else {
+                            inner.push(c);
+                            line.advance();
+                        }
+                    }
+
+                    if !terminated {
+                        return compile_error(
+                            lines,
+                            line,
+                            "Unterminated POSIX character class, equivalence or collating symbol",
+                        );
+                    }
+
+                    continue;
+                } else {
+                    // Not a POSIX construct — treat as literal
+                    result.push('[');
+                    result.push(marker);
+                    line.advance();
+                    continue;
+                }
+            } else {
+                result.push('[');
+                continue;
+            }
+        }
+
+        if ch == '\\' {
+            // Handle escape sequence
+            line.advance();
+            if line.eol() {
+                break;
+            }
+            match compile_char_escape(line) {
+                Some(decoded) => result.push(decoded),
+                None => {
+                    result.push('\\');
+                    result.push(line.current());
+                    line.advance();
+                }
+            }
+        } else {
+            result.push(ch);
+            line.advance();
+        }
+    }
+
+    compile_error(lines, line, "Unterminated bracket expression")
 }
 
 #[cfg(test)]
@@ -391,5 +530,134 @@ mod tests {
     #[test]
     fn test_unknown_escape() {
         assert_eq!(escape_result_with_current("q"), (None, Some('q')));
+    }
+
+    // compile_character_class
+    fn char_provider_from(input: &str) -> ScriptCharProvider {
+        ScriptCharProvider::new(input)
+    }
+
+    fn test_lines() -> ScriptLineProvider {
+        ScriptLineProvider::with_active_state("test.sed", 3)
+    }
+
+    #[test]
+    fn test_basic_character_class() {
+        let mut line = char_provider_from("[qr]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[qr]");
+    }
+
+    #[test]
+    fn test_negated_class() {
+        let mut line = char_provider_from("[^abc]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[^abc]");
+    }
+
+    #[test]
+    fn test_leading_close_bracket() {
+        let mut line = char_provider_from("[]abc]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[]abc]");
+    }
+
+    #[test]
+    fn test_leading_negated_close_bracket() {
+        let mut line = char_provider_from("[^]abc]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[^]abc]");
+    }
+
+    #[test]
+    fn test_escaped_character_begin() {
+        let mut line = char_provider_from("[\\nabc]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[\nabc]");
+    }
+
+    #[test]
+    fn test_escaped_character_middle() {
+        let mut line = char_provider_from("[a\\nbc]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[a\nbc]");
+    }
+
+    #[test]
+    fn test_escaped_character_end() {
+        let mut line = char_provider_from("[abc\\n]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[abc\n]");
+    }
+
+    #[test]
+    fn test_escaped_delimiter() {
+        let mut line = char_provider_from("[a\\]bc]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[a\\]bc]");
+    }
+
+    #[test]
+    fn test_posix_class() {
+        let mut line = char_provider_from("[[:digit:]]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[[:digit:]]");
+    }
+
+    #[test]
+    fn test_equivalence_class() {
+        let mut line = char_provider_from("[[=a=]]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[[=a=]]");
+    }
+
+    #[test]
+    fn test_collating_symbol() {
+        let mut line = char_provider_from("[[.ch.]]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[[.ch.]]");
+    }
+
+    #[test]
+    fn test_unterminated_class_error() {
+        let mut line = char_provider_from("[abc"); // missing closing ]
+        let lines = test_lines();
+        let err = compile_character_class(&lines, &mut line);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_unterminated_posix_class_error() {
+        let mut line = char_provider_from("[[:digit:]");
+        let lines = test_lines();
+        let err = compile_character_class(&lines, &mut line);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_unterminated_escape_error() {
+        let mut line = char_provider_from("[abc\\"); // missing closing ]
+        let lines = test_lines();
+        let err = compile_character_class(&lines, &mut line);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_malformed_posix_like_pattern_treated_as_literal() {
+        let mut line = char_provider_from("[[x]yz]");
+        let lines = test_lines();
+        let result = compile_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[[x]");
     }
 }
