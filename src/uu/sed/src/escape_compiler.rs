@@ -18,13 +18,15 @@ fn is_ascii_octal_digit(c: char) -> bool {
 
 /// Compile a numeric character escape and return the corresponding char.
 /// Advance line to the first character not part of the escape.
-/// ndigits is the maximum number of allowed digits and radix is the value's
+/// ndigits is the number of allowed digits and radix is the value's
 /// radix (e.g. 8, 10, 16 for octal, decimal, and hex escapes).
+/// For values up to 3 ndigits is the maximum number of allowed digits,
+/// for values above 3 ndigits is the exact number of allowed digits.
 /// Return `None` if no valid character has been specified.
 fn compile_numeric_escape(
     line: &mut ScriptCharProvider,
     is_allowed_char: fn(char) -> bool,
-    ndigits: u32,
+    ndigits: usize,
     radix: u32,
 ) -> Option<char> {
     let mut valid_chars = Vec::new();
@@ -39,6 +41,11 @@ fn compile_numeric_escape(
     }
 
     if valid_chars.is_empty() {
+        return None;
+    }
+
+    if ndigits > 3 && valid_chars.len() != ndigits {
+        line.retreat(valid_chars.len());
         return None;
     }
 
@@ -133,6 +140,24 @@ pub fn compile_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
             }
         }
 
+        'u' => {
+            // Short Unicode escape \uXXXX (exactly four hex digits)
+            line.advance(); // move past 'x'
+            match compile_numeric_escape(line, |c| c.is_ascii_hexdigit(), 4, 16) {
+                Some(decoded) => Some(decoded),
+                None => Some('u'),
+            }
+        }
+
+        'U' => {
+            // Short Unicode escape \UXXXXXXXX (exactly eight heax digits)
+            line.advance(); // move past 'x'
+            match compile_numeric_escape(line, |c| c.is_ascii_hexdigit(), 8, 16) {
+                Some(decoded) => Some(decoded),
+                None => Some('U'),
+            }
+        }
+
         'x' => {
             // Hexadecimal escape: \xnn
             line.advance(); // move past 'x'
@@ -175,6 +200,14 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_decimal_invalid() {
+        let mut provider = ScriptCharProvider::new("QR");
+        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
+        assert_eq!(c, None);
+        assert_eq!(provider.current(), 'Q');
+    }
+
+    #[test]
     fn test_compile_hex_escape() {
         let mut provider = ScriptCharProvider::new("3cZ");
         let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 2, 16);
@@ -188,6 +221,41 @@ mod tests {
         let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 2, 16);
         assert_eq!(c, Some('\u{4}')); // Only '4' is valid hex
         assert_eq!(provider.current(), 'G'); // "41" was consumed
+    }
+
+    #[test]
+    fn test_compile_unicode_escape_short() {
+        // U+2665 = '♥'
+        let mut provider = ScriptCharProvider::new("26650");
+        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 4, 16);
+        assert_eq!(c, Some('♥'));
+        assert_eq!(provider.current(), '0'); // "2665" was consumed
+    }
+
+    #[test]
+    fn test_compile_unicode_escape_short_invalid() {
+        let mut provider = ScriptCharProvider::new("123Q");
+        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 4, 16);
+        assert_eq!(c, None);
+        assert_eq!(provider.current(), '1');
+    }
+
+    #[test]
+    fn test_compile_unicode_escape_long_invalid() {
+        // U+2665 = '♥'
+        let mut provider = ScriptCharProvider::new("1234567Q");
+        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 8, 16);
+        assert_eq!(c, None);
+        assert_eq!(provider.current(), '1');
+    }
+
+    #[test]
+    fn test_compile_unicode_escape_long() {
+        // U+1F600 = 😀
+        let mut provider = ScriptCharProvider::new("0001F6009");
+        let c = compile_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 8, 16);
+        assert_eq!(c, Some('😀'));
+        assert_eq!(provider.current(), '9'); // "0001F600" was consumed
     }
 
     #[test]
@@ -241,15 +309,25 @@ mod tests {
         };
         (result, current)
     }
-    #[test]
 
-    fn test_standard_escapes() {
+    #[test]
+    fn test_standard_escapes_eol() {
         assert_eq!(escape_result_with_current("a"), (Some('\x07'), None));
         assert_eq!(escape_result_with_current("f"), (Some('\x0c'), None));
         assert_eq!(escape_result_with_current("n"), (Some('\n'), None));
         assert_eq!(escape_result_with_current("r"), (Some('\r'), None));
         assert_eq!(escape_result_with_current("t"), (Some('\t'), None));
         assert_eq!(escape_result_with_current("v"), (Some('\x0b'), None));
+    }
+
+    #[test]
+    fn test_standard_escapes_more() {
+        assert_eq!(escape_result_with_current("a."), (Some('\x07'), Some('.')));
+        assert_eq!(escape_result_with_current("f."), (Some('\x0c'), Some('.')));
+        assert_eq!(escape_result_with_current("n."), (Some('\n'), Some('.')));
+        assert_eq!(escape_result_with_current("r."), (Some('\r'), Some('.')));
+        assert_eq!(escape_result_with_current("t."), (Some('\t'), Some('.')));
+        assert_eq!(escape_result_with_current("v."), (Some('\x0b'), Some('.')));
     }
 
     #[test]
@@ -280,6 +358,19 @@ mod tests {
     #[test]
     fn test_hex_escape_valid() {
         assert_eq!(escape_result_with_current("x41;"), (Some('A'), Some(';')));
+    }
+
+    #[test]
+    fn test_short_unicode_escape_valid() {
+        assert_eq!(escape_result_with_current("u2665;"), (Some('♥'), Some(';')));
+    }
+
+    #[test]
+    fn test_long_unicode_escape_valid() {
+        assert_eq!(
+            escape_result_with_current("U0001F600;"),
+            (Some('😀'), Some(';'))
+        );
     }
 
     #[test]
