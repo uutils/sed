@@ -309,6 +309,60 @@ pub fn parse_character_class(
     compilation_error(lines, line, "Unterminated bracket expression")
 }
 
+/// Parse the regular expression delimited by the current line
+/// character and return it as a string.
+/// On return the line is on the closing delimiter.
+pub fn parse_regex(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<String> {
+    // Sanity checks
+    if line.eol() {
+        return compilation_error(lines, line, "unexpected end of line".to_string());
+    }
+
+    let delimiter = line.current();
+    if delimiter == '\\' {
+        return compilation_error(lines, line, "\\ cannot be used as a string delimiter");
+    }
+
+    line.advance(); // skip the opening delimiter
+    let mut result = String::new();
+
+    while !line.eol() {
+        match line.current() {
+            '[' if delimiter != '[' => {
+                let cc = parse_character_class(lines, line)?;
+                result.push_str(&cc);
+                continue;
+            }
+            '\\' => {
+                line.advance();
+                if line.eol() {
+                    return compilation_error(lines, line, "unterminated regular expression");
+                }
+                if line.current() == delimiter {
+                    // Push escaped delimiter
+                    result.push(line.current());
+                    line.advance();
+                    continue;
+                }
+                match parse_char_escape(line) {
+                    Some(decoded) => result.push(decoded),
+                    None => {
+                        // Pass through \<any> to RE engine for further treatment
+                        result.push('\\');
+                        result.push(line.current());
+                        line.advance();
+                    }
+                }
+                continue;
+            }
+            c if c == delimiter => return Ok(result),
+            c => result.push(c),
+        }
+        line.advance();
+    }
+    compilation_error(lines, line, "unterminated regular expression")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,5 +713,100 @@ mod tests {
         let lines = test_lines();
         let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[[x]");
+    }
+
+    // parse_regex
+    fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
+        let lines = ScriptLineProvider::new(vec![]); // Empty for tests
+        let line = ScriptCharProvider::new(input);
+        (lines, line)
+    }
+
+    #[test]
+    fn test_simple_regex() {
+        let (lines, mut line) = make_providers("/abc/");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "abc");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_regex_with_escaped_delimiter() {
+        let (lines, mut line) = make_providers("/ab\\/c/");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "ab/c");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_regex_with_escape_sequence() {
+        let (lines, mut line) = make_providers("/ab\\n/");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "ab\n");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn errors_on_unterminated_regex() {
+        let (lines, mut line) = make_providers("/unterminated");
+        let err = parse_regex(&lines, &mut line).unwrap_err();
+        assert!(err.to_string().contains("unterminated regular expression"));
+    }
+
+    #[test]
+    fn errors_on_backslash_delimiter() {
+        let (lines, mut line) = make_providers("\\bad");
+        let err = parse_regex(&lines, &mut line).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("\\ cannot be used as a string delimiter"));
+    }
+
+    #[test]
+    fn test_regex_with_character_class() {
+        let (lines, mut line) = make_providers("/[a-z]/");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "[a-z]");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_regex_with_bracket_delimiter() {
+        let (lines, mut line) = make_providers("[abc[");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "abc");
+        assert_eq!(line.current(), '[');
+    }
+
+    #[test]
+    fn test_bracket_regex_with_bracket_delimiter() {
+        let (lines, mut line) = make_providers("[a\\[0-9]bc[");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "a[0-9]bc");
+        assert_eq!(line.current(), '[');
+    }
+
+    #[test]
+    fn test_regex_with_escaped_bracket_in_character_class() {
+        let (lines, mut line) = make_providers("/[a\\]z]/");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "[a\\]z]");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_regex_with_delimiter_inside_character_class() {
+        let (lines, mut line) = make_providers("/[a/c]/");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "[a/c]");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_regex_with_escaped_paren_and_backslash() {
+        let (lines, mut line) = make_providers("/\\(\\\\/");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "\\(\\\\");
+        assert_eq!(line.current(), '/');
     }
 }
