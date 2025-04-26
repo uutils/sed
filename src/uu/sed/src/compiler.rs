@@ -19,9 +19,6 @@ use uucore::error::UResult;
 // A global, immutable map of command properties, initialized on first access
 static CMD_MAP: Lazy<HashMap<char, CommandSpec>> = Lazy::new(build_command_map);
 
-// A global, immutable map of command properties, initialized on first access
-static CMD_MAP: Lazy<HashMap<char, SFormat>> = Lazy::new(build_command_map);
-
 // Types of command arguments recognized by the parser
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandArgs {
