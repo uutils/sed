@@ -328,11 +328,8 @@ fn scan_delimiter(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> 
 /// Parse the regular expression delimited by the current line
 /// character and return it as a string.
 /// On return the line is on the closing delimiter.
-pub fn parse_regex(
-    lines: &ScriptLineProvider,
-    line: &mut ScriptCharProvider,
-) -> UResult<String> {
-        let delimiter = scan_delimiter(lines, line)?;
+pub fn parse_regex(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<String> {
+    let delimiter = scan_delimiter(lines, line)?;
     let mut result = String::new();
 
     while !line.eol() {
@@ -345,11 +342,7 @@ pub fn parse_regex(
             '\\' => {
                 line.advance();
                 if line.eol() {
-                    return compilation_error(
-                        lines,
-                        line,
-                        "unterminated regular expression",
-                    );
+                    return compilation_error(lines, line, "unterminated regular expression");
                 }
                 if line.current() == delimiter {
                     // Push escaped delimiter
@@ -373,11 +366,49 @@ pub fn parse_regex(
         }
         line.advance();
     }
-    compilation_error(
-        lines,
-        line,
-        "unterminated regular expression",
-    )
+    compilation_error(lines, line, "unterminated regular expression")
+}
+
+/// Parse the transliteration string delimited by the current line
+/// character and return it as a string.
+/// On return the line is on the closing delimiter.
+pub fn parse_transliteration(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+) -> UResult<String> {
+    let delimiter = scan_delimiter(lines, line)?;
+    let mut result = String::new();
+
+    while !line.eol() {
+        match line.current() {
+            '\\' => {
+                line.advance();
+                if line.eol() {
+                    return compilation_error(lines, line, "unterminated transliteration string");
+                }
+                if line.current() == delimiter || line.current() == '\\' {
+                    // Push only the escaped character
+                    result.push(line.current());
+                    line.advance();
+                    continue;
+                }
+                match parse_char_escape(line) {
+                    Some(decoded) => result.push(decoded),
+                    None => {
+                        // Pass through \<any> to tr for literal use
+                        result.push('\\');
+                        result.push(line.current());
+                        line.advance();
+                    }
+                }
+                continue;
+            }
+            c if c == delimiter => return Ok(result),
+            c => result.push(c),
+        }
+        line.advance();
+    }
+    compilation_error(lines, line, "unterminated transliteration string")
 }
 
 #[cfg(test)]
@@ -771,10 +802,19 @@ mod tests {
     }
 
     #[test]
+    fn errors_on_esc_at_re_eol() {
+        let (lines, mut line) = make_providers("/foo\\");
+        let err = parse_regex(&lines, &mut line).unwrap_err();
+        assert!(err.to_string().contains("unterminated regular expression"));
+    }
+
+    #[test]
     fn errors_on_backslash_delimiter() {
         let (lines, mut line) = make_providers("\\bad");
         let err = parse_regex(&lines, &mut line).unwrap_err();
-        assert!(err.to_string().contains("\\ cannot be used as a string delimiter"));
+        assert!(err
+            .to_string()
+            .contains("\\ cannot be used as a string delimiter"));
     }
 
     #[test]
@@ -823,5 +863,56 @@ mod tests {
         let parsed = parse_regex(&lines, &mut line).unwrap();
         assert_eq!(parsed, "\\(\\\\");
         assert_eq!(line.current(), '/');
+    }
+
+    // parse_transliteration
+    #[test]
+    fn test_simple_transliteration() {
+        let (lines, mut line) = make_providers("/abc/");
+        let parsed = parse_transliteration(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "abc");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_transliteration_with_escaped_delimiter() {
+        let (lines, mut line) = make_providers("/ab\\/c/");
+        let parsed = parse_transliteration(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "ab/c");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_transliteration_with_escaped_backslash() {
+        let (lines, mut line) = make_providers("/ab\\\\c/");
+        let parsed = parse_transliteration(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "ab\\c");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_transliteration_with_escape_sequence() {
+        let (lines, mut line) = make_providers("/ab\\n/");
+        let parsed = parse_transliteration(&lines, &mut line).unwrap();
+        assert_eq!(parsed, "ab\n");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn errors_on_unterminated_transliteration() {
+        let (lines, mut line) = make_providers("/unterminated");
+        let err = parse_transliteration(&lines, &mut line).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("unterminated transliteration string"));
+    }
+
+    #[test]
+    fn errors_on_esc_at_tr_eol() {
+        let (lines, mut line) = make_providers("/foo\\");
+        let err = parse_transliteration(&lines, &mut line).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("unterminated transliteration string"));
     }
 }
