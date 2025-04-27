@@ -309,11 +309,10 @@ pub fn parse_character_class(
     compilation_error(lines, line, "Unterminated bracket expression")
 }
 
-/// Parse the regular expression delimited by the current line
-/// character and return it as a string.
-/// On return the line is on the closing delimiter.
-pub fn parse_regex(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<String> {
-    // Sanity checks
+/// Scan and return the opening delimiter of a delimited string
+/// Advances the line past the opening delimiter
+fn scan_delimiter(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<char> {
+    // Sanity check
     if line.eol() {
         return compilation_error(lines, line, "unexpected end of line".to_string());
     }
@@ -322,8 +321,18 @@ pub fn parse_regex(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) ->
     if delimiter == '\\' {
         return compilation_error(lines, line, "\\ cannot be used as a string delimiter");
     }
-
     line.advance(); // skip the opening delimiter
+    Ok(delimiter)
+}
+
+/// Parse the regular expression delimited by the current line
+/// character and return it as a string.
+/// On return the line is on the closing delimiter.
+pub fn parse_regex(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+) -> UResult<String> {
+        let delimiter = scan_delimiter(lines, line)?;
     let mut result = String::new();
 
     while !line.eol() {
@@ -336,7 +345,11 @@ pub fn parse_regex(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) ->
             '\\' => {
                 line.advance();
                 if line.eol() {
-                    return compilation_error(lines, line, "unterminated regular expression");
+                    return compilation_error(
+                        lines,
+                        line,
+                        "unterminated regular expression",
+                    );
                 }
                 if line.current() == delimiter {
                     // Push escaped delimiter
@@ -360,7 +373,11 @@ pub fn parse_regex(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) ->
         }
         line.advance();
     }
-    compilation_error(lines, line, "unterminated regular expression")
+    compilation_error(
+        lines,
+        line,
+        "unterminated regular expression",
+    )
 }
 
 #[cfg(test)]
@@ -757,9 +774,7 @@ mod tests {
     fn errors_on_backslash_delimiter() {
         let (lines, mut line) = make_providers("\\bad");
         let err = parse_regex(&lines, &mut line).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("\\ cannot be used as a string delimiter"));
+        assert!(err.to_string().contains("\\ cannot be used as a string delimiter"));
     }
 
     #[test]
