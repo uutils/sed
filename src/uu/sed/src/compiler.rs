@@ -8,13 +8,20 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{CliOptions, Command, CommandData, ScriptValue};
-use crate::delimited_parser::compilation_error;
+use crate::command::{Address, AddressType, AddressValue, CliOptions, Command, ScriptValue};
+use crate::delimited_parser::{compilation_error, parse_regex};
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
 use once_cell::sync::Lazy;
+use regex::Regex;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use uucore::error::UResult;
+
+thread_local! {
+    /// The previously saved RE. It is reused when specifying an empty one.
+    static SAVED_REGEX: RefCell<Option<Regex>> = const { RefCell::new(None) };
+}
 
 // A global, immutable map of command properties, initialized on first access
 static CMD_MAP: Lazy<HashMap<char, CommandSpec>> = Lazy::new(build_command_map);
@@ -203,9 +210,9 @@ pub fn compile(
     scripts: Vec<ScriptValue>,
     cli_options: &mut CliOptions,
 ) -> UResult<Option<Box<Command>>> {
-    let mut line_provider = ScriptLineProvider::new(scripts);
+    let mut make_providers = ScriptLineProvider::new(scripts);
 
-    let result = compile_thread(&mut line_provider, cli_options)?;
+    let result = compile_thread(&mut make_providers, cli_options)?;
     // TODO: fix-up labels, check used labels, setup append & match structures
     Ok(result)
 }
@@ -238,18 +245,8 @@ fn compile_thread(
                         continue 'next_char;
                     }
 
-                    let mut cmd = Box::new(Command {
-                        next: None,
-                        addr1: None,
-                        addr2: None,
-                        start_line: Some(0),
-                        text: None,
-                        data: CommandData::None,
-                        code: '_',
-                        non_select: false,
-                    });
-
-                    let n_addr = compile_addresses(&mut line, &mut cmd);
+                    let mut cmd = Box::new(Command::default());
+                    let n_addr = compile_addresses(lines, &mut line, &mut cmd)?;
                     let mut cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
 
                     if cmd_spec.args == CommandArgs::NonSelect {
@@ -275,11 +272,150 @@ fn compile_thread(
     }
 }
 
-// Compile a command's addresses into cmd.
-// Return the number of addresses encountered.
-fn compile_addresses(_line: &mut ScriptCharProvider, _cmd: &mut Command) -> usize {
-    // TODO: implement address parsing
-    0
+/// Return true if c is a valid character for specifying a context address
+fn is_address_char(c: char) -> bool {
+    matches!(c, '0'..='9' | '/' | '\\' | '$')
+}
+
+/// Compile a command's optional address range into cmd.
+/// Return the number of addresses encountered.
+fn compile_addresses(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<usize> {
+    let mut n_addr = 0;
+
+    line.eat_spaces();
+    if !line.eol() && is_address_char(line.current()) {
+        if let Ok(addr1) = compile_address(lines, line) {
+            cmd.addr1 = Some(addr1);
+            n_addr += 1;
+        }
+    }
+
+    line.eat_spaces();
+    if n_addr == 1 && !line.eol() && line.current() == ',' {
+        line.advance();
+        line.eat_spaces();
+        if !line.eol() {
+            if let Ok(addr2) = compile_address(lines, line) {
+                cmd.addr2 = Some(addr2);
+                n_addr += 1;
+            }
+        }
+    }
+
+    Ok(n_addr)
+}
+
+/// Compile and return a single range address specification.
+fn compile_address(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<Address> {
+    let mut icase = false;
+
+    if line.eol() {
+        return compilation_error(lines, line, "expected context address");
+    }
+
+    match line.current() {
+        '\\' | '/' => {
+            // Regular expression
+            if line.current() == '\\' {
+                // The next character is an arbitrary delimiter
+                line.advance();
+            }
+            let re = parse_regex(lines, line)?;
+            // Skip over delimiter
+            line.advance();
+
+            line.eat_spaces();
+            if !line.eol() && line.current() == 'I' {
+                icase = true;
+                line.advance();
+            }
+
+            Ok(Address {
+                atype: AddressType::Re,
+                value: AddressValue::Regex(compile_regex(lines, line, &re, icase)?),
+            })
+        }
+        '$' => {
+            line.advance();
+            Ok(Address {
+                atype: AddressType::Last,
+                value: AddressValue::LineNumber(0),
+            })
+        }
+        '+' => {
+            line.advance();
+            let number = parse_number(lines, line)?;
+            Ok(Address {
+                atype: AddressType::RelLine,
+                value: AddressValue::LineNumber(number),
+            })
+        }
+        c if c.is_ascii_digit() => {
+            let number = parse_number(lines, line)?;
+            Ok(Address {
+                atype: AddressType::Line,
+                value: AddressValue::LineNumber(number),
+            })
+        }
+        _ => panic!("invalid context address"),
+    }
+}
+
+/// Parse and return the decimal number at the current line position.
+/// Advance the line to first non-digit or EOL.
+fn parse_number(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<usize> {
+    let mut num_str = String::new();
+
+    while !line.eol() && line.current().is_ascii_digit() {
+        num_str.push(line.current());
+        line.advance();
+    }
+
+    num_str
+        .parse::<usize>()
+        .map_err(|_| format!("invalid number '{}'", num_str))
+        .map_err(|msg| compilation_error::<usize>(lines, line, msg).unwrap_err())
+}
+
+/// Compile the provided regular expression string into a corresponding engine.
+fn compile_regex(
+    lines: &ScriptLineProvider,
+    line: &ScriptCharProvider,
+    pattern: &str,
+    icase: bool,
+) -> UResult<Regex> {
+    if pattern.is_empty() {
+        SAVED_REGEX.with(|cell| {
+            if let Some(existing) = &*cell.borrow() {
+                Ok(existing.clone())
+            } else {
+                compilation_error(lines, line, "no previously compiled regex available")
+            }
+        })
+    } else {
+        let full_pattern = if icase {
+            if pattern.is_empty() {
+                return compilation_error(lines, line, "cannot specify a modifier on an empty RE");
+            }
+            format!("(?i){}", pattern)
+        } else {
+            pattern.to_string()
+        };
+
+        let compiled = Regex::new(&full_pattern).map_err(|e| {
+            compilation_error::<Regex>(lines, line, format!("invalid regex '{}': {}", pattern, e))
+                .unwrap_err()
+        })?;
+
+        SAVED_REGEX.with(|cell| {
+            *cell.borrow_mut() = Some(compiled.clone());
+        });
+        Ok(compiled)
+    }
 }
 
 // Compile the specified command
@@ -378,6 +514,12 @@ fn lookup_command(cmd: char) -> Option<&'static CommandSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
+        let lines = ScriptLineProvider::new(vec![]); // Empty for tests
+        let line = ScriptCharProvider::new(input);
+        (lines, line)
+    }
 
     // lookup_command
     #[test]
@@ -558,5 +700,310 @@ mod tests {
         assert!(result.is_ok());
         let spec = result.unwrap();
         assert_eq!(spec.code, 'a');
+    }
+
+    // parse_number
+    #[test]
+    fn test_parse_number_basic() {
+        let (lines, mut chars) = make_providers("123abc");
+        assert_eq!(parse_number(&lines, &mut chars).unwrap(), 123);
+        assert_eq!(chars.current(), 'a'); // Should stop at first non-digit
+    }
+
+    #[test]
+    fn test_parse_number_invalid() {
+        let (lines, mut chars) = make_providers("abc");
+        assert!(parse_number(&lines, &mut chars).is_err());
+    }
+
+    // compile_re
+    fn dummy_providers() -> (ScriptLineProvider, ScriptCharProvider) {
+        make_providers("dummy input")
+    }
+
+    #[test]
+    fn test_compile_re_basic() {
+        let (lines, chars) = dummy_providers();
+        let regex = compile_regex(&lines, &chars, "abc", false).unwrap();
+        assert!(regex.is_match("abc"));
+        assert!(!regex.is_match("ABC"));
+    }
+
+    #[test]
+    fn test_compile_re_case_insensitive() {
+        let (lines, chars) = dummy_providers();
+        let regex = compile_regex(&lines, &chars, "abc", true).unwrap();
+        assert!(regex.is_match("abc"));
+        assert!(regex.is_match("ABC"));
+        assert!(regex.is_match("AbC"));
+    }
+
+    #[test]
+    fn test_compile_re_saved_and_reuse() {
+        // Save a regex
+        let (lines1, chars1) = dummy_providers();
+        let _ = compile_regex(&lines1, &chars1, "abc", false).unwrap();
+
+        // Now try to reuse it
+        let (lines2, chars2) = dummy_providers();
+        let reused = compile_regex(&lines2, &chars2, "", false).unwrap();
+
+        assert!(reused.is_match("abc"));
+    }
+
+    #[test]
+    fn test_compile_re_empty_and_not_saved() {
+        // Clear saved regex
+        SAVED_REGEX.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+
+        let (lines, chars) = dummy_providers();
+        let result = compile_regex(&lines, &chars, "", false);
+        assert!(result.is_err()); // Should fail because nothing was saved
+    }
+
+    #[test]
+    fn test_compile_re_invalid() {
+        let (lines, chars) = dummy_providers();
+        let result = compile_regex(&lines, &chars, "a[d", false);
+        assert!(result.is_err()); // Should fail due to open bracketed expression
+    }
+
+    // compile_address
+    #[test]
+    fn test_compile_addr_line_number() {
+        let (lines, mut chars) = make_providers("42");
+        let addr = compile_address(&lines, &mut chars).unwrap();
+        assert!(matches!(addr.atype, AddressType::Line));
+        if let AddressValue::LineNumber(n) = addr.value {
+            assert_eq!(n, 42);
+        } else {
+            panic!("expected LineNumber address value");
+        }
+    }
+
+    #[test]
+    fn test_compile_addr_relative_line() {
+        let (lines, mut chars) = make_providers("+7");
+        let addr = compile_address(&lines, &mut chars).unwrap();
+        assert!(matches!(addr.atype, AddressType::RelLine));
+        if let AddressValue::LineNumber(n) = addr.value {
+            assert_eq!(n, 7);
+        } else {
+            panic!("expected LineNumber address value");
+        }
+    }
+
+    #[test]
+    fn test_compile_addr_last_line() {
+        let (lines, mut chars) = make_providers("$");
+        let addr = compile_address(&lines, &mut chars).unwrap();
+        assert!(matches!(addr.atype, AddressType::Last));
+    }
+
+    #[test]
+    fn test_compile_addr_regex() {
+        let (lines, mut chars) = make_providers("/hello/");
+        let addr = compile_address(&lines, &mut chars).unwrap();
+        assert!(matches!(addr.atype, AddressType::Re));
+        if let AddressValue::Regex(re) = addr.value {
+            assert!(re.is_match("hello"));
+        } else {
+            panic!("expected Regex address value");
+        }
+    }
+
+    #[test]
+    fn test_compile_addr_regex_other_delimiter() {
+        let (lines, mut chars) = make_providers("\\#hello#");
+        let addr = compile_address(&lines, &mut chars).unwrap();
+        assert!(matches!(addr.atype, AddressType::Re));
+        if let AddressValue::Regex(re) = addr.value {
+            assert!(re.is_match("hello"));
+        } else {
+            panic!("expected Regex address value");
+        }
+    }
+
+    #[test]
+    fn test_compile_addr_regex_with_modifier() {
+        let (lines, mut chars) = make_providers("/hello/I");
+        let addr = compile_address(&lines, &mut chars).unwrap();
+        assert!(matches!(addr.atype, AddressType::Re));
+        if let AddressValue::Regex(re) = addr.value {
+            assert!(re.is_match("HELLO")); // case-insensitive
+        } else {
+            panic!("expected Regex address value");
+        }
+    }
+
+    #[test]
+    fn test_compile_addr_empty_regex_saved() {
+        // First save a regex
+        let (lines1, mut chars1) = make_providers("/saved/");
+        let _ = compile_address(&lines1, &mut chars1).unwrap();
+
+        // Then reuse it with empty regex
+        let (lines2, mut chars2) = make_providers("//");
+        let addr = compile_address(&lines2, &mut chars2).unwrap();
+        assert!(matches!(addr.atype, AddressType::Re));
+        if let AddressValue::Regex(re) = addr.value {
+            assert!(re.is_match("saved"));
+        } else {
+            panic!("expected Regex address value");
+        }
+    }
+
+    // compile_addresses
+    #[test]
+    fn test_compile_single_line_address() {
+        let (lines, mut chars) = make_providers("42");
+        let mut cmd = Command::default();
+        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+
+        assert_eq!(n_addr, 1);
+        assert!(matches!(
+            cmd.addr1.as_ref().unwrap().atype,
+            AddressType::Line
+        ));
+    }
+
+    #[test]
+    fn test_compile_relative_address_range() {
+        let (lines, mut chars) = make_providers("2,+3");
+        let mut cmd = Command::default();
+        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+
+        assert_eq!(n_addr, 2);
+
+        assert!(matches!(
+            cmd.addr1.as_ref().unwrap().atype,
+            AddressType::Line
+        ));
+        let v1 = match &cmd.addr1.as_ref().unwrap().value {
+            AddressValue::LineNumber(n) => *n,
+            _ => panic!(),
+        };
+        assert_eq!(v1, 2);
+
+        assert!(matches!(
+            cmd.addr2.as_ref().unwrap().atype,
+            AddressType::RelLine
+        ));
+        let v2 = match &cmd.addr2.as_ref().unwrap().value {
+            AddressValue::LineNumber(n) => *n,
+            _ => panic!(),
+        };
+        assert_eq!(v2, 3);
+    }
+
+    #[test]
+    fn test_compile_last_address() {
+        let (lines, mut chars) = make_providers("$");
+        let mut cmd = Command::default();
+        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+
+        assert_eq!(n_addr, 1);
+        assert!(matches!(
+            cmd.addr1.as_ref().unwrap().atype,
+            AddressType::Last
+        ));
+    }
+
+    #[test]
+    fn test_compile_absolute_address_range() {
+        let (lines, mut chars) = make_providers("5,10");
+        let mut cmd = Command::default();
+        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+
+        assert_eq!(n_addr, 2);
+        assert!(matches!(
+            cmd.addr1.as_ref().unwrap().atype,
+            AddressType::Line
+        ));
+        assert!(matches!(
+            cmd.addr2.as_ref().unwrap().atype,
+            AddressType::Line
+        ));
+    }
+
+    #[test]
+    fn test_compile_regex_address() {
+        let (lines, mut chars) = make_providers("/foo/");
+        let mut cmd = Command::default();
+        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+
+        assert_eq!(n_addr, 1);
+        assert!(matches!(cmd.addr1.as_ref().unwrap().atype, AddressType::Re));
+        if let AddressValue::Regex(re) = &cmd.addr1.as_ref().unwrap().value {
+            assert!(re.is_match("foo"));
+            assert!(!re.is_match("bar"));
+        } else {
+            panic!("expected a regex address");
+        }
+    }
+
+    #[test]
+    fn test_compile_regex_address_range_other_delimiter() {
+        let (lines, mut chars) = make_providers("\\#foo# , \\|bar|");
+        let mut cmd = Command::default();
+        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+
+        assert_eq!(n_addr, 2);
+
+        assert!(matches!(cmd.addr1.as_ref().unwrap().atype, AddressType::Re));
+        if let AddressValue::Regex(re) = &cmd.addr1.as_ref().unwrap().value {
+            assert!(re.is_match("foo"));
+            assert!(!re.is_match("bar"));
+        } else {
+            panic!("expected a regex address");
+        }
+
+        assert!(matches!(cmd.addr2.as_ref().unwrap().atype, AddressType::Re));
+        if let AddressValue::Regex(re) = &cmd.addr2.as_ref().unwrap().value {
+            assert!(re.is_match("bar"));
+            assert!(!re.is_match("foo"));
+        } else {
+            panic!("expected a regex address");
+        }
+    }
+
+    #[test]
+    fn test_compile_regex_with_modifier() {
+        let (lines, mut chars) = make_providers("/foo/I");
+        let mut cmd = Command::default();
+        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+
+        assert_eq!(n_addr, 1);
+        assert!(matches!(cmd.addr1.as_ref().unwrap().atype, AddressType::Re));
+        if let AddressValue::Regex(re) = &cmd.addr1.as_ref().unwrap().value {
+            assert!(re.is_match("FOO"));
+            assert!(re.is_match("foo"));
+        } else {
+            panic!("expected a regex address with case-insensitive match");
+        }
+    }
+
+    #[test]
+    fn test_compile_re_reuse_saved() {
+        // First save a regex
+        let (lines1, mut chars1) = make_providers("/abc/");
+        let mut cmd1 = Command::default();
+        compile_addresses(&lines1, &mut chars1, &mut cmd1).unwrap();
+
+        // Now reuse it
+        let (lines2, mut chars2) = make_providers("//");
+        let mut cmd2 = Command::default();
+        let n_addr = compile_addresses(&lines2, &mut chars2, &mut cmd2).unwrap();
+
+        assert_eq!(n_addr, 1);
+        assert!(matches!(
+            cmd2.addr1.as_ref().unwrap().atype,
+            AddressType::Re
+        ));
+        if let AddressValue::Regex(re) = &cmd2.addr1.as_ref().unwrap().value {
+            assert!(re.is_match("abc"));
+        }
     }
 }

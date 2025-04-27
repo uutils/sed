@@ -107,6 +107,21 @@ pub struct Command {
     pub next: Option<Box<Command>>, // Pointer to next command
 }
 
+impl Default for Command {
+    fn default() -> Self {
+        Command {
+            code: '_',
+            addr1: None,
+            addr2: None,
+            non_select: false,
+            start_line: Some(0),
+            text: None,
+            data: CommandData::None,
+            next: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum CommandData {
     None,
