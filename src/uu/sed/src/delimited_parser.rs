@@ -195,7 +195,7 @@ fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
 /// This functionality is needed to avoid terminating delimited
 /// sequences when a delimiter appears within a character class.
 /// While at it, handle escaped characters for the sake of consistency.
-pub fn parse_character_class(
+fn parse_character_class(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
 ) -> UResult<String> {
@@ -414,6 +414,12 @@ pub fn parse_transliteration(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
+        let lines = ScriptLineProvider::new(vec![]); // Empty for tests
+        let line = ScriptCharProvider::new(input);
+        (lines, line)
+    }
 
     // parse_numeric_escape
     #[test]
@@ -764,12 +770,6 @@ mod tests {
     }
 
     // parse_regex
-    fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
-        let lines = ScriptLineProvider::new(vec![]); // Empty for tests
-        let line = ScriptCharProvider::new(input);
-        (lines, line)
-    }
-
     #[test]
     fn test_simple_regex() {
         let (lines, mut line) = make_providers("/abc/");
