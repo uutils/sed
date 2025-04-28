@@ -246,7 +246,7 @@ fn compile_thread(
                     }
 
                     let mut cmd = Box::new(Command::default());
-                    let n_addr = compile_addresses(lines, &mut line, &mut cmd)?;
+                    let n_addr = compile_address_range(lines, &mut line, &mut cmd)?;
                     let mut cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
 
                     if cmd_spec.args == CommandArgs::NonSelect {
@@ -279,7 +279,7 @@ fn is_address_char(c: char) -> bool {
 
 /// Compile a command's optional address range into cmd.
 /// Return the number of addresses encountered.
-fn compile_addresses(
+fn compile_address_range(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
@@ -855,12 +855,12 @@ mod tests {
         }
     }
 
-    // compile_addresses
+    // compile_address_range
     #[test]
     fn test_compile_single_line_address() {
         let (lines, mut chars) = make_providers("42");
         let mut cmd = Command::default();
-        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -873,7 +873,7 @@ mod tests {
     fn test_compile_relative_address_range() {
         let (lines, mut chars) = make_providers("2,+3");
         let mut cmd = Command::default();
-        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 2);
 
@@ -902,7 +902,7 @@ mod tests {
     fn test_compile_last_address() {
         let (lines, mut chars) = make_providers("$");
         let mut cmd = Command::default();
-        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -915,7 +915,7 @@ mod tests {
     fn test_compile_absolute_address_range() {
         let (lines, mut chars) = make_providers("5,10");
         let mut cmd = Command::default();
-        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 2);
         assert!(matches!(
@@ -932,7 +932,7 @@ mod tests {
     fn test_compile_regex_address() {
         let (lines, mut chars) = make_providers("/foo/");
         let mut cmd = Command::default();
-        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(cmd.addr1.as_ref().unwrap().atype, AddressType::Re));
@@ -948,7 +948,7 @@ mod tests {
     fn test_compile_regex_address_range_other_delimiter() {
         let (lines, mut chars) = make_providers("\\#foo# , \\|bar|");
         let mut cmd = Command::default();
-        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 2);
 
@@ -973,7 +973,7 @@ mod tests {
     fn test_compile_regex_with_modifier() {
         let (lines, mut chars) = make_providers("/foo/I");
         let mut cmd = Command::default();
-        let n_addr = compile_addresses(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(cmd.addr1.as_ref().unwrap().atype, AddressType::Re));
@@ -990,12 +990,12 @@ mod tests {
         // First save a regex
         let (lines1, mut chars1) = make_providers("/abc/");
         let mut cmd1 = Command::default();
-        compile_addresses(&lines1, &mut chars1, &mut cmd1).unwrap();
+        compile_address_range(&lines1, &mut chars1, &mut cmd1).unwrap();
 
         // Now reuse it
         let (lines2, mut chars2) = make_providers("//");
         let mut cmd2 = Command::default();
-        let n_addr = compile_addresses(&lines2, &mut chars2, &mut cmd2).unwrap();
+        let n_addr = compile_address_range(&lines2, &mut chars2, &mut cmd2).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
