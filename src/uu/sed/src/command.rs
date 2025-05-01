@@ -18,7 +18,7 @@ use std::path::PathBuf; // For file descriptors and equivalent
 
 // Compilation and processing options provided mostly through the
 // command-line interface
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CliOptions {
     // Command-line flags with corresponding names
     pub all_output_files: bool,

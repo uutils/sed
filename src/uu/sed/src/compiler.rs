@@ -1006,4 +1006,85 @@ mod tests {
             assert!(re.is_match("abc"));
         }
     }
+
+    // compile_thread
+    fn make_provider(lines: &[&str]) -> ScriptLineProvider {
+        let input = lines
+            .iter()
+            .map(|s| ScriptValue::StringVal(s.to_string()))
+            .collect();
+        ScriptLineProvider::new(input)
+    }
+
+    fn make_cli_options() -> CliOptions {
+        CliOptions::default()
+    }
+
+    #[test]
+    fn test_compile_thread_empty_input() {
+        let mut provider = make_provider(&[]);
+        let mut opts = make_cli_options();
+
+        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_compile_thread_comment_only() {
+        let mut provider = make_provider(&["# comment", "   ", ";;"]);
+        let mut opts = make_cli_options();
+
+        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_compile_thread_single_command() {
+        let mut provider = make_provider(&["42q"]);
+        let mut opts = make_cli_options();
+
+        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let cmd = result.unwrap();
+
+        assert_eq!(cmd.code, 'q');
+
+        let addr = cmd.addr1.as_ref().expect("addr1 should be set");
+        assert!(matches!(addr.atype, AddressType::Line));
+
+        let value = match &addr.value {
+            AddressValue::LineNumber(n) => *n,
+            _ => panic!(),
+        };
+        assert_eq!(value, 42);
+
+        assert!(cmd.next.is_none());
+    }
+
+    #[test]
+    fn test_compile_thread_multiple_lines() {
+        let mut provider = make_provider(&["1q", "2d"]);
+        let mut opts = make_cli_options();
+
+        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let first = result.unwrap();
+
+        assert_eq!(first.code, 'q');
+        let second = first.next.unwrap();
+        assert_eq!(second.code, 'd');
+        assert!(second.next.is_none());
+    }
+
+    #[test]
+    fn test_compile_thread_single_line_multiple_commands() {
+        let mut provider = make_provider(&["1q;2d"]);
+        let mut opts = make_cli_options();
+
+        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let first = result.unwrap();
+
+        assert_eq!(first.code, 'q');
+        let second = first.next.unwrap();
+        assert_eq!(second.code, 'd');
+        assert!(second.next.is_none());
+    }
 }
