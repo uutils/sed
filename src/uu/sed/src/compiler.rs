@@ -1112,4 +1112,27 @@ mod tests {
         assert_eq!(second.code, 'd');
         assert!(second.next.is_none());
     }
+
+    // compile
+    #[test]
+    fn test_compile_single_command() {
+        let scripts = vec![ScriptValue::StringVal("1q".to_string())];
+        let mut opts = CliOptions::default();
+
+        let result = compile(scripts, &mut opts).unwrap();
+        let cmd = result.unwrap();
+
+        assert_eq!(cmd.code, 'q');
+
+        let addr = cmd.addr1.as_ref().unwrap();
+        assert!(matches!(addr.atype, AddressType::Line));
+
+        let line = match &addr.value {
+            AddressValue::LineNumber(n) => *n,
+            _ => panic!(),
+        };
+        assert_eq!(line, 1);
+
+        assert!(cmd.next.is_none());
+    }
 }
