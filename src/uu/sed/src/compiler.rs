@@ -249,6 +249,7 @@ fn compile_thread(
                     let n_addr = compile_address_range(lines, &mut line, &mut cmd)?;
                     let mut cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
 
+                    // The ! command shall be followed by another one
                     if cmd_spec.args == CommandArgs::NonSelect {
                         line.advance();
                         line.eat_spaces();
@@ -445,10 +446,10 @@ fn compile_command(
                 );
             }
         }
+        CommandArgs::NonSelect => { // !
+        }
         // TODO
         CommandArgs::Text => { // a c i
-        }
-        CommandArgs::NonSelect => { // !
         }
         CommandArgs::Group => { // {
         }
@@ -1047,6 +1048,30 @@ mod tests {
         let cmd = result.unwrap();
 
         assert_eq!(cmd.code, 'q');
+        assert!(!cmd.non_select);
+
+        let addr = cmd.addr1.as_ref().expect("addr1 should be set");
+        assert!(matches!(addr.atype, AddressType::Line));
+
+        let value = match &addr.value {
+            AddressValue::LineNumber(n) => *n,
+            _ => panic!(),
+        };
+        assert_eq!(value, 42);
+
+        assert!(cmd.next.is_none());
+    }
+
+    #[test]
+    fn test_compile_thread_non_selected_single_command() {
+        let mut provider = make_provider(&["42!p"]);
+        let mut opts = make_cli_options();
+
+        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let cmd = result.unwrap();
+
+        assert_eq!(cmd.code, 'p');
+        assert!(cmd.non_select);
 
         let addr = cmd.addr1.as_ref().expect("addr1 should be set");
         assert!(matches!(addr.atype, AddressType::Line));
