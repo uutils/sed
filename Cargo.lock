@@ -369,6 +369,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
+name = "memmap2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83faa42c0a078c393f6b29d5db232d8be22776a891f8f56e5284faee4a20b327"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "nix"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -666,6 +675,7 @@ dependencies = [
  "clap_mangen",
  "ctor",
  "libc",
+ "memmap2",
  "phf",
  "phf_codegen",
  "pretty_assertions",
@@ -863,6 +873,7 @@ name = "uu_sed"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "memmap2",
  "once_cell",
  "regex",
  "tempfile",
