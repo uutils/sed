@@ -8,8 +8,9 @@
 # sed
 
 Rust reimplementation of the [sed utility](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sed.html)
-with some [GNU sed](https://www.gnu.org/software/sed/manual/sed.html)
-and [FreeBSD sed](https://man.freebsd.org/cgi/man.cgi?sed(1)) extensions.
+with some [GNU sed](https://www.gnu.org/software/sed/manual/sed.html),
+[FreeBSD sed](https://man.freebsd.org/cgi/man.cgi?sed(1)),
+and other extensions.
 
 ## Installation
 
@@ -23,6 +24,17 @@ cd sed
 cargo build --release
 cargo run --release
 ```
+## Extensions
+### GNU
+* Command-line arguments can be specified in long (`--`) form.
+* Spaces can precede a regular expression modifier.
+
+### BSD and GNU
+* The second address in a range can be specified as a relative address with +N.
+
+### Other
+* Unicode characters can be specified in regular expression pattern, replacement
+  and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
 
 ## License
 

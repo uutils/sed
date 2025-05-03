@@ -28,6 +28,11 @@ impl ScriptCharProvider {
         }
     }
 
+    /// Retreats current position by specified number or to beginning.
+    pub fn retreat(&mut self, n: usize) {
+        self.pos = self.pos.saturating_sub(n);
+    }
+
     /// Returns the current character. Panics if out of bounds.
     pub fn current(&self) -> char {
         self.line[self.pos]
@@ -97,5 +102,35 @@ mod tests {
         let mut provider = ScriptCharProvider::new("  \t\nabc");
         provider.eat_spaces();
         assert_eq!(provider.current(), 'a');
+    }
+
+    #[test]
+    fn test_retreat_normal() {
+        let mut chars = ScriptCharProvider::new("abcdef");
+        chars.pos = 4; // simulate position at 'e'
+        chars.retreat(2);
+
+        assert_eq!(chars.get_pos(), 2);
+        assert_eq!(chars.current(), 'c');
+    }
+
+    #[test]
+    fn test_retreat_to_start() {
+        let mut chars = ScriptCharProvider::new("abcdef");
+        chars.pos = 3; // simulate position at 'd'
+        chars.retreat(5); // retreat more than current pos
+
+        assert_eq!(chars.get_pos(), 0);
+        assert_eq!(chars.current(), 'a');
+    }
+
+    #[test]
+    fn test_retreat_zero() {
+        let mut chars = ScriptCharProvider::new("abcdef");
+        chars.pos = 2; // at 'c'
+        chars.retreat(0); // retreat by 0
+
+        assert_eq!(chars.get_pos(), 2);
+        assert_eq!(chars.current(), 'c');
     }
 }

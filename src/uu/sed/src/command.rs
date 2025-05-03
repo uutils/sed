@@ -18,7 +18,7 @@ use std::path::PathBuf; // For file descriptors and equivalent
 
 // Compilation and processing options provided mostly through the
 // command-line interface
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CliOptions {
     // Command-line flags with corresponding names
     pub all_output_files: bool,
@@ -105,6 +105,21 @@ pub struct Command {
     pub text: Option<String>,       // Text for ':', 'a', 'c', 'i', 'r', 'w'
     pub data: CommandData,          // Command-specific data
     pub next: Option<Box<Command>>, // Pointer to next command
+}
+
+impl Default for Command {
+    fn default() -> Self {
+        Command {
+            code: '_',
+            addr1: None,
+            addr2: None,
+            non_select: false,
+            start_line: Some(0),
+            text: None,
+            data: CommandData::None,
+            next: None,
+        }
+    }
 }
 
 #[derive(Debug)]

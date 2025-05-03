@@ -10,6 +10,7 @@
 
 pub mod command;
 pub mod compiler;
+pub mod delimited_parser;
 pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;
