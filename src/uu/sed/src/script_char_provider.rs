@@ -30,11 +30,7 @@ impl ScriptCharProvider {
 
     /// Retreats current position by specified number or to beginning.
     pub fn retreat(&mut self, n: usize) {
-        if n > self.pos {
-            self.pos = 0;
-        } else {
-            self.pos -= n;
-        }
+        self.pos = self.pos.saturating_sub(n);
     }
 
     /// Returns the current character. Panics if out of bounds.

@@ -90,10 +90,7 @@ fn create_control_char(x: char) -> Option<char> {
         return None;
     }
 
-    let mut c = x;
-    if c.is_ascii_lowercase() {
-        c = c.to_ascii_uppercase();
-    }
+    let c = x.to_ascii_uppercase();
 
     let transformed = (c as u8) ^ 0x40;
     char::from_u32(transformed as u32)
