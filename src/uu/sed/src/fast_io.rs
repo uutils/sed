@@ -248,6 +248,7 @@ impl<W: Write> OutputBuffer<W> {
     }
 }
 
+#[cfg(unix)]
 impl<W: Write + AsRawFd> OutputBuffer<W> {
     /// Schedule the specified output chunk for eventual output
     pub fn write_chunk(&mut self, chunk: &OutputChunk) -> io::Result<()> {
@@ -360,11 +361,14 @@ pub fn main() -> io::Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
     use std::fs::File;
+    #[cfg(unix)]
     use std::io::{self, Write};
     use tempfile::NamedTempFile;
 
     /// Helper: produce a 4 096-byte Vec of `'.'`s ending in `'\n'`.
+    #[cfg(unix)]
     fn make_dot_line_4k() -> Vec<u8> {
         let mut buf = Vec::with_capacity(4096);
         buf.extend(std::iter::repeat(b'.').take(4095));
