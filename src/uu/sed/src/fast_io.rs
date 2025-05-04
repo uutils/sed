@@ -1,5 +1,11 @@
 // Zero-copy line-based I/O
 //
+// Abstractions that allow file lines to be processed and output
+// in mmapped memory space.  By coallescing output requests an
+// efficient write(2) system call can be issued for them, bypassing
+// the copy required for output through BufWriter.
+// Search for "main" to see a usage example.
+//
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 Diomidis Spinellis
 //
@@ -19,38 +25,22 @@ use std::path::PathBuf;
 #[cfg(unix)]
 use uucore::libc::{c_void, write};
 
+// Define two cursors for iterating over lines:
+// - MmapLineCursor based on mmap(2),
+// - ReadLineCursorbased on BufReader.
+
 /// Cursor for zero-copy iteration over mmap’d file.
 pub struct MmapLineCursor<'a> {
     data: &'a [u8],
     pos: usize,
 }
 
-#[derive(Debug)]
-#[cfg(unix)]
-pub enum LineChunk<'a> {
-    #[cfg(unix)]
-    Mmap {
-        content: &'a [u8],   // line without newline
-        full_span: &'a [u8], // line including original newline
-    },
-    Owned(Vec<u8>), // line content without newline
-}
-
-#[cfg(not(unix))]
-pub enum LineChunk {
-    Owned(Vec<u8>), // line content without newline
-}
-
-#[cfg(unix)]
-type LineChunkRef<'a> = LineChunk<'a>;
-
-#[cfg(not(unix))]
-type LineChunkRef = LineChunk;
-
 impl<'a> MmapLineCursor<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
+
+    /// Return the next line, if available, or None.
     pub fn get_line(&mut self) -> io::Result<Option<(&[u8], &[u8])>> {
         if self.pos >= self.data.len() {
             return Ok(None);
@@ -90,6 +80,7 @@ impl<R: BufRead> ReadLineCursor<R> {
         }
     }
 
+    /// Return the next line, if available, or None.
     pub fn get_line(&mut self) -> io::Result<Option<(Cow<'_, str>, usize)>> {
         match self.lines.next() {
             Some(Ok(line)) => Ok(Some((Cow::Owned(line.clone()), line.len()))),
@@ -99,20 +90,47 @@ impl<R: BufRead> ReadLineCursor<R> {
     }
 }
 
+/// Data to be written to a file. It can come from the mmapped
+/// memory space, in which case it is tracked to allow coallescing
+/// and bypassing BufWriter, or it can be other data from the process's
+/// memory space.
+#[derive(Debug)]
+#[cfg(unix)]
+pub enum OutputChunk<'a> {
+    MmapInput {
+        content: &'a [u8],   // Line without newline
+        full_span: &'a [u8], // Line including original newline
+    },
+    Owned(Vec<u8>), // Line content without newline
+}
+
+#[cfg(unix)]
+type OutputChunkRef<'a> = OutputChunk<'a>;
+
+// The same as above for non-Unix platforms, which lack mmap(2)
+#[cfg(not(unix))]
+pub enum OutputChunk {
+    Owned(Vec<u8>), // Line content without newline
+}
+
+#[cfg(not(unix))]
+type OutputChunkRef = OutputChunk;
+
 /// Unified reader that uses mmap when possible, falls back to buffered reading.
 pub enum LineReader {
     #[cfg(unix)]
-    Mmap {
-        mmap: Mmap,
+    MmapInput {
+        mapped_file: Mmap, // A handle that can derive the mapped file slice
         cursor: MmapLineCursor<'static>,
     },
-    Fallback(ReadLineCursor<BufReader<Box<dyn Read>>>),
+    ReadInput(ReadLineCursor<BufReader<Box<dyn Read>>>),
 }
 
-fn fallback_reader(file: File) -> io::Result<LineReader> {
+/// Return a LineReader that uses the ReadInput method fot the specified file.
+fn line_reader_read_input(file: File) -> io::Result<LineReader> {
     let boxed: Box<dyn Read> = Box::new(file);
     let reader = BufReader::new(boxed);
-    Ok(LineReader::Fallback(ReadLineCursor::new(reader)))
+    Ok(LineReader::ReadInput(ReadLineCursor::new(reader)))
 }
 
 impl LineReader {
@@ -121,7 +139,7 @@ impl LineReader {
             let stdin = io::stdin();
             let boxed: Box<dyn Read> = Box::new(stdin.lock());
             let reader = BufReader::new(boxed);
-            return Ok(LineReader::Fallback(ReadLineCursor::new(reader)));
+            return Ok(LineReader::ReadInput(ReadLineCursor::new(reader)));
         }
 
         let file = File::open(path)?;
@@ -129,36 +147,42 @@ impl LineReader {
         #[cfg(unix)]
         {
             match unsafe { Mmap::map(&file) } {
-                Ok(mmap) => {
+                Ok(mapped_file) => {
                     // SAFETY: mmap owns the data and lives in the same variant
-                    let slice: &'static [u8] =
-                        unsafe { std::slice::from_raw_parts(mmap.as_ptr(), mmap.len()) };
+                    let slice: &'static [u8] = unsafe {
+                        std::slice::from_raw_parts(mapped_file.as_ptr(), mapped_file.len())
+                    };
                     let cursor = MmapLineCursor::new(slice);
-                    Ok(LineReader::Mmap { mmap, cursor })
+                    Ok(LineReader::MmapInput {
+                        mapped_file,
+                        cursor,
+                    })
                 }
-                Err(_) => fallback_reader(file),
+                // Fallback to ReadInput
+                Err(_) => line_reader_read_input(file),
             }
         }
 
         #[cfg(not(unix))]
         {
-            fallback_reader(file)
+            line_reader_read_input(file)
         }
     }
 
-    pub fn get_line(&mut self) -> io::Result<Option<LineChunkRef>> {
+    /// Return the next line, if available, or None.
+    pub fn get_line(&mut self) -> io::Result<Option<OutputChunkRef>> {
         match self {
             #[cfg(unix)]
-            LineReader::Mmap { cursor, .. } => {
+            LineReader::MmapInput { cursor, .. } => {
                 if let Some((content, full_span)) = cursor.get_line()? {
-                    Ok(Some(LineChunk::Mmap { content, full_span }))
+                    Ok(Some(OutputChunk::MmapInput { content, full_span }))
                 } else {
                     Ok(None)
                 }
             }
-            LineReader::Fallback(cursor) => {
+            LineReader::ReadInput(cursor) => {
                 if let Some((line, _)) = cursor.get_line()? {
-                    Ok(Some(LineChunk::Owned(line.into_owned().into_bytes())))
+                    Ok(Some(OutputChunk::Owned(line.into_owned().into_bytes())))
                 } else {
                     Ok(None)
                 }
@@ -167,6 +191,12 @@ impl LineReader {
     }
 }
 
+/// Abstraction for outputting data, potentially from the mmapped file
+/// Outputs from mmapped data are coallesced and written via a write(2)
+/// system call without any copying if worthwhile.
+/// All other output is buffered and writen via BufWriter.
+/// The generic argument W is used for obtaining the output when
+/// testing.
 pub struct OutputBuffer<W: Write> {
     out: BufWriter<W>,
     #[cfg(unix)]
@@ -201,10 +231,11 @@ impl<W: Write> OutputBuffer<W> {
         }
     }
 
-    pub fn write_chunk(&mut self, chunk: &LineChunk) -> io::Result<()> {
+    /// Schedule the specified output chunk for eventual output
+    pub fn write_chunk(&mut self, chunk: &OutputChunk) -> io::Result<()> {
         match chunk {
             #[cfg(unix)]
-            LineChunk::Mmap { full_span, .. } => {
+            OutputChunk::MmapInput { full_span, .. } => {
                 let ptr = full_span.as_ptr();
                 let len = full_span.len();
 
@@ -221,7 +252,7 @@ impl<W: Write> OutputBuffer<W> {
                 Ok(())
             }
 
-            LineChunk::Owned(buf) => {
+            OutputChunk::Owned(buf) => {
                 #[cfg(unix)]
                 {
                     self.flush_mmap()?;
@@ -261,6 +292,24 @@ impl<W: Write> OutputBuffer<W> {
     }
 }
 
+// Usage example (never compiled)
+#[cfg(any())]
+pub fn main() -> io::Result<()> {
+    let path = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| "-".into());
+    let mut reader = LineReader::open(&path)?;
+    let stdout = Box::new(io::stdout().lock());
+    let mut output = OutputBuffer::new(stdout);
+
+    while let Some(chunk) = reader.get_line()? {
+        output.write_chunk(&chunk)?;
+    }
+
+    output.flush()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,8 +325,8 @@ mod tests {
         }
     }
 
-    fn make_owned_line(s: &str) -> LineChunk {
-        LineChunk::Owned(s.as_bytes().to_vec())
+    fn make_owned_line(s: &str) -> OutputChunk {
+        OutputChunk::Owned(s.as_bytes().to_vec())
     }
 
     #[test]
@@ -293,8 +342,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn make_mmap_line<'a>(buf: &'a [u8]) -> LineChunk<'a> {
-        LineChunk::Mmap {
+    fn make_mmap_line<'a>(buf: &'a [u8]) -> OutputChunk<'a> {
+        OutputChunk::MmapInput {
             content: &buf[..buf.len() - 1], // exclude \n
             full_span: buf,                 // include \n
         }
