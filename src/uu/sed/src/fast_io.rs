@@ -485,6 +485,7 @@ mod tests {
 
         Ok(())
     }
+
     #[test]
     #[cfg(unix)]
     fn test_large_file_zero_copy() -> io::Result<()> {
@@ -515,6 +516,80 @@ mod tests {
 
         out.flush()?;
         assert_eq!(out.writes_issued, 1);
+
+        // Verify that files match:
+        let expected = fs::read(&input_path)?;
+        let actual = fs::read(&output_path)?;
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_large_file_zero_copy_unterminated() -> io::Result<()> {
+        // Create and fill the input temp file:
+        let mut input = NamedTempFile::new()?;
+        write!(input, "first line\nsecond line\n")?;
+        let dot_line = make_dot_line_4k();
+        input.write_all(&dot_line)?;
+        write!(input, "last line (unterminated)")?;
+        input.flush()?;
+        let input_path = input.path().to_path_buf();
+
+        // Open reader on input file:
+        let mut reader = LineReader::open(&input_path)?;
+
+        // Create the output temp file (empty):
+        let output = NamedTempFile::new()?;
+        let output_path = output.path().to_path_buf();
+        let output_file = File::create(&output_path)?;
+
+        // Wrap it in your OutputBuffer and run the loop:
+        let mut out = OutputBuffer::new(output_file);
+        let mut nline = 0;
+        while let Some(chunk) = reader.get_line()? {
+            out.write_chunk(&chunk)?;
+            nline += 1;
+        }
+        assert_eq!(nline, 4);
+
+        out.flush()?;
+        assert_eq!(out.writes_issued, 1);
+
+        // Verify that files match:
+        let expected = fs::read(&input_path)?;
+        let actual = fs::read(&output_path)?;
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_small_file_unterminated() -> io::Result<()> {
+        // Create and fill the input temp file:
+        let mut input = NamedTempFile::new()?;
+        write!(input, "first line\nsecond line\nlast line (unterminated)")?;
+        input.flush()?;
+        let input_path = input.path().to_path_buf();
+
+        // Open reader on input file:
+        let mut reader = LineReader::open(&input_path)?;
+
+        // Create the output temp file (empty):
+        let output = NamedTempFile::new()?;
+        let output_path = output.path().to_path_buf();
+        let output_file = File::create(&output_path)?;
+
+        // Wrap it in your OutputBuffer and run the loop:
+        let mut out = OutputBuffer::new(output_file);
+        let mut nline = 0;
+        while let Some(chunk) = reader.get_line()? {
+            out.write_chunk(&chunk)?;
+            nline += 1;
+        }
+        assert_eq!(nline, 3);
+
+        out.flush()?;
+        assert_eq!(out.writes_issued, 0);
 
         // Verify that files match:
         let expected = fs::read(&input_path)?;
