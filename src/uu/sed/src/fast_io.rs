@@ -229,6 +229,13 @@ fn write_syscall(fd: i32, ptr: *const u8, len: usize) -> io::Result<()> {
 #[cfg(unix)]
 const MIN_DIRECT_WRITE: usize = 4096;
 
+/// The maximum size of a pending write buffer
+// Once more than 64k accumulate, issue a write to allow the OS
+// and downstream pipes to handle the output processing in parallel
+// with our processing.
+#[cfg(unix)]
+const MAX_PENDING_WRITE: usize = 64 * 1024;
+
 impl<W: Write> OutputBuffer<W> {
     pub fn new(w: W) -> Self {
         Self {
@@ -251,7 +258,7 @@ impl<W: Write + AsRawFd> OutputBuffer<W> {
 
                 if let Some((p, l)) = self.mmap_ptr {
                     // Coalesce if adjacent
-                    if unsafe { p.add(l) } == ptr {
+                    if unsafe { p.add(l) } == ptr && l < MAX_PENDING_WRITE {
                         self.mmap_ptr = Some((p, l + len));
                         return Ok(());
                     } else {
@@ -514,7 +521,48 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn test_read_from_tempfile() -> std::io::Result<()> {
+    fn test_large_file_zero_copy_with_flush() -> io::Result<()> {
+        // Create and fill the input temp file:
+        let mut input = NamedTempFile::new()?;
+        write!(input, "first line\nsecond line\n")?;
+        let dot_line = make_dot_line_4k();
+        // Write 64k + 16k to ensure one flush when writing
+        for _i in 0..20 {
+            input.write_all(&dot_line)?;
+        }
+        input.flush()?;
+        let input_path = input.path().to_path_buf();
+
+        // Open reader on input file:
+        let mut reader = LineReader::open(&input_path)?;
+
+        // Create the output temp file (empty):
+        let output = NamedTempFile::new()?;
+        let output_path = output.path().to_path_buf();
+        let output_file = File::create(&output_path)?;
+
+        // Wrap it in your OutputBuffer and run the loop:
+        let mut out = OutputBuffer::new(output_file);
+        let mut nline = 0;
+        while let Some(chunk) = reader.get_line()? {
+            out.write_chunk(&chunk)?;
+            nline += 1;
+        }
+        assert_eq!(nline, 22);
+
+        out.flush()?;
+        assert_eq!(out.writes_issued, 2);
+
+        // Verify that files match:
+        let expected = fs::read(&input_path)?;
+        let actual = fs::read(&output_path)?;
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_mmap_read() -> std::io::Result<()> {
         // Create temporary file with known contents
         let mut tmp = NamedTempFile::new()?;
         write!(tmp, "first line\nsecond line\n")?;
