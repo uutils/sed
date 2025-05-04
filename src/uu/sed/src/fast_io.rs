@@ -69,18 +69,21 @@ impl<'a> MmapLineCursor<'a> {
 }
 
 /// Buffered line reader from any BufRead input.
-pub struct ReadLineCursor<R: BufRead> {
-    reader: R,
+pub struct ReadLineCursor {
+    reader: Box<dyn BufRead>,
     buffer: String,
 }
 
-impl<R: BufRead> ReadLineCursor<R> {
-    pub fn new(reader: R) -> Self {
+impl ReadLineCursor {
+    /// Construct from anything that implements `Read`.
+    pub fn new<R: Read + 'static>(r: R) -> Self {
+        let buf = BufReader::new(r);
         Self {
-            reader,
+            reader: Box::new(buf),
             buffer: String::new(),
         }
     }
+
     /// Return the next line and its \n termination, if available, or None.
     pub fn get_line(&mut self) -> io::Result<Option<(Cow<'_, str>, bool)>> {
         self.buffer.clear();
@@ -138,7 +141,7 @@ pub enum LineReader {
         mapped_file: Mmap, // A handle that can derive the mapped file slice
         cursor: MmapLineCursor<'static>,
     },
-    ReadInput(ReadLineCursor<BufReader<Box<dyn Read>>>),
+    ReadInput(ReadLineCursor),
 }
 
 /// Return a LineReader that uses the ReadInput method fot the specified file.
