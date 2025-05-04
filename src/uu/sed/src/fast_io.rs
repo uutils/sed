@@ -94,7 +94,7 @@ impl<R: BufRead> ReadLineCursor<R> {
 /// memory space, in which case it is tracked to allow coallescing
 /// and bypassing BufWriter, or it can be other data from the process's
 /// memory space.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[cfg(unix)]
 pub enum OutputChunk<'a> {
     MmapInput {
@@ -201,12 +201,15 @@ pub struct OutputBuffer<W: Write> {
     out: BufWriter<W>,
     #[cfg(unix)]
     mmap_ptr: Option<(*const u8, usize)>,
+    #[cfg(test)]
+    writes_issued: usize, // Number of issued write(2) calls
 }
 
 /// Type to use for writing
 // Example: DynOutputBuffer::new(Box::new(io::stdout().lock())
 pub type DynOutputBuffer = OutputBuffer<Box<dyn Write>>;
 
+/// Wrapper that issues the write(2) system call
 #[cfg(unix)]
 fn write_syscall(fd: i32, ptr: *const u8, len: usize) -> io::Result<()> {
     let ret = unsafe { write(fd, ptr as *const c_void, len) };
@@ -218,7 +221,11 @@ fn write_syscall(fd: i32, ptr: *const u8, len: usize) -> io::Result<()> {
 }
 
 /// Threshold to use buffered writes for output
-// This is half the size of the BufWriter buffer.
+// These 4k are half the 8k size of the BufWriter buffer.
+// The constant guarantees that, at worst, mmapped output will
+// result in a doubling of the issued write(2) system calls.
+// Taking into account the non-copied data, this should result
+// in overall fewer CPU instructions.
 #[cfg(unix)]
 const MIN_DIRECT_WRITE: usize = 4096;
 
@@ -228,13 +235,16 @@ impl<W: Write> OutputBuffer<W> {
             out: BufWriter::new(w),
             #[cfg(unix)]
             mmap_ptr: None,
+            #[cfg(test)]
+            writes_issued: 0,
         }
     }
+}
 
+impl<W: Write + AsRawFd> OutputBuffer<W> {
     /// Schedule the specified output chunk for eventual output
     pub fn write_chunk(&mut self, chunk: &OutputChunk) -> io::Result<()> {
         match chunk {
-            #[cfg(unix)]
             OutputChunk::MmapInput { full_span, .. } => {
                 let ptr = full_span.as_ptr();
                 let len = full_span.len();
@@ -253,10 +263,7 @@ impl<W: Write> OutputBuffer<W> {
             }
 
             OutputChunk::Owned(buf) => {
-                #[cfg(unix)]
-                {
-                    self.flush_mmap()?;
-                }
+                self.flush_mmap()?;
                 self.out.write_all(buf)?;
                 self.out.write_all(b"\n")?;
                 Ok(())
@@ -266,6 +273,7 @@ impl<W: Write> OutputBuffer<W> {
 
     /// Schedule the specified string for eventual output
     pub fn write_str(&mut self, s: &str) -> io::Result<()> {
+        // Use the write_chunk corresponding to cfg
         self.write_chunk(&OutputChunk::Owned(s.as_bytes().to_vec()))
     }
 
@@ -279,8 +287,12 @@ impl<W: Write> OutputBuffer<W> {
                 return self.out.write_all(slice);
             } else {
                 // Large enough: write directly using zero-copy
-                let fd = io::stdout().as_raw_fd();
+                let fd = self.out.get_ref().as_raw_fd();
                 self.out.flush()?; // sync any buffered data
+                #[cfg(test)]
+                {
+                    self.writes_issued += 1;
+                }
                 return write_syscall(fd, ptr, len);
             }
         }
@@ -289,10 +301,32 @@ impl<W: Write> OutputBuffer<W> {
 
     /// Flush everything: pending mmap and buffered data.
     pub fn flush(&mut self) -> io::Result<()> {
-        #[cfg(unix)]
-        {
-            self.flush_mmap()?; // flush mmap if any
+        self.flush_mmap()?; // flush mmap if any
+        self.out.flush() // then flush buffered data
+    }
+}
+
+#[cfg(not(unix))]
+impl<W: Write> OutputBuffer<W> {
+    /// Schedule the specified output chunk for eventual output
+    pub fn write_chunk(&mut self, chunk: &OutputChunk) -> io::Result<()> {
+        match chunk {
+            OutputChunk::Owned(buf) => {
+                self.out.write_all(buf)?;
+                self.out.write_all(b"\n")?;
+                Ok(())
+            }
         }
+    }
+
+    /// Schedule the specified string for eventual output
+    pub fn write_str(&mut self, s: &str) -> io::Result<()> {
+        // Use the write_chunk corresponding to cfg
+        self.write_chunk(&OutputChunk::Owned(s.as_bytes().to_vec()))
+    }
+
+    /// Flush everything: pending mmap and buffered data.
+    pub fn flush(&mut self) -> io::Result<()> {
         self.out.flush() // then flush buffered data
     }
 }
@@ -318,69 +352,194 @@ pub fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
+    use std::fs;
+    use std::fs::File;
+    use std::io::{self, Write};
+    use tempfile::NamedTempFile;
 
-    impl OutputBuffer<Cursor<Vec<u8>>> {
-        /// Grab the raw bytes written so far.
-        pub fn test_contents(&self) -> &[u8] {
-            // 1) get_ref() on BufWriter<Cursor<...>> → &Cursor<...>
-            // 2) get_ref() on Cursor<Vec<u8>>        → &Vec<u8>
-            // 3) as_slice() on Vec<u8>               → &[u8]
-            self.out.get_ref().get_ref().as_slice()
-        }
+    /// Helper: produce a 4 096-byte Vec of `'.'`s ending in `'\n'`.
+    fn make_dot_line_4k() -> Vec<u8> {
+        let mut buf = Vec::with_capacity(4096);
+        buf.extend(std::iter::repeat(b'.').take(4095));
+        buf.push(b'\n');
+        buf
     }
 
     #[test]
-    fn test_owned_line_output() {
-        let sink = Cursor::new(Vec::new());
-        let mut out = OutputBuffer::new(sink);
+    fn test_owned_line_output() -> io::Result<()> {
+        let tmp = NamedTempFile::new()?;
+        {
+            let file = tmp.reopen()?;
+            let mut out = OutputBuffer::new(file);
+            out.write_str("foo")?;
+            out.write_str("bar")?;
+            out.flush()?;
+            assert_eq!(out.writes_issued, 0);
+        } // File closes here as it leaves the scope
 
-        out.write_str("foo").unwrap();
-        out.write_str("bar").unwrap();
-        out.flush().unwrap();
-
-        assert_eq!(out.test_contents(), b"foo\nbar\n");
+        let contents = fs::read(tmp.path())?;
+        assert_eq!(contents.as_slice(), b"foo\nbar\n");
+        Ok(())
     }
 
-    #[cfg(unix)]
-    fn make_mmap_line<'a>(buf: &'a [u8]) -> OutputChunk<'a> {
-        OutputChunk::MmapInput {
-            content: &buf[..buf.len() - 1], // exclude \n
-            full_span: buf,                 // include \n
-        }
-    }
-
-    #[cfg(unix)]
     #[test]
-    fn test_mmap_line_output_single() {
+    #[cfg(unix)]
+    fn test_mmap_line_output_single() -> io::Result<()> {
+        use std::fs;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Prepare the input buffer: two lines in one contiguous mmap region
         let mmap_data = b"line one\nline two\n";
-        let sink = Cursor::new(Vec::new());
-        let mut out = OutputBuffer::new(sink);
 
-        // first nine bytes are "line one\n"
-        out.write_chunk(&make_mmap_line(&mmap_data[..9])).unwrap();
-        // the rest are "line two\n"
-        out.write_chunk(&make_mmap_line(&mmap_data[9..])).unwrap();
-        out.flush().unwrap();
+        // Write that into a temp file
+        let mut input = NamedTempFile::new()?;
+        input.write_all(mmap_data)?;
+        input.flush()?;
+        let input_path = input.path().to_path_buf();
 
-        assert_eq!(out.test_contents(), b"line one\nline two\n");
+        // Open the reader on that file
+        let mut reader = LineReader::open(&input_path)?;
+
+        // Prepare an output temp file and wrap it in our OutputBuffer
+        let output = NamedTempFile::new()?;
+        let output_path = output.path().to_path_buf();
+        let out_file = std::fs::File::create(&output_path)?;
+        let mut out = OutputBuffer::new(out_file);
+
+        // Drain reader → writer
+        while let Some(chunk) = reader.get_line()? {
+            out.write_chunk(&chunk)?;
+        }
+        out.flush()?;
+
+        assert_eq!(out.writes_issued, 0);
+
+        let written = fs::read(&output_path)?;
+        assert_eq!(written.as_slice(), mmap_data);
+
+        Ok(())
     }
 
-    #[cfg(unix)]
     #[test]
-    fn test_mixed_output_order_preserved() {
-        let mmap_data = b"zero\none\n";
-        let sink = Cursor::new(Vec::new());
-        let mut out = OutputBuffer::new(sink);
+    #[cfg(unix)]
+    fn test_mixed_output_order_preserved() -> io::Result<()> {
+        use std::fs;
+        use std::fs::File;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
 
-        // "zero\n"
-        out.write_chunk(&make_mmap_line(&mmap_data[..5])).unwrap();
-        // now an owned line
-        out.write_str("middle").unwrap();
-        // then "one\n"
-        out.write_chunk(&make_mmap_line(&mmap_data[5..])).unwrap();
-        out.flush().unwrap();
+        // Prepare an input file containing two lines: "zero\none\n"
+        let data = b"zero\none\n";
+        let mut input = NamedTempFile::new()?;
+        input.write_all(data)?;
+        input.flush()?;
+        let input_path = input.path().to_path_buf();
+        let mut reader = LineReader::open(&input_path)?;
 
-        assert_eq!(out.test_contents(), b"zero\nmiddle\none\n");
+        // Prepare an empty output file
+        let output = NamedTempFile::new()?;
+        let output_path = output.path().to_path_buf();
+        let out_file = File::create(&output_path)?;
+        let mut out = OutputBuffer::new(out_file);
+
+        // Read the first mmap line ("zero\n") and write it
+        if let Some(chunk) = reader.get_line()? {
+            out.write_chunk(&chunk)?;
+        }
+
+        // Write an owned line ("middle\n")
+        out.write_str("middle")?;
+
+        // Read the second mmap line ("one\n") and write it
+        if let Some(chunk) = reader.get_line()? {
+            out.write_chunk(&chunk)?;
+        }
+
+        out.flush()?;
+
+        // Since all writes are small (<4K), we expect zero zero copy syscalls
+        assert_eq!(out.writes_issued, 0);
+
+        // Read both files back and compare
+        let expected = {
+            let mut v = Vec::new();
+            v.extend_from_slice(b"zero\n");
+            v.extend_from_slice(b"middle\n");
+            v.extend_from_slice(b"one\n");
+            v
+        };
+        let actual = fs::read(&output_path)?;
+        assert_eq!(actual, expected);
+
+        Ok(())
+    }
+    #[test]
+    #[cfg(unix)]
+    fn test_large_file_zero_copy() -> io::Result<()> {
+        // Create and fill the input temp file:
+        let mut input = NamedTempFile::new()?;
+        write!(input, "first line\nsecond line\n")?;
+        let dot_line = make_dot_line_4k();
+        input.write_all(&dot_line)?;
+        input.flush()?;
+        let input_path = input.path().to_path_buf();
+
+        // Open reader on input file:
+        let mut reader = LineReader::open(&input_path)?;
+
+        // Create the output temp file (empty):
+        let output = NamedTempFile::new()?;
+        let output_path = output.path().to_path_buf();
+        let output_file = File::create(&output_path)?;
+
+        // Wrap it in your OutputBuffer and run the loop:
+        let mut out = OutputBuffer::new(output_file);
+        let mut nline = 0;
+        while let Some(chunk) = reader.get_line()? {
+            out.write_chunk(&chunk)?;
+            nline += 1;
+        }
+        assert_eq!(nline, 3);
+
+        out.flush()?;
+        assert_eq!(out.writes_issued, 1);
+
+        // Verify that files match:
+        let expected = fs::read(&input_path)?;
+        let actual = fs::read(&output_path)?;
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_read_from_tempfile() -> std::io::Result<()> {
+        // Create temporary file with known contents
+        let mut tmp = NamedTempFile::new()?;
+        write!(tmp, "first line\nsecond line\n")?;
+        tmp.flush()?;
+
+        let path = tmp.path().to_path_buf();
+        let mut reader = LineReader::open(&path)?;
+
+        // Verify the reader's operation
+        assert_eq!(
+            reader.get_line()?,
+            Some(OutputChunk::MmapInput {
+                content: b"first line".as_ref(),
+                full_span: b"first line\n".as_ref(),
+            })
+        );
+        assert_eq!(
+            reader.get_line()?,
+            Some(OutputChunk::MmapInput {
+                content: b"second line".as_ref(),
+                full_span: b"second line\n".as_ref(),
+            })
+        );
+        assert_eq!(reader.get_line()?, None);
+
+        Ok(())
     }
 }
