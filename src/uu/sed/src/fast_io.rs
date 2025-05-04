@@ -264,6 +264,11 @@ impl<W: Write> OutputBuffer<W> {
         }
     }
 
+    /// Schedule the specified string for eventual output
+    pub fn write_str(&mut self, s: &str) -> io::Result<()> {
+        self.write_chunk(&OutputChunk::Owned(s.as_bytes().to_vec()))
+    }
+
     // Flush any pending mmap data
     #[cfg(unix)]
     fn flush_mmap(&mut self) -> io::Result<()> {
@@ -325,17 +330,13 @@ mod tests {
         }
     }
 
-    fn make_owned_line(s: &str) -> OutputChunk {
-        OutputChunk::Owned(s.as_bytes().to_vec())
-    }
-
     #[test]
     fn test_owned_line_output() {
         let sink = Cursor::new(Vec::new());
         let mut out = OutputBuffer::new(sink);
 
-        out.write_chunk(&make_owned_line("foo")).unwrap();
-        out.write_chunk(&make_owned_line("bar")).unwrap();
+        out.write_str("foo").unwrap();
+        out.write_str("bar").unwrap();
         out.flush().unwrap();
 
         assert_eq!(out.test_contents(), b"foo\nbar\n");
@@ -375,7 +376,7 @@ mod tests {
         // "zero\n"
         out.write_chunk(&make_mmap_line(&mmap_data[..5])).unwrap();
         // now an owned line
-        out.write_chunk(&make_owned_line("middle")).unwrap();
+        out.write_str("middle").unwrap();
         // then "one\n"
         out.write_chunk(&make_mmap_line(&mmap_data[5..])).unwrap();
         out.flush().unwrap();
