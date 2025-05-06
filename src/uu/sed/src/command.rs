@@ -11,8 +11,6 @@
 // TODO: remove when compile is implemented
 #![allow(dead_code)]
 
-use crate::fast_io::LineReader;
-use crate::fast_io::OutputBuffer;
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs::File;
@@ -166,12 +164,4 @@ pub struct Space {
     pub deleted: bool,        // Whether content was deleted
     pub append_newline: bool, // Whether originally terminated by \n
     pub backup: String,       // Backing memory
-}
-
-/// Context for processing multiple files and in-place replacements
-pub struct ProcessingContext {
-    pub reader: LineReader,
-    pub output: OutputBuffer,
-    pub input_files: Vec<PathBuf>,
-    pub processing_options: ProcessingOptions,
 }

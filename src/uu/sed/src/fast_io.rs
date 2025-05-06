@@ -31,7 +31,7 @@ use uucore::libc::{c_void, write};
 
 /// Cursor for zero-copy iteration over mmap’d file.
 #[cfg(unix)]
-struct MmapLineCursor<'a> {
+pub struct MmapLineCursor<'a> {
     data: &'a [u8],
     pos: usize,
 }
@@ -223,6 +223,7 @@ impl LineReader {
     }
 }
 
+// Define a trait combining two: workaround for Rust's corresponding inability.
 #[cfg(unix)]
 pub trait OutputWrite: Write + AsRawFd {}
 #[cfg(unix)]
@@ -238,11 +239,11 @@ impl<T: Write> OutputWrite for T {}
 /// system call without any copying if worthwhile.
 /// All other output is buffered and writen via BufWriter.
 pub struct OutputBuffer {
-    out: BufWriter<Box<dyn OutputWrite + Send + 'static>>,
+    out: BufWriter<Box<dyn OutputWrite + Send + 'static>>, // Where to write
     #[cfg(unix)]
-    mmap_ptr: Option<(*const u8, usize)>,
+    mmap_ptr: Option<(*const u8, usize)>,  // Start and len of chunk to write
     #[cfg(test)]
-    writes_issued: usize, // Number of issued write(2) calls
+    writes_issued: usize,                  // Number of issued write(2) calls
 }
 
 /// Wrapper that issues the write(2) system call

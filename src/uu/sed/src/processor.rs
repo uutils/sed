@@ -8,7 +8,9 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{Command, ProcessingContext, ProcessingOptions};
+use crate::command::{Command, ProcessingOptions};
+use crate::fast_io::LineReader;
+use crate::in_place::InPlace;
 use std::path::PathBuf;
 use uucore::error::UResult;
 
@@ -17,13 +19,18 @@ pub fn process(
     files: Vec<PathBuf>,
     processing_options: ProcessingOptions,
 ) -> UResult<()> {
-    let mut context = ProcessingContext::new(files, processing_options)?;
+    let mut in_place = InPlace::new(&processing_options)?;
 
-    while let Some(chunk) = context.get_line()? {
-        // TODO: process commands
-        context.write_chunk(&chunk)?;
+    for path in files {
+        let mut reader = LineReader::open(&path)?;
+        let output = in_place.begin(&path)?;
+
+        while let Some(chunk) = reader.get_line()? {
+            output.write_chunk(&chunk)?;
+        }
+
+        in_place.end()?;
     }
-    context.flush()?;
 
     Ok(())
 }
