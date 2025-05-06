@@ -17,13 +17,20 @@ use uucore::error::UResult;
 
 /// Process a single input file
 fn process_file(
-    _commands: &Option<Box<Command>>,
+    commands: &Option<Box<Command>>,
     reader: &mut LineReader,
     output: &mut OutputBuffer,
     processing_options: &mut ProcessingOptions,
 ) -> UResult<()> {
     while let Some(pattern_space) = reader.get_line()? {
-        // TODO: process commands
+        let mut current = commands.as_deref();
+        while let Some(command) = current {
+            // TODO: process command.code.
+
+            // Advance to next command.
+            current = command.next.as_deref();
+        }
+
         output.write_chunk(&pattern_space)?;
         if processing_options.unbuffered {
             output.flush()?;
