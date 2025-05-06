@@ -223,12 +223,22 @@ impl LineReader {
     }
 }
 
+#[cfg(unix)]
+pub trait OutputWrite: Write + AsRawFd {}
+#[cfg(unix)]
+impl<T: Write + AsRawFd> OutputWrite for T {}
+
+#[cfg(not(unix))]
+pub trait OutputWrite: Write {}
+#[cfg(not(unix))]
+impl<T: Write> OutputWrite for T {}
+
 /// Abstraction for outputting data, potentially from the mmapped file
 /// Outputs from mmapped data are coallesced and written via a write(2)
 /// system call without any copying if worthwhile.
 /// All other output is buffered and writen via BufWriter.
 pub struct OutputBuffer {
-    out: BufWriter<Box<dyn Write + Send + 'static>>,
+    out: BufWriter<Box<dyn OutputWrite + Send + 'static>>,
     #[cfg(unix)]
     mmap_ptr: Option<(*const u8, usize)>,
     #[cfg(test)]
@@ -263,7 +273,7 @@ const MIN_DIRECT_WRITE: usize = 4 * 1024;
 const MAX_PENDING_WRITE: usize = 64 * 1024;
 
 impl OutputBuffer {
-    pub fn new(w: Box<dyn Write + Send + 'static>) -> Self {
+    pub fn new(w: Box<dyn OutputWrite + Send + 'static>) -> Self {
         Self {
             out: BufWriter::new(w),
             #[cfg(unix)]
@@ -449,7 +459,7 @@ mod tests {
         let output = NamedTempFile::new()?;
         let output_path = output.path().to_path_buf();
         let out_file = std::fs::File::create(&output_path)?;
-        let mut out = OutputBuffer::new(out_file);
+        let mut out = OutputBuffer::new(Box::new(Box::new(out_file)));
 
         // Drain reader → writer
         while let Some(chunk) = reader.get_line()? {
@@ -485,7 +495,7 @@ mod tests {
         let output = NamedTempFile::new()?;
         let output_path = output.path().to_path_buf();
         let out_file = File::create(&output_path)?;
-        let mut out = OutputBuffer::new(out_file);
+        let mut out = OutputBuffer::new(Box::new(out_file));
 
         // Read the first mmap line ("zero\n") and write it
         if let Some(chunk) = reader.get_line()? {
@@ -536,10 +546,10 @@ mod tests {
         // Create the output temp file (empty):
         let output = NamedTempFile::new()?;
         let output_path = output.path().to_path_buf();
-        let output_file = File::create(&output_path)?;
+        let out_file = File::create(&output_path)?;
 
         // Wrap it in your OutputBuffer and run the loop:
-        let mut out = OutputBuffer::new(output_file);
+        let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline = 0;
         while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
@@ -575,10 +585,10 @@ mod tests {
         // Create the output temp file (empty):
         let output = NamedTempFile::new()?;
         let output_path = output.path().to_path_buf();
-        let output_file = File::create(&output_path)?;
+        let out_file = File::create(&output_path)?;
 
         // Wrap it in your OutputBuffer and run the loop:
-        let mut out = OutputBuffer::new(output_file);
+        let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline = 0;
         while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
@@ -610,10 +620,10 @@ mod tests {
         // Create the output temp file (empty):
         let output = NamedTempFile::new()?;
         let output_path = output.path().to_path_buf();
-        let output_file = File::create(&output_path)?;
+        let out_file = File::create(&output_path)?;
 
         // Wrap it in your OutputBuffer and run the loop:
-        let mut out = OutputBuffer::new(Box::new(output_file));
+        let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline = 0;
         while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
@@ -645,10 +655,10 @@ mod tests {
         // Create the output temp file (empty):
         let output = NamedTempFile::new()?;
         let output_path = output.path().to_path_buf();
-        let output_file = File::create(&output_path)?;
+        let out_file = File::create(&output_path)?;
 
         // Wrap it in your OutputBuffer and run the loop:
-        let mut out = OutputBuffer::new(Box::new(output_file));
+        let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline = 0;
         while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
@@ -686,10 +696,10 @@ mod tests {
         // Create the output temp file (empty):
         let output = NamedTempFile::new()?;
         let output_path = output.path().to_path_buf();
-        let output_file = File::create(&output_path)?;
+        let out_file = File::create(&output_path)?;
 
         // Wrap it in your OutputBuffer and run the loop:
-        let mut out = OutputBuffer::new(output_file);
+        let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline = 0;
         while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
