@@ -30,18 +30,20 @@ use uucore::libc::{c_void, write};
 // - ReadLineCursorbased on BufReader.
 
 /// Cursor for zero-copy iteration over mmap’d file.
-pub struct MmapLineCursor<'a> {
+#[cfg(unix)]
+struct MmapLineCursor<'a> {
     data: &'a [u8],
     pos: usize,
 }
 
+#[cfg(unix)]
 impl<'a> MmapLineCursor<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
+    fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
 
     /// Return the next line, if available, or None.
-    pub fn get_line(&mut self) -> io::Result<Option<(&[u8], &[u8])>> {
+    fn get_line(&mut self) -> io::Result<Option<(&[u8], &[u8])>> {
         if self.pos >= self.data.len() {
             return Ok(None);
         }
@@ -76,7 +78,7 @@ pub struct ReadLineCursor {
 
 impl ReadLineCursor {
     /// Construct from anything that implements `Read`.
-    pub fn new<R: Read + 'static>(r: R) -> Self {
+    fn new<R: Read + 'static>(r: R) -> Self {
         let buf = BufReader::new(r);
         Self {
             reader: Box::new(buf),
@@ -85,7 +87,7 @@ impl ReadLineCursor {
     }
 
     /// Return the next line and its \n termination, if available, or None.
-    pub fn get_line(&mut self) -> io::Result<Option<(Cow<'_, str>, bool)>> {
+    fn get_line(&mut self) -> io::Result<Option<(Cow<'_, str>, bool)>> {
         self.buffer.clear();
         // read_line *includes* the '\n' if present
         let bytes_read = self.reader.read_line(&mut self.buffer)?;
@@ -120,7 +122,7 @@ pub enum OutputChunk<'a> {
 }
 
 #[cfg(unix)]
-type OutputChunkRef<'a> = OutputChunk<'a>;
+pub type OutputChunkRef<'a> = OutputChunk<'a>;
 
 // The same as above for non-Unix platforms, which lack mmap(2)
 #[cfg(not(unix))]
@@ -132,7 +134,7 @@ pub enum OutputChunk {
 }
 
 #[cfg(not(unix))]
-type OutputChunkRef = OutputChunk;
+pub type OutputChunkRef = OutputChunk;
 
 /// Unified reader that uses mmap when possible, falls back to buffered reading.
 pub enum LineReader {

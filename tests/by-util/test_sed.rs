@@ -22,12 +22,12 @@ fn test_invalid_arg() {
 
 #[test]
 fn test_debug() {
-    new_ucmd!().arg("--debug").arg("").succeeds();
+    new_ucmd!().args(&["--debug", ""]).succeeds();
 }
 
 #[test]
 fn test_silent_alias() {
-    new_ucmd!().arg("--silent").arg("").succeeds();
+    new_ucmd!().args(&["--silent", ""]).succeeds();
 }
 
 #[test]
@@ -44,8 +44,13 @@ fn test_positional_script_ok() {
 }
 
 #[test]
+fn test_empty_positional_script_ok() {
+    new_ucmd!().arg("").succeeds().code_is(0);
+}
+
+#[test]
 fn test_e_script_ok() {
-    new_ucmd!().arg("-e").arg("l").succeeds();
+    new_ucmd!().args(&["-e", "l"]).succeeds();
 }
 
 #[test]
@@ -55,4 +60,33 @@ fn test_f_script_ok() {
     let path = temp.path();
 
     new_ucmd!().arg("-f").arg(path).succeeds();
+}
+
+const INPUT_FILES: &[&str] = &[
+    "two-lines.txt",
+    "no-new-line.txt",
+    "dots-4k.txt",
+    "dots-8k.txt",
+    "dots-64k.txt",
+];
+
+#[test]
+fn test_no_script_stdin() {
+    for fixture in INPUT_FILES {
+        new_ucmd!()
+            .arg("")
+            .pipe_in_fixture(fixture)
+            .succeeds()
+            .stdout_is_fixture(fixture);
+    }
+}
+
+#[test]
+fn test_no_script_file() {
+    for fixture in INPUT_FILES {
+        new_ucmd!()
+            .args(&["-e", "", fixture])
+            .succeeds()
+            .stdout_is_fixture(fixture);
+    }
 }

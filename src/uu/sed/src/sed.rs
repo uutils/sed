@@ -12,6 +12,7 @@ pub mod command;
 pub mod compiler;
 pub mod delimited_parser;
 pub mod fast_io;
+pub mod multi_io;
 pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;
@@ -34,7 +35,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let mut cli_options = build_context(&matches);
 
     let executable = compile(scripts, &mut cli_options)?;
-    process(executable, files, &mut cli_options)?;
+    process(executable, files, cli_options)?;
     Ok(())
 }
 
