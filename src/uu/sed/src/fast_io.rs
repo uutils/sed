@@ -225,19 +225,13 @@ impl LineReader {
 /// Outputs from mmapped data are coallesced and written via a write(2)
 /// system call without any copying if worthwhile.
 /// All other output is buffered and writen via BufWriter.
-/// The generic argument W is used for obtaining the output when
-/// testing.
-pub struct OutputBuffer<W: Write> {
-    out: BufWriter<W>,
+pub struct OutputBuffer {
+    out: BufWriter<Box<dyn Write + Send + 'static>>,
     #[cfg(unix)]
     mmap_ptr: Option<(*const u8, usize)>,
     #[cfg(test)]
     writes_issued: usize, // Number of issued write(2) calls
 }
-
-/// Type to use for writing
-// Example: DynOutputBuffer::new(Box::new(io::stdout().lock())
-pub type DynOutputBuffer = OutputBuffer<Box<dyn Write>>;
 
 /// Wrapper that issues the write(2) system call
 #[cfg(unix)]
@@ -266,8 +260,8 @@ const MIN_DIRECT_WRITE: usize = 4 * 1024;
 #[cfg(unix)]
 const MAX_PENDING_WRITE: usize = 64 * 1024;
 
-impl<W: Write> OutputBuffer<W> {
-    pub fn new(w: W) -> Self {
+impl OutputBuffer {
+    pub fn new(w: Box<dyn Write + Send + 'static>) -> Self {
         Self {
             out: BufWriter::new(w),
             #[cfg(unix)]
@@ -276,10 +270,19 @@ impl<W: Write> OutputBuffer<W> {
             writes_issued: 0,
         }
     }
+
+    /// Schedule the specified string for eventual output
+    pub fn write_str(&mut self, s: &str) -> io::Result<()> {
+        // Use the write_chunk corresponding to cfg
+        self.write_chunk(&OutputChunk::Owned {
+            content: s.as_bytes().to_vec(),
+            has_newline: false,
+        })
+    }
 }
 
 #[cfg(unix)]
-impl<W: Write + AsRawFd> OutputBuffer<W> {
+impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output
     pub fn write_chunk(&mut self, chunk: &OutputChunk) -> io::Result<()> {
         match chunk {
@@ -314,15 +317,6 @@ impl<W: Write + AsRawFd> OutputBuffer<W> {
         }
     }
 
-    /// Schedule the specified string for eventual output
-    pub fn write_str(&mut self, s: &str) -> io::Result<()> {
-        // Use the write_chunk corresponding to cfg
-        self.write_chunk(&OutputChunk::Owned {
-            content: s.as_bytes().to_vec(),
-            has_newline: false,
-        })
-    }
-
     // Flush any pending mmap data
     #[cfg(unix)]
     fn flush_mmap(&mut self) -> io::Result<()> {
@@ -353,7 +347,7 @@ impl<W: Write + AsRawFd> OutputBuffer<W> {
 }
 
 #[cfg(not(unix))]
-impl<W: Write> OutputBuffer<W> {
+impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output
     pub fn write_chunk(&mut self, chunk: &OutputChunk) -> io::Result<()> {
         match chunk {
@@ -368,15 +362,6 @@ impl<W: Write> OutputBuffer<W> {
                 Ok(())
             }
         }
-    }
-
-    /// Schedule the specified string for eventual output
-    pub fn write_str(&mut self, s: &str) -> io::Result<()> {
-        // Use the write_chunk corresponding to cfg
-        self.write_chunk(&OutputChunk::Owned {
-            content: s.as_bytes().to_vec(),
-            has_newline: false,
-        })
     }
 
     /// Flush everything: pending mmap and buffered data.
@@ -427,7 +412,7 @@ mod tests {
         let tmp = NamedTempFile::new()?;
         {
             let file = tmp.reopen()?;
-            let mut out = OutputBuffer::new(file);
+            let mut out = OutputBuffer::new(Box::new(file));
             out.write_str("foo\n")?;
             out.write_str("bar\n")?;
             out.flush()?;
@@ -626,7 +611,7 @@ mod tests {
         let output_file = File::create(&output_path)?;
 
         // Wrap it in your OutputBuffer and run the loop:
-        let mut out = OutputBuffer::new(output_file);
+        let mut out = OutputBuffer::new(Box::new(output_file));
         let mut nline = 0;
         while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
@@ -661,7 +646,7 @@ mod tests {
         let output_file = File::create(&output_path)?;
 
         // Wrap it in your OutputBuffer and run the loop:
-        let mut out = OutputBuffer::new(output_file);
+        let mut out = OutputBuffer::new(Box::new(output_file));
         let mut nline = 0;
         while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
