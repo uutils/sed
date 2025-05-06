@@ -11,6 +11,7 @@
 use crate::command::{Command, ProcessingOptions};
 use crate::fast_io::LineReader;
 use crate::in_place::InPlace;
+use atty::Stream;
 use std::path::PathBuf;
 use uucore::error::UResult;
 
@@ -20,13 +21,18 @@ pub fn process(
     processing_options: ProcessingOptions,
 ) -> UResult<()> {
     let mut in_place = InPlace::new(&processing_options)?;
+    let line_flush = processing_options.unbuffered || atty::is(Stream::Stdout);
 
     for path in files {
         let mut reader = LineReader::open(&path)?;
         let output = in_place.begin(&path)?;
 
-        while let Some(chunk) = reader.get_line()? {
-            output.write_chunk(&chunk)?;
+        while let Some(pattern_space) = reader.get_line()? {
+            // TODO: process commands
+            output.write_chunk(&pattern_space)?;
+            if line_flush {
+                output.flush()?;
+            }
         }
 
         in_place.end()?;

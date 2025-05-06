@@ -30,6 +30,7 @@ feat_common_core = [
 ]
 
 [workspace.dependencies]
+atty = "0.2"
 uucore = "0.0.30"
 clap = { version = "4.4", features = ["wrap_help", "cargo"] }
 clap_complete = "4.5"
@@ -52,6 +53,7 @@ chrono = { version = "0.4.37", default-features = false, features = [
 
 
 [dependencies]
+atty = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 clap_mangen = { workspace = true }
