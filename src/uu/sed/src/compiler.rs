@@ -8,7 +8,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{Address, AddressType, AddressValue, CliOptions, Command, ScriptValue};
+use crate::command::{Address, AddressType, AddressValue, Command, ProcessingOptions, ScriptValue};
 use crate::delimited_parser::{compilation_error, parse_regex};
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
@@ -208,11 +208,11 @@ enum ContinueAction {
 
 pub fn compile(
     scripts: Vec<ScriptValue>,
-    cli_options: &mut CliOptions,
+    processing_options: &mut ProcessingOptions,
 ) -> UResult<Option<Box<Command>>> {
     let mut make_providers = ScriptLineProvider::new(scripts);
 
-    let result = compile_thread(&mut make_providers, cli_options)?;
+    let result = compile_thread(&mut make_providers, processing_options)?;
     // TODO: fix-up labels, check used labels, setup append & match structures
     Ok(result)
 }
@@ -220,7 +220,7 @@ pub fn compile(
 // Compile provided scripts into a thread of commands
 fn compile_thread(
     lines: &mut ScriptLineProvider,
-    _cli_options: &mut CliOptions,
+    _processing_options: &mut ProcessingOptions,
 ) -> UResult<Option<Box<Command>>> {
     let mut head: Option<Box<Command>> = None;
     // A mutable reference to the place we’ll insert next
@@ -235,7 +235,7 @@ fn compile_thread(
             Some(line_string) => {
                 let mut line = ScriptCharProvider::new(&line_string);
 
-                // TODO: set cli_options.quiet for StringVal starting with #n
+                // TODO: set processing_options.quiet for StringVal starting with #n
                 'next_char: loop {
                     line.eat_spaces();
                     if line.eol() || line.current() == '#' {
@@ -1017,14 +1017,14 @@ mod tests {
         ScriptLineProvider::new(input)
     }
 
-    fn make_cli_options() -> CliOptions {
-        CliOptions::default()
+    fn make_processing_options() -> ProcessingOptions {
+        ProcessingOptions::default()
     }
 
     #[test]
     fn test_compile_thread_empty_input() {
         let mut provider = make_provider(&[]);
-        let mut opts = make_cli_options();
+        let mut opts = make_processing_options();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         assert!(result.is_none());
@@ -1033,7 +1033,7 @@ mod tests {
     #[test]
     fn test_compile_thread_comment_only() {
         let mut provider = make_provider(&["# comment", "   ", ";;"]);
-        let mut opts = make_cli_options();
+        let mut opts = make_processing_options();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         assert!(result.is_none());
@@ -1042,7 +1042,7 @@ mod tests {
     #[test]
     fn test_compile_thread_single_command() {
         let mut provider = make_provider(&["42q"]);
-        let mut opts = make_cli_options();
+        let mut opts = make_processing_options();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let cmd = result.unwrap();
@@ -1065,7 +1065,7 @@ mod tests {
     #[test]
     fn test_compile_thread_non_selected_single_command() {
         let mut provider = make_provider(&["42!p"]);
-        let mut opts = make_cli_options();
+        let mut opts = make_processing_options();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let cmd = result.unwrap();
@@ -1088,7 +1088,7 @@ mod tests {
     #[test]
     fn test_compile_thread_multiple_lines() {
         let mut provider = make_provider(&["1q", "2d"]);
-        let mut opts = make_cli_options();
+        let mut opts = make_processing_options();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let first = result.unwrap();
@@ -1102,7 +1102,7 @@ mod tests {
     #[test]
     fn test_compile_thread_single_line_multiple_commands() {
         let mut provider = make_provider(&["1q;2d"]);
-        let mut opts = make_cli_options();
+        let mut opts = make_processing_options();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let first = result.unwrap();
@@ -1117,7 +1117,7 @@ mod tests {
     #[test]
     fn test_compile_single_command() {
         let scripts = vec![ScriptValue::StringVal("1q".to_string())];
-        let mut opts = CliOptions::default();
+        let mut opts = ProcessingOptions::default();
 
         let result = compile(scripts, &mut opts).unwrap();
         let cmd = result.unwrap();

@@ -21,7 +21,7 @@ use std::path::PathBuf; // For file descriptors and equivalent
 // Compilation and processing options provided mostly through the
 // command-line interface
 #[derive(Debug, Default)]
-pub struct CliOptions {
+pub struct ProcessingOptions {
     // Command-line flags with corresponding names
     pub all_output_files: bool,
     pub debug: bool,
@@ -173,5 +173,5 @@ pub struct ProcessingContext {
     pub reader: LineReader,
     pub output: OutputBuffer,
     pub input_files: Vec<PathBuf>,
-    pub cli_options: CliOptions,
+    pub processing_options: ProcessingOptions,
 }

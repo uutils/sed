@@ -8,15 +8,15 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{CliOptions, ProcessingContext};
+use crate::command::{ProcessingContext, ProcessingOptions};
 use crate::fast_io::{LineReader, OutputBuffer, OutputChunk, OutputChunkRef};
 use std::io::{self, stdout};
 use std::path::PathBuf;
 use uucore::error::UResult;
 
 impl ProcessingContext {
-    /// Create a new `ProcessingContext` taking ownership of cli_options
-    pub fn new(input_files: Vec<PathBuf>, cli_options: CliOptions) -> UResult<Self> {
+    /// Create a new `ProcessingContext` taking ownership of processing_options
+    pub fn new(input_files: Vec<PathBuf>, processing_options: ProcessingOptions) -> UResult<Self> {
         let first = input_files.first().expect("input_files must be non-empty");
         // Open the reader on the first path.
         let reader = LineReader::open(first)?;
@@ -28,7 +28,7 @@ impl ProcessingContext {
             reader,
             output,
             input_files,
-            cli_options,
+            processing_options,
         })
     }
 

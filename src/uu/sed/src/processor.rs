@@ -8,16 +8,16 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{CliOptions, Command, ProcessingContext};
+use crate::command::{Command, ProcessingContext, ProcessingOptions};
 use std::path::PathBuf;
 use uucore::error::UResult;
 
 pub fn process(
     _commands: Option<Box<Command>>,
     files: Vec<PathBuf>,
-    cli_options: CliOptions,
+    processing_options: ProcessingOptions,
 ) -> UResult<()> {
-    let mut context = ProcessingContext::new(files, cli_options)?;
+    let mut context = ProcessingContext::new(files, processing_options)?;
 
     while let Some(chunk) = context.get_line()? {
         // TODO: process commands
