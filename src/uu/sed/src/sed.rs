@@ -19,7 +19,7 @@ pub mod script_line_provider;
 
 use crate::command::{ProcessingOptions, ScriptValue};
 use crate::compiler::compile;
-use crate::processor::process;
+use crate::processor::process_all_files;
 use clap::{arg, Arg, ArgMatches, Command};
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
@@ -35,7 +35,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let mut processing_options = build_context(&matches);
 
     let executable = compile(scripts, &mut processing_options)?;
-    process(executable, files, processing_options)?;
+    process_all_files(executable, files, processing_options)?;
     Ok(())
 }
 

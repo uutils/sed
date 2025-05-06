@@ -15,14 +15,14 @@ use std::path::Path;
 use uucore::error::UResult;
 
 /// Context for in-place editing
-pub struct InPlace<'opts> {
+pub struct InPlace {
     pub output: OutputBuffer,
-    pub processing_options: &'opts ProcessingOptions,
+    pub processing_options: ProcessingOptions,
 }
 
-impl<'opts> InPlace<'opts> {
+impl InPlace {
     /// Create a new `ProcessingContext` taking ownership of processing_options
-    pub fn new(processing_options: &'opts ProcessingOptions) -> UResult<Self> {
+    pub fn new(processing_options: ProcessingOptions) -> UResult<Self> {
         let output = OutputBuffer::new(Box::new(stdout()));
 
         Ok(InPlace {
