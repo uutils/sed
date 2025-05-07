@@ -137,9 +137,9 @@ pub enum CommandData {
 }
 
 impl CommandData {
-    pub fn get_subcommand(self) -> Rc<RefCell<Command>> {
+    pub fn get_subcommand(&self) -> Rc<RefCell<Command>> {
         match self {
-            CommandData::Subcommand(c) => c,
+            CommandData::Subcommand(rc) => Rc::clone(rc),
             _ => panic!("Called get on non-Subcommand variant"),
         }
     }

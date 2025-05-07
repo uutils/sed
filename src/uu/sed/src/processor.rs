@@ -27,17 +27,20 @@ fn process_file(
     while let Some(pattern_space) = reader.get_line()? {
         processing_context.line_number += 1;
         let mut current: Option<Rc<RefCell<Command>>> = commands.clone();
-        while let Some(command) = current {
+        while let Some(command_rc) = current {
+            let command = command_rc.borrow();
             // TODO: continue if command doesn't apply
-            match command.borrow().code {
+            match command.code {
                 '{' => {
-                    // TODO
+                    current = Some(command.data.get_subcommand());
+                    continue;
                 }
                 'a' => {
                     // TODO
                 }
                 'b' => {
-                    // TODO
+                    current = Some(command.data.get_subcommand());
+                    continue;
                 }
                 'c' => {
                     // TODO
@@ -112,8 +115,7 @@ fn process_file(
                 _ => panic!("invalid command code"),
             } // match
               // Advance to next command.
-            let command_ref = command.borrow();
-            current = command_ref.next.clone();
+            current = command.next.clone();
         }
 
         output.write_chunk(&pattern_space)?;
