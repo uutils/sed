@@ -26,9 +26,90 @@ fn process_file(
         processing_context.line_number += 1;
         let mut current = commands.as_deref();
         while let Some(command) = current {
-            // TODO: process command.code.
-
-            // Advance to next command.
+            // TODO: continue if command doesn't apply
+            match command.code {
+                '{' => {
+                    // TODO
+                }
+                'a' => {
+                    // TODO
+                }
+                'b' => {
+                    // TODO
+                }
+                'c' => {
+                    // TODO
+                }
+                'd' => {
+                    // TODO
+                }
+                'D' => {
+                    // TODO
+                }
+                'g' => {
+                    // TODO
+                }
+                'G' => {
+                    // TODO
+                }
+                'h' => {
+                    // TODO
+                }
+                'H' => {
+                    // TODO
+                }
+                'i' => {
+                    // TODO
+                }
+                'l' => {
+                    // TODO
+                }
+                'n' => {
+                    // TODO
+                }
+                'N' => {
+                    // TODO
+                }
+                'p' => {
+                    // TODO
+                }
+                'P' => {
+                    // TODO
+                }
+                'q' => {
+                    // TODO
+                }
+                'r' => {
+                    // TODO
+                }
+                's' => {
+                    // TODO
+                }
+                't' => {
+                    // TODO
+                }
+                'w' => {
+                    // TODO
+                }
+                'x' => {
+                    // TODO
+                }
+                'y' => {
+                    // TODO
+                }
+                ':' => {
+                    // TODO
+                }
+                '}' => {
+                    // TODO
+                }
+                '=' => {
+                    // TODO
+                }
+                // The compilation should supply only valid codes.
+                _ => panic!("invalid command code"),
+            } // match
+              // Advance to next command.
             current = command.next.as_deref();
         }
 
