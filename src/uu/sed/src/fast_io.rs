@@ -68,6 +68,11 @@ impl<'a> MmapLineCursor<'a> {
 
         Ok(Some((content, full_span)))
     }
+
+    /// Return true if the line read is the last one
+    fn is_last_line(&mut self) -> io::Result<bool> {
+        Ok(self.pos >= self.data.len())
+    }
 }
 
 /// Buffered line reader from any BufRead input.
@@ -101,6 +106,11 @@ impl ReadLineCursor {
             self.buffer.pop();
         }
         Ok(Some((Cow::Owned(self.buffer.clone()), has_newline)))
+    }
+
+    /// Return true if the line read is the last one
+    fn is_last_line(&mut self) -> io::Result<bool> {
+        Ok(self.reader.fill_buf()?.is_empty())
     }
 }
 
@@ -219,6 +229,15 @@ impl LineReader {
                     Ok(None)
                 }
             }
+        }
+    }
+
+    /// Return true if the line read is the last one
+    pub fn is_last_line(&mut self) -> io::Result<bool> {
+        match self {
+            #[cfg(unix)]
+            LineReader::MmapInput { cursor, .. } => cursor.is_last_line(),
+            LineReader::ReadInput(cursor) => cursor.is_last_line(),
         }
     }
 }
@@ -719,6 +738,47 @@ mod tests {
     }
 
     #[test]
+    fn test_stream_read() -> std::io::Result<()> {
+        // Create temporary file with known contents
+        let mut tmp = NamedTempFile::new()?;
+        write!(tmp, "first line\nsecond line\n")?;
+        tmp.flush()?;
+
+        let path = tmp.path().to_path_buf();
+        let mut reader = LineReader::open_stream(&path)?;
+
+        // Verify the reader's operation
+        assert!(!reader.is_last_line()?);
+        if let Some(OutputChunk::Owned {
+            content,
+            has_newline,
+        }) = reader.get_line()?
+        {
+            assert_eq!(content, b"first line");
+            assert!(has_newline);
+        } else {
+            panic!("Expected OutputChunk::Owned");
+        }
+
+        assert!(!reader.is_last_line()?);
+        if let Some(OutputChunk::Owned {
+            content,
+            has_newline,
+        }) = reader.get_line()?
+        {
+            assert_eq!(content, b"second line");
+            assert!(has_newline);
+        } else {
+            panic!("Expected OutputChunk::Owned");
+        }
+
+        assert!(reader.is_last_line()?);
+        assert_eq!(reader.get_line()?, None);
+
+        Ok(())
+    }
+
+    #[test]
     #[cfg(unix)]
     fn test_mmap_read() -> std::io::Result<()> {
         // Create temporary file with known contents
@@ -730,6 +790,7 @@ mod tests {
         let mut reader = LineReader::open(&path)?;
 
         // Verify the reader's operation
+        assert!(!reader.is_last_line()?);
         assert_eq!(
             reader.get_line()?,
             Some(OutputChunk::MmapInput {
@@ -737,6 +798,7 @@ mod tests {
                 full_span: b"first line\n".as_ref(),
             })
         );
+        assert!(!reader.is_last_line()?);
         assert_eq!(
             reader.get_line()?,
             Some(OutputChunk::MmapInput {
@@ -744,6 +806,7 @@ mod tests {
                 full_span: b"second line\n".as_ref(),
             })
         );
+        assert!(reader.is_last_line()?);
         assert_eq!(reader.get_line()?, None);
 
         Ok(())
