@@ -24,7 +24,7 @@ fn process_file(
     output: &mut OutputBuffer,
     processing_context: &mut ProcessingContext,
 ) -> UResult<()> {
-    while let Some(pattern_space) = reader.get_line()? {
+    while let Some(mut pattern_space) = reader.get_line()? {
         processing_context.line_number += 1;
         let mut current: Option<Rc<RefCell<Command>>> = commands.clone();
         while let Some(command_rc) = current {
@@ -46,7 +46,8 @@ fn process_file(
                     // TODO
                 }
                 'd' => {
-                    // TODO
+                    pattern_space.clear();
+                    break;
                 }
                 'D' => {
                     // TODO

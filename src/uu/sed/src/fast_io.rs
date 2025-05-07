@@ -135,6 +135,16 @@ pub enum OutputChunk<'a> {
 pub type OutputChunkRef<'a> = OutputChunk<'a>;
 
 // The same as above for non-Unix platforms, which lack mmap(2)
+#[cfg(unix)]
+impl OutputChunk<'_> {
+    pub fn clear(&mut self) {
+        *self = OutputChunk::Owned {
+            content: Vec::new(),
+            has_newline: false,
+        };
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 #[cfg(not(unix))]
 pub enum OutputChunk {
@@ -146,6 +156,16 @@ pub enum OutputChunk {
 
 #[cfg(not(unix))]
 pub type OutputChunkRef = OutputChunk;
+
+#[cfg(not(unix))]
+impl OutputChunk {
+    pub fn clear(&mut self) {
+        *self = OutputChunk::Owned {
+            content: Vec::new(),
+            has_newline: false,
+        };
+    }
+}
 
 /// Unified reader that uses mmap when possible, falls back to buffered reading.
 pub enum LineReader {
