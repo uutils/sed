@@ -17,7 +17,7 @@ pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;
 
-use crate::command::{ProcessingOptions, ScriptValue};
+use crate::command::{ProcessingContext, ScriptValue};
 use crate::compiler::compile;
 use crate::processor::process_all_files;
 use clap::{arg, Arg, ArgMatches, Command};
@@ -32,10 +32,10 @@ const USAGE: &str = "sed [OPTION]... [script] [file]...";
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
     let (scripts, files) = get_scripts_files(&matches)?;
-    let mut processing_options = build_context(&matches);
+    let mut processing_context = build_context(&matches);
 
-    let executable = compile(scripts, &mut processing_options)?;
-    process_all_files(executable, files, processing_options)?;
+    let executable = compile(scripts, &mut processing_context)?;
+    process_all_files(executable, files, processing_context)?;
     Ok(())
 }
 
@@ -171,9 +171,9 @@ fn get_scripts_files(matches: &ArgMatches) -> UResult<(Vec<ScriptValue>, Vec<Pat
     Ok((scripts, files))
 }
 
-// Parse CLI flag arguments and return a ProcessingOptions struct based on them
-fn build_context(matches: &ArgMatches) -> ProcessingOptions {
-    ProcessingOptions {
+// Parse CLI flag arguments and return a ProcessingContext struct based on them
+fn build_context(matches: &ArgMatches) -> ProcessingContext {
+    ProcessingContext {
         all_output_files: matches.get_flag("all-output-files"),
         debug: matches.get_flag("debug"),
         regexp_extended: matches.get_flag("regexp-extended"),
@@ -196,6 +196,8 @@ fn build_context(matches: &ArgMatches) -> ProcessingOptions {
         sandbox: matches.get_flag("sandbox"),
         unbuffered: matches.get_flag("unbuffered"),
         null_data: matches.get_flag("null-data"),
+        // Other context
+        line_number: 0,
     }
 }
 

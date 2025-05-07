@@ -8,7 +8,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{Command, ProcessingOptions};
+use crate::command::{Command, ProcessingContext};
 use crate::fast_io::{LineReader, OutputBuffer};
 use crate::in_place::InPlace;
 use atty::Stream;
@@ -20,9 +20,10 @@ fn process_file(
     commands: &Option<Box<Command>>,
     reader: &mut LineReader,
     output: &mut OutputBuffer,
-    processing_options: &mut ProcessingOptions,
+    processing_context: &mut ProcessingContext,
 ) -> UResult<()> {
     while let Some(pattern_space) = reader.get_line()? {
+        processing_context.line_number += 1;
         let mut current = commands.as_deref();
         while let Some(command) = current {
             // TODO: process command.code.
@@ -32,7 +33,7 @@ fn process_file(
         }
 
         output.write_chunk(&pattern_space)?;
-        if processing_options.unbuffered {
+        if processing_context.unbuffered {
             output.flush()?;
         }
     }
@@ -43,16 +44,19 @@ fn process_file(
 pub fn process_all_files(
     commands: Option<Box<Command>>,
     files: Vec<PathBuf>,
-    mut processing_options: ProcessingOptions,
+    mut processing_context: ProcessingContext,
 ) -> UResult<()> {
-    processing_options.unbuffered = processing_options.unbuffered || atty::is(Stream::Stdout);
-    let mut in_place = InPlace::new(processing_options.clone())?;
+    processing_context.unbuffered = processing_context.unbuffered || atty::is(Stream::Stdout);
 
+    let mut in_place = InPlace::new(processing_context.clone())?;
     for path in files {
         let mut reader = LineReader::open(&path)?;
         let output = in_place.begin(&path)?;
 
-        process_file(&commands, &mut reader, output, &mut processing_options)?;
+        if processing_context.separate {
+            processing_context.line_number = 0;
+        }
+        process_file(&commands, &mut reader, output, &mut processing_context)?;
 
         in_place.end()?;
     }

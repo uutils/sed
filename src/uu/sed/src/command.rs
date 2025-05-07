@@ -19,7 +19,7 @@ use std::path::PathBuf; // For file descriptors and equivalent
 // Compilation and processing options provided mostly through the
 // command-line interface
 #[derive(Debug, Default, Clone)]
-pub struct ProcessingOptions {
+pub struct ProcessingContext {
     // Command-line flags with corresponding names
     pub all_output_files: bool,
     pub debug: bool,
@@ -34,6 +34,9 @@ pub struct ProcessingOptions {
     pub sandbox: bool,
     pub unbuffered: bool,
     pub null_data: bool,
+    // Other context
+    /// Current input line number
+    pub line_number: usize,
 }
 
 // The specification of a script: through a string or a file
