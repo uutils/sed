@@ -12,22 +12,24 @@ use crate::command::{Command, ProcessingContext};
 use crate::fast_io::{LineReader, OutputBuffer};
 use crate::in_place::InPlace;
 use atty::Stream;
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use uucore::error::UResult;
 
 /// Process a single input file
 fn process_file(
-    commands: &Option<Box<Command>>,
+    commands: &Option<Rc<RefCell<Command>>>,
     reader: &mut LineReader,
     output: &mut OutputBuffer,
     processing_context: &mut ProcessingContext,
 ) -> UResult<()> {
     while let Some(pattern_space) = reader.get_line()? {
         processing_context.line_number += 1;
-        let mut current = commands.as_deref();
+        let mut current: Option<Rc<RefCell<Command>>> = commands.clone();
         while let Some(command) = current {
             // TODO: continue if command doesn't apply
-            match command.code {
+            match command.borrow().code {
                 '{' => {
                     // TODO
                 }
@@ -110,7 +112,8 @@ fn process_file(
                 _ => panic!("invalid command code"),
             } // match
               // Advance to next command.
-            current = command.next.as_deref();
+            let command_ref = command.borrow();
+            current = command_ref.next.clone();
         }
 
         output.write_chunk(&pattern_space)?;
@@ -123,7 +126,7 @@ fn process_file(
 
 /// Process all input files
 pub fn process_all_files(
-    commands: Option<Box<Command>>,
+    commands: Option<Rc<RefCell<Command>>>,
     files: Vec<PathBuf>,
     mut processing_context: ProcessingContext,
 ) -> UResult<()> {

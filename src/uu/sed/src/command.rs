@@ -12,9 +12,11 @@
 #![allow(dead_code)]
 
 use regex::Regex;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf; // For file descriptors and equivalent
+use std::rc::Rc;
 
 // Compilation and processing options provided mostly through the
 // command-line interface
@@ -100,14 +102,14 @@ pub struct Transliteration {
  */
 #[derive(Debug)]
 pub struct Command {
-    pub code: char,                 // Command code
-    pub addr1: Option<Address>,     // Start address
-    pub addr2: Option<Address>,     // End address
-    pub non_select: bool,           // True if '!'
-    pub start_line: Option<usize>,  // Start line number (or None)
-    pub text: Option<String>,       // Text for ':', 'a', 'c', 'i', 'r', 'w'
-    pub data: CommandData,          // Command-specific data
-    pub next: Option<Box<Command>>, // Pointer to next command
+    pub code: char,                         // Command code
+    pub addr1: Option<Address>,             // Start address
+    pub addr2: Option<Address>,             // End address
+    pub non_select: bool,                   // True if '!'
+    pub start_line: Option<usize>,          // Start line number (or None)
+    pub text: Option<String>,               // Text for ':', 'a', 'c', 'i', 'r', 'w'
+    pub data: CommandData,                  // Command-specific data
+    pub next: Option<Rc<RefCell<Command>>>, // Pointer to next command
 }
 
 impl Default for Command {
@@ -128,10 +130,19 @@ impl Default for Command {
 #[derive(Debug)]
 pub enum CommandData {
     None,
-    SubCommands(Vec<Command>),             // Commands for 'b', 't', '{'
-    Substitution(Box<Substitution>),       // Substitute command 's'
+    Subcommand(Rc<RefCell<Command>>), // Commands for 'b', 't', '{'
+    Substitution(Box<Substitution>),  // Substitute command 's'
     Transliteration(Box<Transliteration>), // Transliteration command 'y'
-    WriteFileDescriptor(File),             // File descriptor for 'w'
+    WriteFileDescriptor(File),        // File descriptor for 'w'
+}
+
+impl CommandData {
+    pub fn get_subcommand(self) -> Rc<RefCell<Command>> {
+        match self {
+            CommandData::Subcommand(c) => c,
+            _ => panic!("Called get on non-Subcommand variant"),
+        }
+    }
 }
 
 /*

@@ -16,6 +16,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use uucore::error::UResult;
 
 thread_local! {
@@ -209,7 +210,7 @@ enum ContinueAction {
 pub fn compile(
     scripts: Vec<ScriptValue>,
     processing_context: &mut ProcessingContext,
-) -> UResult<Option<Box<Command>>> {
+) -> UResult<Option<Rc<RefCell<Command>>>> {
     let mut make_providers = ScriptLineProvider::new(scripts);
 
     let result = compile_thread(&mut make_providers, processing_context)?;
@@ -221,8 +222,8 @@ pub fn compile(
 fn compile_thread(
     lines: &mut ScriptLineProvider,
     _processing_context: &mut ProcessingContext,
-) -> UResult<Option<Box<Command>>> {
-    let mut head: Option<Box<Command>> = None;
+) -> UResult<Option<Rc<RefCell<Command>>>> {
+    let mut head: Option<Rc<RefCell<Command>>> = None;
     // A mutable reference to the place we’ll insert next
     let mut next_p = &mut head;
 
@@ -245,7 +246,7 @@ fn compile_thread(
                         continue 'next_char;
                     }
 
-                    let mut cmd = Box::new(Command::default());
+                    let mut cmd = Rc::new(RefCell::new(Command::default()));
                     let n_addr = compile_address_range(lines, &mut line, &mut cmd)?;
                     let mut cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
 
@@ -253,7 +254,7 @@ fn compile_thread(
                     if cmd_spec.args == CommandArgs::NonSelect {
                         line.advance();
                         line.eat_spaces();
-                        cmd.non_select = true;
+                        cmd.borrow_mut().non_select = true;
                         cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
                     }
 
@@ -261,7 +262,13 @@ fn compile_thread(
                     let action = compile_command(lines, &mut line, &mut cmd, cmd_spec)?;
 
                     *next_p = Some(cmd);
-                    next_p = &mut next_p.as_mut().unwrap().next;
+                    // Intermediate let binding to avoid the temporary drop
+                    let cmd_rc = next_p.as_mut().unwrap();
+                    let cmd_ptr =
+                        &mut cmd_rc.borrow_mut().next as *mut Option<Rc<RefCell<Command>>>;
+                    unsafe {
+                        next_p = &mut *cmd_ptr;
+                    }
 
                     match action {
                         ContinueAction::NextLine => continue 'next_line,
@@ -283,9 +290,10 @@ fn is_address_char(c: char) -> bool {
 fn compile_address_range(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
-    cmd: &mut Command,
+    cmd: &mut Rc<RefCell<Command>>,
 ) -> UResult<usize> {
     let mut n_addr = 0;
+    let mut cmd = cmd.borrow_mut();
 
     line.eat_spaces();
     if !line.eol() && is_address_char(line.current()) {
@@ -423,9 +431,10 @@ fn compile_regex(
 fn compile_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
-    cmd: &mut Command,
+    cmd: &mut Rc<RefCell<Command>>,
     cmd_spec: &'static CommandSpec,
 ) -> UResult<ContinueAction> {
+    let mut cmd = cmd.borrow_mut();
     cmd.code = line.current();
 
     match cmd_spec.args {
@@ -860,12 +869,12 @@ mod tests {
     #[test]
     fn test_compile_single_line_address() {
         let (lines, mut chars) = make_providers("42");
-        let mut cmd = Command::default();
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
-            cmd.addr1.as_ref().unwrap().atype,
+            cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Line
         ));
     }
@@ -873,26 +882,26 @@ mod tests {
     #[test]
     fn test_compile_relative_address_range() {
         let (lines, mut chars) = make_providers("2,+3");
-        let mut cmd = Command::default();
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 2);
 
         assert!(matches!(
-            cmd.addr1.as_ref().unwrap().atype,
+            cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Line
         ));
-        let v1 = match &cmd.addr1.as_ref().unwrap().value {
+        let v1 = match &cmd.borrow().addr1.as_ref().unwrap().value {
             AddressValue::LineNumber(n) => *n,
             _ => panic!(),
         };
         assert_eq!(v1, 2);
 
         assert!(matches!(
-            cmd.addr2.as_ref().unwrap().atype,
+            cmd.borrow().addr2.as_ref().unwrap().atype,
             AddressType::RelLine
         ));
-        let v2 = match &cmd.addr2.as_ref().unwrap().value {
+        let v2 = match &cmd.borrow().addr2.as_ref().unwrap().value {
             AddressValue::LineNumber(n) => *n,
             _ => panic!(),
         };
@@ -902,12 +911,12 @@ mod tests {
     #[test]
     fn test_compile_last_address() {
         let (lines, mut chars) = make_providers("$");
-        let mut cmd = Command::default();
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
-            cmd.addr1.as_ref().unwrap().atype,
+            cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Last
         ));
     }
@@ -915,16 +924,16 @@ mod tests {
     #[test]
     fn test_compile_absolute_address_range() {
         let (lines, mut chars) = make_providers("5,10");
-        let mut cmd = Command::default();
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 2);
         assert!(matches!(
-            cmd.addr1.as_ref().unwrap().atype,
+            cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Line
         ));
         assert!(matches!(
-            cmd.addr2.as_ref().unwrap().atype,
+            cmd.borrow().addr2.as_ref().unwrap().atype,
             AddressType::Line
         ));
     }
@@ -932,80 +941,92 @@ mod tests {
     #[test]
     fn test_compile_regex_address() {
         let (lines, mut chars) = make_providers("/foo/");
-        let mut cmd = Command::default();
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 1);
-        assert!(matches!(cmd.addr1.as_ref().unwrap().atype, AddressType::Re));
-        if let AddressValue::Regex(re) = &cmd.addr1.as_ref().unwrap().value {
+        assert!(matches!(
+            cmd.borrow().addr1.as_ref().unwrap().atype,
+            AddressType::Re
+        ));
+        if let AddressValue::Regex(re) = &cmd.borrow().addr1.as_ref().unwrap().value {
             assert!(re.is_match("foo"));
             assert!(!re.is_match("bar"));
         } else {
             panic!("expected a regex address");
-        }
+        };
     }
 
     #[test]
     fn test_compile_regex_address_range_other_delimiter() {
         let (lines, mut chars) = make_providers("\\#foo# , \\|bar|");
-        let mut cmd = Command::default();
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 2);
 
-        assert!(matches!(cmd.addr1.as_ref().unwrap().atype, AddressType::Re));
-        if let AddressValue::Regex(re) = &cmd.addr1.as_ref().unwrap().value {
+        assert!(matches!(
+            cmd.borrow().addr1.as_ref().unwrap().atype,
+            AddressType::Re
+        ));
+        if let AddressValue::Regex(re) = &cmd.borrow().addr1.as_ref().unwrap().value {
             assert!(re.is_match("foo"));
             assert!(!re.is_match("bar"));
         } else {
             panic!("expected a regex address");
         }
 
-        assert!(matches!(cmd.addr2.as_ref().unwrap().atype, AddressType::Re));
-        if let AddressValue::Regex(re) = &cmd.addr2.as_ref().unwrap().value {
+        assert!(matches!(
+            cmd.borrow().addr2.as_ref().unwrap().atype,
+            AddressType::Re
+        ));
+        if let AddressValue::Regex(re) = &cmd.borrow().addr2.as_ref().unwrap().value {
             assert!(re.is_match("bar"));
             assert!(!re.is_match("foo"));
         } else {
             panic!("expected a regex address");
-        }
+        };
     }
 
     #[test]
     fn test_compile_regex_with_modifier() {
         let (lines, mut chars) = make_providers("/foo/I");
-        let mut cmd = Command::default();
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
 
         assert_eq!(n_addr, 1);
-        assert!(matches!(cmd.addr1.as_ref().unwrap().atype, AddressType::Re));
-        if let AddressValue::Regex(re) = &cmd.addr1.as_ref().unwrap().value {
+        assert!(matches!(
+            cmd.borrow().addr1.as_ref().unwrap().atype,
+            AddressType::Re
+        ));
+        if let AddressValue::Regex(re) = &cmd.borrow().addr1.as_ref().unwrap().value {
             assert!(re.is_match("FOO"));
             assert!(re.is_match("foo"));
         } else {
             panic!("expected a regex address with case-insensitive match");
-        }
+        };
     }
 
     #[test]
     fn test_compile_re_reuse_saved() {
         // First save a regex
         let (lines1, mut chars1) = make_providers("/abc/");
-        let mut cmd1 = Command::default();
+        let mut cmd1 = Rc::new(RefCell::new(Command::default()));
         compile_address_range(&lines1, &mut chars1, &mut cmd1).unwrap();
 
         // Now reuse it
         let (lines2, mut chars2) = make_providers("//");
-        let mut cmd2 = Command::default();
+        let mut cmd2 = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(&lines2, &mut chars2, &mut cmd2).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
-            cmd2.addr1.as_ref().unwrap().atype,
+            cmd2.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd2.addr1.as_ref().unwrap().value {
+        if let AddressValue::Regex(re) = &cmd2.borrow().addr1.as_ref().unwrap().value {
             assert!(re.is_match("abc"));
-        }
+        };
     }
 
     // compile_thread
@@ -1045,7 +1066,8 @@ mod tests {
         let mut opts = make_processing_context();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
-        let cmd = result.unwrap();
+        let binding = result.unwrap();
+        let cmd = binding.borrow();
 
         assert_eq!(cmd.code, 'q');
         assert!(!cmd.non_select);
@@ -1068,7 +1090,8 @@ mod tests {
         let mut opts = make_processing_context();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
-        let cmd = result.unwrap();
+        let binding = result.unwrap();
+        let cmd = binding.borrow();
 
         assert_eq!(cmd.code, 'p');
         assert!(cmd.non_select);
@@ -1091,10 +1114,12 @@ mod tests {
         let mut opts = make_processing_context();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
-        let first = result.unwrap();
+        let binding = result.unwrap();
+        let first = binding.borrow();
 
         assert_eq!(first.code, 'q');
-        let second = first.next.unwrap();
+        let binding = first.next.clone().unwrap();
+        let second = binding.borrow();
         assert_eq!(second.code, 'd');
         assert!(second.next.is_none());
     }
@@ -1105,10 +1130,12 @@ mod tests {
         let mut opts = make_processing_context();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
-        let first = result.unwrap();
+        let binding = result.unwrap();
+        let first = binding.borrow();
 
         assert_eq!(first.code, 'q');
-        let second = first.next.unwrap();
+        let binding = first.next.clone().unwrap();
+        let second = binding.borrow();
         assert_eq!(second.code, 'd');
         assert!(second.next.is_none());
     }
@@ -1120,7 +1147,8 @@ mod tests {
         let mut opts = ProcessingContext::default();
 
         let result = compile(scripts, &mut opts).unwrap();
-        let cmd = result.unwrap();
+        let binding = result.unwrap();
+        let cmd = binding.borrow();
 
         assert_eq!(cmd.code, 'q');
 
