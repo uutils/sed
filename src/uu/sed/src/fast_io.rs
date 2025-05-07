@@ -135,6 +135,7 @@ pub enum OutputChunk<'a> {
 pub type OutputChunkRef<'a> = OutputChunk<'a>;
 
 // The same as above for non-Unix platforms, which lack mmap(2)
+#[derive(Debug, PartialEq, Eq)]
 #[cfg(not(unix))]
 pub enum OutputChunk {
     Owned {
