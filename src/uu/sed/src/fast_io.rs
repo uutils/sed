@@ -131,9 +131,6 @@ pub enum OutputChunk<'a> {
     },
 }
 
-#[cfg(unix)]
-pub type OutputChunkRef<'a> = OutputChunk<'a>;
-
 // The same as above for non-Unix platforms, which lack mmap(2)
 #[cfg(unix)]
 impl OutputChunk<'_> {
@@ -153,9 +150,6 @@ pub enum OutputChunk {
         has_newline: bool, // True if \n-terminated
     },
 }
-
-#[cfg(not(unix))]
-pub type OutputChunkRef = OutputChunk;
 
 #[cfg(not(unix))]
 impl OutputChunk {
@@ -230,7 +224,7 @@ impl LineReader {
     }
 
     /// Return the next line, if available, or None.
-    pub fn get_line(&mut self) -> io::Result<Option<OutputChunkRef>> {
+    pub fn get_line(&mut self) -> io::Result<Option<OutputChunk>> {
         match self {
             #[cfg(unix)]
             LineReader::MmapInput { cursor, .. } => {
