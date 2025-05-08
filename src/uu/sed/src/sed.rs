@@ -200,6 +200,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         // Other context
         line_number: 0,
         last_address: false,
+        last_line: false,
     }
 }
 

@@ -21,7 +21,6 @@ use uucore::error::UResult;
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
     addr: &Address,
-    reader: &mut LineReader,
     pattern: &mut IOChunk,
     context: &ProcessingContext,
 ) -> UResult<bool> {
@@ -40,7 +39,7 @@ fn match_address(
                 Ok(false)
             }
         }
-        AddressType::Last => Ok(reader.is_last_line()?),
+        AddressType::Last => Ok(context.last_line),
         _ => panic!("invalid address type in match_address"),
     }
 }
@@ -49,7 +48,6 @@ fn match_address(
 /// Return true if the command applies to the given pattern.
 fn applies(
     command: &mut Command,
-    reader: &mut LineReader,
     pattern: &mut IOChunk,
     context: &mut ProcessingContext,
 ) -> UResult<bool> {
@@ -73,7 +71,7 @@ fn applies(
                     }
                 }
                 _ => {
-                    if match_address(addr2, reader, pattern, context)? {
+                    if match_address(addr2, pattern, context)? {
                         command.start_line = None;
                         context.last_address = true;
                         Ok(true)
@@ -94,7 +92,7 @@ fn applies(
                 }
             }
         } else if let Some(addr1) = &command.addr1 {
-            if match_address(addr1, reader, pattern, context)? {
+            if match_address(addr1, pattern, context)? {
                 match addr2.atype {
                     AddressType::Line => {
                         if let AddressValue::LineNumber(n) = addr2.value {
@@ -124,7 +122,7 @@ fn applies(
             Ok(false)
         }
     } else if let Some(addr1) = &command.addr1 {
-        Ok(match_address(addr1, reader, pattern, context)?)
+        Ok(match_address(addr1, pattern, context)?)
     } else {
         Ok(false)
     };
@@ -143,8 +141,8 @@ fn process_file(
     output: &mut OutputBuffer,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
-    while let Some(p) = reader.get_line()? {
-        let mut pattern = p;
+    while let Some((mut pattern, last_line)) = reader.get_line()? {
+        context.last_line = last_line;
         context.line_number += 1;
         let mut current: Option<Rc<RefCell<Command>>> = commands.clone();
         while let Some(command_rc) = current {

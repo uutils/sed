@@ -40,8 +40,10 @@ pub struct ProcessingContext {
     // Other context
     /// Current input line number
     pub line_number: usize,
-    /// Last address of a range
+    /// True if this is the last address of a range
     pub last_address: bool,
+    /// True if the line read is the last line
+    pub last_line: bool,
 }
 
 // The specification of a script: through a string or a file
