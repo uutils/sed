@@ -90,3 +90,24 @@ fn test_no_script_file() {
             .stdout_is_fixture(fixture);
     }
 }
+
+#[test]
+fn test_delete_stdin() {
+    for fixture in INPUT_FILES {
+        new_ucmd!()
+            .arg("d")
+            .pipe_in_fixture(fixture)
+            .succeeds()
+            .no_stdout();
+    }
+}
+
+#[test]
+fn test_delete_file() {
+    for fixture in INPUT_FILES {
+        new_ucmd!()
+            .args(&["-e", "d", fixture])
+            .succeeds()
+            .no_stdout();
+    }
+}
