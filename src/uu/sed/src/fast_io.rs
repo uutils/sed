@@ -16,12 +16,19 @@
 
 #[cfg(unix)]
 use memmap2::Mmap;
+
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
+
+#[cfg(not(unix))]
+use std::marker::PhantomData;
+
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
+
 use std::path::PathBuf;
+
 #[cfg(unix)]
 use uucore::libc::{c_void, write};
 
@@ -119,8 +126,8 @@ impl ReadLineCursor {
 /// and bypassing BufWriter, or it can be other data from the process's
 /// memory space.
 #[derive(Debug, PartialEq, Eq)]
-#[cfg(unix)]
 pub enum OutputChunk<'a> {
+    #[cfg(unix)]
     MmapInput {
         content: &'a [u8],   // Line without newline
         full_span: &'a [u8], // Line including original newline, if any
@@ -128,36 +135,32 @@ pub enum OutputChunk<'a> {
     Owned {
         content: Vec<u8>,  // Line content without newline
         has_newline: bool, // True if \n-terminated
+        #[cfg(not(unix))]
+        _phantom: PhantomData<&'a ()>, // Silence E0392 warning
     },
 }
 
-// The same as above for non-Unix platforms, which lack mmap(2)
-#[cfg(unix)]
 impl OutputChunk<'_> {
-    pub fn clear(&mut self) {
-        *self = OutputChunk::Owned {
-            content: Vec::new(),
-            has_newline: false,
+    /// Construct a new Owned chunk.
+    pub fn new_owned(content: Vec<u8>, has_newline: bool) -> Self {
+        #[cfg(unix)]
+        return OutputChunk::Owned {
+            content,
+            has_newline,
+        };
+
+        #[cfg(not(unix))]
+        return OutputChunk::Owned {
+            content,
+            has_newline,
+            // Avoid E0063 missing _phantom initialization errors
+            _phantom: std::marker::PhantomData,
         };
     }
-}
 
-#[derive(Debug, PartialEq, Eq)]
-#[cfg(not(unix))]
-pub enum OutputChunk {
-    Owned {
-        content: Vec<u8>,  // Line content without newline
-        has_newline: bool, // True if \n-terminated
-    },
-}
-
-#[cfg(not(unix))]
-impl OutputChunk {
+    /// Clear the object's contents, converting it it Owned if needed.
     pub fn clear(&mut self) {
-        *self = OutputChunk::Owned {
-            content: Vec::new(),
-            has_newline: false,
-        };
+        *self = OutputChunk::new_owned(Vec::new(), false);
     }
 }
 
@@ -236,10 +239,10 @@ impl LineReader {
             }
             LineReader::ReadInput(cursor) => {
                 if let Some((line, has_newline)) = cursor.get_line()? {
-                    Ok(Some(OutputChunk::Owned {
-                        content: line.into_owned().into_bytes(),
+                    Ok(Some(OutputChunk::new_owned(
+                        line.into_owned().into_bytes(),
                         has_newline,
-                    }))
+                    )))
                 } else {
                     Ok(None)
                 }
@@ -321,10 +324,7 @@ impl OutputBuffer {
     /// Schedule the specified string for eventual output
     pub fn write_str(&mut self, s: &str) -> io::Result<()> {
         // Use the write_chunk corresponding to cfg
-        self.write_chunk(&OutputChunk::Owned {
-            content: s.as_bytes().to_vec(),
-            has_newline: false,
-        })
+        self.write_chunk(&OutputChunk::new_owned(s.as_bytes().to_vec(), false))
     }
 }
 
@@ -353,6 +353,7 @@ impl OutputBuffer {
             OutputChunk::Owned {
                 content,
                 has_newline,
+                ..
             } => {
                 self.flush_mmap()?;
                 self.out.write_all(content)?;
@@ -401,6 +402,7 @@ impl OutputBuffer {
             OutputChunk::Owned {
                 content,
                 has_newline,
+                ..
             } => {
                 self.out.write_all(content)?;
                 if *has_newline {
@@ -767,6 +769,7 @@ mod tests {
         if let Some(OutputChunk::Owned {
             content,
             has_newline,
+            ..
         }) = reader.get_line()?
         {
             assert_eq!(content, b"first line");
@@ -779,6 +782,7 @@ mod tests {
         if let Some(OutputChunk::Owned {
             content,
             has_newline,
+            ..
         }) = reader.get_line()?
         {
             assert_eq!(content, b"second line");
