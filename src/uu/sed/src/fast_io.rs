@@ -28,9 +28,12 @@ use std::marker::PhantomData;
 use std::os::unix::io::AsRawFd;
 
 use std::path::PathBuf;
+use std::str;
 
 #[cfg(unix)]
 use uucore::libc::{c_void, write};
+
+use uucore::error::{UError, USimpleError};
 
 // Define two cursors for iterating over lines:
 // - MmapLineCursor based on mmap(2),
@@ -121,12 +124,51 @@ impl ReadLineCursor {
     }
 }
 
+/// As chunk of data that is input and can be output, often very efficiently
+#[derive(Debug, PartialEq, Eq)]
+pub struct IOChunk<'a> {
+    utf8_verified: bool, // True if the contents are valid UTF-8
+    content: IOChunkContent<'a>,
+}
+
+impl<'a> IOChunk<'a> {
+    /// Construct an IOChunk from the given content
+    fn from_content(content: IOChunkContent<'a>) -> Self {
+        Self {
+            utf8_verified: false,
+            content,
+        }
+    }
+
+    /// Clear the object's contents, converting it it Owned if needed.
+    pub fn clear(&mut self) {
+        self.content = IOChunkContent::new_owned(Vec::new(), false);
+        self.utf8_verified = true;
+    }
+
+    /// Return the content as a string.
+    pub fn try_as_str(&mut self) -> Result<&str, Box<dyn UError>> {
+        if self.utf8_verified {
+            // Use cached result
+            return Ok(unsafe { self.content.as_str_unchecked() });
+        }
+
+        let result = match &self.content {
+            #[cfg(unix)]
+            IOChunkContent::MmapInput { content, .. } => str::from_utf8(content),
+            IOChunkContent::Owned { content, .. } => str::from_utf8(content),
+        };
+        self.utf8_verified = true;
+        result.map_err(|e| USimpleError::new(1, e.to_string()))
+    }
+}
+
 /// Data to be written to a file. It can come from the mmapped
 /// memory space, in which case it is tracked to allow coallescing
 /// and bypassing BufWriter, or it can be other data from the process's
 /// memory space.
 #[derive(Debug, PartialEq, Eq)]
-pub enum OutputChunk<'a> {
+enum IOChunkContent<'a> {
     #[cfg(unix)]
     MmapInput {
         content: &'a [u8],   // Line without newline
@@ -140,17 +182,17 @@ pub enum OutputChunk<'a> {
     },
 }
 
-impl OutputChunk<'_> {
+impl IOChunkContent<'_> {
     /// Construct a new Owned chunk.
     pub fn new_owned(content: Vec<u8>, has_newline: bool) -> Self {
         #[cfg(unix)]
-        return OutputChunk::Owned {
+        return IOChunkContent::Owned {
             content,
             has_newline,
         };
 
         #[cfg(not(unix))]
-        return OutputChunk::Owned {
+        return IOChunkContent::Owned {
             content,
             has_newline,
             // Avoid E0063 missing _phantom initialization errors
@@ -158,9 +200,12 @@ impl OutputChunk<'_> {
         };
     }
 
-    /// Clear the object's contents, converting it it Owned if needed.
-    pub fn clear(&mut self) {
-        *self = OutputChunk::new_owned(Vec::new(), false);
+    unsafe fn as_str_unchecked(&self) -> &str {
+        match self {
+            #[cfg(unix)]
+            IOChunkContent::MmapInput { content, .. } => std::str::from_utf8_unchecked(content),
+            IOChunkContent::Owned { content, .. } => std::str::from_utf8_unchecked(content),
+        }
     }
 }
 
@@ -227,22 +272,25 @@ impl LineReader {
     }
 
     /// Return the next line, if available, or None.
-    pub fn get_line(&mut self) -> io::Result<Option<OutputChunk>> {
+    pub fn get_line(&mut self) -> io::Result<Option<IOChunk>> {
         match self {
             #[cfg(unix)]
             LineReader::MmapInput { cursor, .. } => {
                 if let Some((content, full_span)) = cursor.get_line()? {
-                    Ok(Some(OutputChunk::MmapInput { content, full_span }))
+                    Ok(Some(IOChunk::from_content(IOChunkContent::MmapInput {
+                        content,
+                        full_span,
+                    })))
                 } else {
                     Ok(None)
                 }
             }
             LineReader::ReadInput(cursor) => {
                 if let Some((line, has_newline)) = cursor.get_line()? {
-                    Ok(Some(OutputChunk::new_owned(
+                    Ok(Some(IOChunk::from_content(IOChunkContent::new_owned(
                         line.into_owned().into_bytes(),
                         has_newline,
-                    )))
+                    ))))
                 } else {
                     Ok(None)
                 }
@@ -276,11 +324,11 @@ impl<T: Write> OutputWrite for T {}
 /// system call without any copying if worthwhile.
 /// All other output is buffered and writen via BufWriter.
 pub struct OutputBuffer {
-    out: BufWriter<Box<dyn OutputWrite + Send + 'static>>, // Where to write
+    out: BufWriter<Box<dyn OutputWrite + 'static>>, // Where to write
     #[cfg(unix)]
-    mmap_ptr: Option<(*const u8, usize)>,  // Start and len of chunk to write
+    mmap_ptr: Option<(*const u8, usize)>, // Start and len of chunk to write
     #[cfg(test)]
-    writes_issued: usize,                  // Number of issued write(2) calls
+    writes_issued: usize,           // Number of issued write(2) calls
 }
 
 /// Wrapper that issues the write(2) system call
@@ -311,7 +359,7 @@ const MIN_DIRECT_WRITE: usize = 4 * 1024;
 const MAX_PENDING_WRITE: usize = 64 * 1024;
 
 impl OutputBuffer {
-    pub fn new(w: Box<dyn OutputWrite + Send + 'static>) -> Self {
+    pub fn new(w: Box<dyn OutputWrite + 'static>) -> Self {
         Self {
             out: BufWriter::new(w),
             #[cfg(unix)]
@@ -324,16 +372,19 @@ impl OutputBuffer {
     /// Schedule the specified string for eventual output
     pub fn write_str(&mut self, s: &str) -> io::Result<()> {
         // Use the write_chunk corresponding to cfg
-        self.write_chunk(&OutputChunk::new_owned(s.as_bytes().to_vec(), false))
+        self.write_chunk(&IOChunk::from_content(IOChunkContent::new_owned(
+            s.as_bytes().to_vec(),
+            false,
+        )))
     }
 }
 
 #[cfg(unix)]
 impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output
-    pub fn write_chunk(&mut self, chunk: &OutputChunk) -> io::Result<()> {
-        match chunk {
-            OutputChunk::MmapInput { full_span, .. } => {
+    pub fn write_chunk(&mut self, chunk: &IOChunk) -> io::Result<()> {
+        match &chunk.content {
+            IOChunkContent::MmapInput { full_span, .. } => {
                 let ptr = full_span.as_ptr();
                 let len = full_span.len();
 
@@ -350,7 +401,7 @@ impl OutputBuffer {
                 Ok(())
             }
 
-            OutputChunk::Owned {
+            IOChunkContent::Owned {
                 content,
                 has_newline,
                 ..
@@ -397,9 +448,9 @@ impl OutputBuffer {
 #[cfg(not(unix))]
 impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output
-    pub fn write_chunk(&mut self, chunk: &OutputChunk) -> io::Result<()> {
-        match chunk {
-            OutputChunk::Owned {
+    pub fn write_chunk(&mut self, chunk: &IOChunk) -> io::Result<()> {
+        match &chunk.content {
+            IOChunkContent::Owned {
                 content,
                 has_newline,
                 ..
@@ -758,7 +809,7 @@ mod tests {
     fn test_stream_read() -> std::io::Result<()> {
         // Create temporary file with known contents
         let mut tmp = NamedTempFile::new()?;
-        write!(tmp, "first line\nsecond line\n")?;
+        write!(tmp, "first line\nsecond line\nlast line\n")?;
         tmp.flush()?;
 
         let path = tmp.path().to_path_buf();
@@ -766,29 +817,49 @@ mod tests {
 
         // Verify the reader's operation
         assert!(!reader.is_last_line()?);
-        if let Some(OutputChunk::Owned {
-            content,
-            has_newline,
+        if let Some(IOChunk {
+            content:
+                IOChunkContent::Owned {
+                    content,
+                    has_newline,
+                    ..
+                },
+            utf8_verified,
             ..
         }) = reader.get_line()?
         {
             assert_eq!(content, b"first line");
             assert!(has_newline);
+            assert!(!utf8_verified);
         } else {
-            panic!("Expected OutputChunk::Owned");
+            panic!("Expected IOChunkContent::Owned");
         }
 
-        assert!(!reader.is_last_line()?);
-        if let Some(OutputChunk::Owned {
-            content,
-            has_newline,
+        if let Some(IOChunk {
+            content:
+                IOChunkContent::Owned {
+                    content,
+                    has_newline,
+                    ..
+                },
             ..
         }) = reader.get_line()?
         {
             assert_eq!(content, b"second line");
             assert!(has_newline);
         } else {
-            panic!("Expected OutputChunk::Owned");
+            panic!("Expected IOChunkContent::Owned");
+        }
+
+        assert!(!reader.is_last_line()?);
+        if let Some(mut content) = reader.get_line()? {
+            assert!(!content.utf8_verified);
+            assert_eq!(content.try_as_str().unwrap(), "last line");
+            assert!(content.utf8_verified);
+            // Cached version
+            assert_eq!(content.try_as_str().unwrap(), "last line");
+        } else {
+            panic!("Expected IOChunk");
         }
 
         assert!(reader.is_last_line()?);
@@ -810,21 +881,39 @@ mod tests {
 
         // Verify the reader's operation
         assert!(!reader.is_last_line()?);
-        assert_eq!(
-            reader.get_line()?,
-            Some(OutputChunk::MmapInput {
-                content: b"first line".as_ref(),
-                full_span: b"first line\n".as_ref(),
-            })
-        );
+        if let Some(IOChunk {
+            content:
+                IOChunkContent::MmapInput {
+                    content, full_span, ..
+                },
+            utf8_verified,
+            ..
+        }) = reader.get_line()?
+        {
+            assert_eq!(content, b"first line");
+            assert_eq!(full_span, b"first line\n");
+            assert!(!utf8_verified);
+        } else {
+            panic!("Expected IOChunkContent::MapInput");
+        }
+
         assert!(!reader.is_last_line()?);
-        assert_eq!(
-            reader.get_line()?,
-            Some(OutputChunk::MmapInput {
-                content: b"second line".as_ref(),
-                full_span: b"second line\n".as_ref(),
-            })
-        );
+        if let Some(IOChunk {
+            content:
+                IOChunkContent::MmapInput {
+                    content, full_span, ..
+                },
+            utf8_verified,
+            ..
+        }) = reader.get_line()?
+        {
+            assert_eq!(content, b"second line");
+            assert_eq!(full_span, b"second line\n");
+            assert!(!utf8_verified);
+        } else {
+            panic!("Expected IOChunkContent::MapInput");
+        }
+
         assert!(reader.is_last_line()?);
         assert_eq!(reader.get_line()?, None);
 

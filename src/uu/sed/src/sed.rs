@@ -196,8 +196,10 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         sandbox: matches.get_flag("sandbox"),
         unbuffered: matches.get_flag("unbuffered"),
         null_data: matches.get_flag("null-data"),
+
         // Other context
         line_number: 0,
+        last_address: false,
     }
 }
 

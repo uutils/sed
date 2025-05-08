@@ -36,9 +36,12 @@ pub struct ProcessingContext {
     pub sandbox: bool,
     pub unbuffered: bool,
     pub null_data: bool,
+
     // Other context
     /// Current input line number
     pub line_number: usize,
+    /// Last address of a range
+    pub last_address: bool,
 }
 
 // The specification of a script: through a string or a file

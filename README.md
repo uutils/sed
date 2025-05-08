@@ -24,12 +24,18 @@ cd sed
 cargo build --release
 cargo run --release
 ```
-## Extensions
+## Extensions and incompatibilities
 ### GNU
 * Command-line arguments can be specified in long (`--`) form.
 * Spaces can precede a regular expression modifier.
 
 ### BSD and GNU
+* The input is assumed to be valid UTF-8 (this includes 7-bit ASCII).
+  If the input is in another code page, consider converting it through UTF-8
+  in order to avoid errors on invalid UTF-8 sequences and for the correct
+  handling of regular expressions.
+  This _sed_ program can also handle arbitrary byte sequences if no part of the
+  input is treated as string.
 * The second address in a range can be specified as a relative address with +N.
 
 ### Other
