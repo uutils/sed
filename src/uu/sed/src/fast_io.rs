@@ -17,7 +17,6 @@
 #[cfg(unix)]
 use memmap2::Mmap;
 
-use std::borrow::Cow;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 
@@ -33,7 +32,10 @@ use std::str;
 #[cfg(unix)]
 use uucore::libc::{c_void, write};
 
-use uucore::error::{UError, USimpleError};
+use uucore::error::UError;
+
+#[cfg(unix)]
+use uucore::error::USimpleError;
 
 // Define two cursors for iterating over lines:
 // - MmapLineCursor based on mmap(2),
@@ -102,7 +104,7 @@ impl ReadLineCursor {
     }
 
     /// Return the next line and its \n termination, if available, or None.
-    fn get_line(&mut self) -> io::Result<Option<(Cow<'_, str>, bool)>> {
+    fn get_line(&mut self) -> io::Result<Option<(String, bool)>> {
         self.buffer.clear();
         // read_line *includes* the '\n' if present
         let bytes_read = self.reader.read_line(&mut self.buffer)?;
@@ -115,7 +117,8 @@ impl ReadLineCursor {
         if has_newline {
             self.buffer.pop();
         }
-        Ok(Some((Cow::Owned(self.buffer.clone()), has_newline)))
+        let line = std::mem::take(&mut self.buffer);
+        Ok(Some((line, has_newline)))
     }
 
     /// Return true if the line read is the last one
@@ -142,24 +145,39 @@ impl<'a> IOChunk<'a> {
 
     /// Clear the object's contents, converting it it Owned if needed.
     pub fn clear(&mut self) {
-        self.content = IOChunkContent::new_owned(Vec::new(), false);
         self.utf8_verified = true;
+        match &mut self.content {
+            IOChunkContent::Owned {
+                content,
+                has_newline,
+                ..
+            } => {
+                content.clear();
+                *has_newline = false;
+            }
+            #[cfg(unix)]
+            _ => {
+                self.content = IOChunkContent::new_owned(String::new(), false);
+            }
+        }
     }
 
     /// Return the content as a string.
     pub fn try_as_str(&mut self) -> Result<&str, Box<dyn UError>> {
-        if self.utf8_verified {
-            // Use cached result
-            return Ok(unsafe { self.content.as_str_unchecked() });
-        }
-
-        let result = match &self.content {
+        match &self.content {
             #[cfg(unix)]
-            IOChunkContent::MmapInput { content, .. } => str::from_utf8(content),
-            IOChunkContent::Owned { content, .. } => str::from_utf8(content),
-        };
-        self.utf8_verified = true;
-        result.map_err(|e| USimpleError::new(1, e.to_string()))
+            IOChunkContent::MmapInput { content, .. } => {
+                if self.utf8_verified {
+                    // Use cached result
+                    Ok(unsafe { self.content.as_str_unchecked() })
+                } else {
+                    let result = str::from_utf8(content);
+                    self.utf8_verified = true;
+                    result.map_err(|e| USimpleError::new(1, e.to_string()))
+                }
+            }
+            IOChunkContent::Owned { content, .. } => Ok(content),
+        }
     }
 }
 
@@ -175,7 +193,7 @@ enum IOChunkContent<'a> {
         full_span: &'a [u8], // Line including original newline, if any
     },
     Owned {
-        content: Vec<u8>,  // Line content without newline
+        content: String,   // Line content without newline
         has_newline: bool, // True if \n-terminated
         #[cfg(not(unix))]
         _phantom: PhantomData<&'a ()>, // Silence E0392 warning
@@ -184,7 +202,7 @@ enum IOChunkContent<'a> {
 
 impl IOChunkContent<'_> {
     /// Construct a new Owned chunk.
-    pub fn new_owned(content: Vec<u8>, has_newline: bool) -> Self {
+    pub fn new_owned(content: String, has_newline: bool) -> Self {
         #[cfg(unix)]
         return IOChunkContent::Owned {
             content,
@@ -200,11 +218,11 @@ impl IOChunkContent<'_> {
         };
     }
 
+    #[cfg(unix)]
     unsafe fn as_str_unchecked(&self) -> &str {
         match self {
-            #[cfg(unix)]
             IOChunkContent::MmapInput { content, .. } => std::str::from_utf8_unchecked(content),
-            IOChunkContent::Owned { content, .. } => std::str::from_utf8_unchecked(content),
+            IOChunkContent::Owned { content, .. } => content,
         }
     }
 }
@@ -288,7 +306,7 @@ impl LineReader {
             LineReader::ReadInput(cursor) => {
                 if let Some((line, has_newline)) = cursor.get_line()? {
                     Ok(Some(IOChunk::from_content(IOChunkContent::new_owned(
-                        line.into_owned().into_bytes(),
+                        line,
                         has_newline,
                     ))))
                 } else {
@@ -369,11 +387,10 @@ impl OutputBuffer {
         }
     }
 
-    /// Schedule the specified string for eventual output
-    pub fn write_str(&mut self, s: &str) -> io::Result<()> {
-        // Use the write_chunk corresponding to cfg
+    /// Schedule the specified String or &strfor eventual output
+    pub fn write_str<S: Into<String>>(&mut self, s: S) -> io::Result<()> {
         self.write_chunk(&IOChunk::from_content(IOChunkContent::new_owned(
-            s.as_bytes().to_vec(),
+            s.into(),
             false,
         )))
     }
@@ -407,7 +424,7 @@ impl OutputBuffer {
                 ..
             } => {
                 self.flush_mmap()?;
-                self.out.write_all(content)?;
+                self.out.write_all(content.as_bytes())?;
                 if *has_newline {
                     self.out.write_all(b"\n")?;
                 }
@@ -455,7 +472,7 @@ impl OutputBuffer {
                 has_newline,
                 ..
             } => {
-                self.out.write_all(content)?;
+                self.out.write_all(content.as_bytes())?;
                 if *has_newline {
                     self.out.write_all(b"\n")?;
                 }
@@ -828,7 +845,7 @@ mod tests {
             ..
         }) = reader.get_line()?
         {
-            assert_eq!(content, b"first line");
+            assert_eq!(content, "first line");
             assert!(has_newline);
             assert!(!utf8_verified);
         } else {
@@ -845,7 +862,7 @@ mod tests {
             ..
         }) = reader.get_line()?
         {
-            assert_eq!(content, b"second line");
+            assert_eq!(content, "second line");
             assert!(has_newline);
         } else {
             panic!("Expected IOChunkContent::Owned");
@@ -853,10 +870,6 @@ mod tests {
 
         assert!(!reader.is_last_line()?);
         if let Some(mut content) = reader.get_line()? {
-            assert!(!content.utf8_verified);
-            assert_eq!(content.try_as_str().unwrap(), "last line");
-            assert!(content.utf8_verified);
-            // Cached version
             assert_eq!(content.try_as_str().unwrap(), "last line");
         } else {
             panic!("Expected IOChunk");
@@ -873,7 +886,7 @@ mod tests {
     fn test_mmap_read() -> std::io::Result<()> {
         // Create temporary file with known contents
         let mut tmp = NamedTempFile::new()?;
-        write!(tmp, "first line\nsecond line\n")?;
+        write!(tmp, "first line\nsecond line\nlast line\n")?;
         tmp.flush()?;
 
         let path = tmp.path().to_path_buf();
@@ -912,6 +925,17 @@ mod tests {
             assert!(!utf8_verified);
         } else {
             panic!("Expected IOChunkContent::MapInput");
+        }
+
+        assert!(!reader.is_last_line()?);
+        if let Some(mut content) = reader.get_line()? {
+            assert!(!content.utf8_verified);
+            assert_eq!(content.try_as_str().unwrap(), "last line");
+            assert!(content.utf8_verified);
+            // Cached version
+            assert_eq!(content.try_as_str().unwrap(), "last line");
+        } else {
+            panic!("Expected IOChunk");
         }
 
         assert!(reader.is_last_line()?);
