@@ -201,6 +201,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         line_number: 0,
         last_address: false,
         last_line: false,
+        last_file: false,
     }
 }
 

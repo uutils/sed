@@ -32,6 +32,7 @@ fn match_address(
                 Ok(false)
             }
         }
+
         AddressType::Line => {
             if let AddressValue::LineNumber(lineno) = addr.value {
                 Ok(context.line_number == lineno)
@@ -39,7 +40,15 @@ fn match_address(
                 Ok(false)
             }
         }
-        AddressType::Last => Ok(context.last_line),
+
+        // Recognize "$" as the last line of last file. This is consistent
+        // with the original 7th Research Edition implementation:
+        // https://github.com/dspinellis/unix-history-repo/blob/Research-V7/usr/src/cmd/sed/sed1.c#L665
+        // The FreeBSD version checked for subsequent empty files, but this
+        // can lead to destructive reads (e.g. from named pipes),
+        // and is probably an overkill.
+        AddressType::Last => Ok(context.last_line && (context.last_file || context.separate)),
+
         _ => panic!("invalid address type in match_address"),
     }
 }
@@ -134,6 +143,21 @@ fn applies(
     }
 }
 
+/// Write the specified chunk to the output for a given processing context.
+fn write_chunk(
+    output: &mut OutputBuffer,
+    context: &ProcessingContext,
+    chunk: &IOChunk,
+) -> std::io::Result<()> {
+    output.write_chunk(chunk)?;
+
+    if context.unbuffered {
+        output.flush()?;
+    }
+
+    Ok(())
+}
+
 /// Process a single input file
 fn process_file(
     commands: &Option<Rc<RefCell<Command>>>,
@@ -146,11 +170,9 @@ fn process_file(
         context.line_number += 1;
         let mut current: Option<Rc<RefCell<Command>>> = commands.clone();
         while let Some(command_rc) = current {
-            let command = command_rc.borrow();
+            let mut command = command_rc.borrow_mut();
 
-            // Not compiled until the double-borrow of reader is resolved.
-            #[cfg(any())]
-            if !applies(&mut command, reader, &mut pattern, context)? {
+            if !applies(&mut command, &mut pattern, context)? {
                 // Advance to next command
                 current = command.next.clone();
                 continue;
@@ -173,6 +195,7 @@ fn process_file(
                     // TODO
                 }
                 'd' => {
+                    // Delete the pattern space and start the next cycle.
                     pattern.clear();
                     break;
                 }
@@ -204,7 +227,8 @@ fn process_file(
                     // TODO
                 }
                 'p' => {
-                    // TODO
+                    // Write the pattern space to standard output.
+                    write_chunk(output, context, &pattern)?;
                 }
                 'P' => {
                     // TODO
@@ -246,9 +270,8 @@ fn process_file(
             current = command.next.clone();
         }
 
-        output.write_chunk(&pattern)?;
-        if context.unbuffered {
-            output.flush()?;
+        if !context.quiet {
+            write_chunk(output, context, &pattern)?;
         }
     }
     Ok(())
@@ -263,9 +286,12 @@ pub fn process_all_files(
     context.unbuffered = context.unbuffered || atty::is(Stream::Stdout);
 
     let mut in_place = InPlace::new(context.clone())?;
-    for path in files {
-        let mut reader = LineReader::open(&path)?;
-        let output = in_place.begin(&path)?;
+    let last_file_index = files.len() - 1;
+
+    for (index, path) in files.iter().enumerate() {
+        context.last_file = index == last_file_index;
+        let mut reader = LineReader::open(path)?;
+        let output = in_place.begin(path)?;
 
         if context.separate {
             context.line_number = 0;

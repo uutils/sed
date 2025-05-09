@@ -44,6 +44,8 @@ pub struct ProcessingContext {
     pub last_address: bool,
     /// True if the line read is the last line
     pub last_line: bool,
+    /// True if the file is the last file of the ones specified
+    pub last_file: bool,
 }
 
 // The specification of a script: through a string or a file
@@ -124,7 +126,7 @@ impl Default for Command {
             addr1: None,
             addr2: None,
             non_select: false,
-            start_line: Some(0),
+            start_line: None,
             text: None,
             data: CommandData::None,
             next: None,
