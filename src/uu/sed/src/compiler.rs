@@ -444,7 +444,6 @@ fn compile_command(
             line.eat_spaces();
             if !line.eol() && line.current() == ';' {
                 line.advance();
-                // TODO: update link
                 return Ok(ContinueAction::NextChar);
             }
             if !line.eol() {
@@ -456,6 +455,7 @@ fn compile_command(
             }
         }
         CommandArgs::NonSelect => { // !
+             // Implemented at a heigher level.
         }
         // TODO
         CommandArgs::Text => { // a c i

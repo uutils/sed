@@ -158,19 +158,10 @@ check_output!(addr_found_space, ["-n", " /l1_7/ p", LINES1]);
 check_output!(addr_escaped_delimiter, ["-n", "\\_l1\\_7_p", LINES1]);
 check_output!(addr_range_numeric, ["-n", "1,4p", LINES1]);
 check_output!(addr_range_to_last, ["-n", "1,$p", LINES1, LINES2]);
-check_output!(
-    addr_range_to_pattern,
-    ["-n", "1,/l2_9/p", LINES1, LINES2]
-);
+check_output!(addr_range_to_pattern, ["-n", "1,/l2_9/p", LINES1, LINES2]);
 check_output!(addr_pattern_to_last, ["-n", "/4/,$p", LINES1, LINES2]);
-check_output!(
-    addr_pattern_to_straddle,
-    ["-n", "/4/,20p", LINES1, LINES2]
-);
-check_output!(
-    addr_pattern_to_pattern,
-    ["-n", "/4/,/10/p", LINES1, LINES2]
-);
+check_output!(addr_pattern_to_straddle, ["-n", "/4/,20p", LINES1, LINES2]);
+check_output!(addr_pattern_to_pattern, ["-n", "/4/,/10/p", LINES1, LINES2]);
 check_output!(
     addr_pattern_straddle,
     ["-n", "/l2_3/,/l1_8/p", LINES1, LINES2]
@@ -180,10 +171,7 @@ check_output!(
     addr_pattern_range_reverse,
     ["-n", "/l1_7/,3p", LINES1, LINES2]
 );
-check_output!(
-    addr_numeric_to_relative,
-    ["-n", "13,+4p", LINES1, LINES2]
-);
+check_output!(addr_numeric_to_relative, ["-n", "13,+4p", LINES1, LINES2]);
 check_output!(
     addr_pattern_to_relative,
     ["-n", "/l1_6/,+2p", LINES1, LINES2]
@@ -194,3 +182,6 @@ check_output!(
     ["-n", "--separate", "1p", LINES1, LINES2]
 );
 check_output!(addr_last_separate, ["-ns", "$p", LINES1, LINES2]);
+check_output!(addr_two_lines_semicolon, ["-n", "-e", "4p;8p", LINES1]);
+check_output!(addr_two_lines_newline, ["-n", "-e", "4p\n8p", LINES1]);
+check_output!(addr_three_lines_semicolon, ["-n", "-e", "4p;8p;1p", LINES1]);
