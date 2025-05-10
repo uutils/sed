@@ -8,14 +8,18 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{Address, AddressType, AddressValue, Command, ProcessingContext, ScriptValue};
-use crate::delimited_parser::{compilation_error, parse_regex};
+use crate::command::{
+    Address, AddressType, AddressValue, Command, CommandData, ProcessingContext, ReplacementPart,
+    ReplacementTemplate, ScriptValue, Substitution,
+};
+use crate::delimited_parser::{compilation_error, parse_char_escape, parse_regex};
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::error::UResult;
 
@@ -202,7 +206,7 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
 
 // How to continue after processing a command
 #[derive(Debug)]
-enum ContinueAction {
+pub enum ContinueAction {
     NextLine,
     NextChar,
 }
@@ -427,6 +431,266 @@ fn compile_regex(
     }
 }
 
+/// Compile a regular expression replacement string.
+pub fn compile_replacement(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+) -> UResult<ReplacementTemplate> {
+    let mut parts = Vec::new();
+    let mut literal = String::new();
+
+    let delimiter = line.current();
+    line.advance();
+
+    loop {
+        while !line.eol() {
+            match line.current() {
+                '\\' => {
+                    line.advance();
+
+                    // Line continuation
+                    if line.eol() {
+                        if let Some(next_line_string) = lines.next_line()? {
+                            *line = ScriptCharProvider::new(&next_line_string);
+                            continue;
+                        } else {
+                            return compilation_error(
+                                lines,
+                                line,
+                                "unterminated substitute replacement (unexpected EOF)",
+                            );
+                        }
+                    }
+
+                    match line.current() {
+                        // \1 - \9
+                        c @ '1'..='9' => {
+                            let ref_num = c.to_digit(10).unwrap();
+
+                            if !literal.is_empty() {
+                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
+                            }
+                            parts.push(ReplacementPart::Group(ref_num));
+                            line.advance();
+                        }
+
+                        // \& or \\
+                        '&' => {
+                            if !literal.is_empty() {
+                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
+                            }
+                            parts.push(ReplacementPart::WholeMatch);
+                            line.advance();
+                        }
+                        '\\' => {
+                            literal.push('\\');
+                            line.advance();
+                        }
+
+                        // other escape sequences
+                        _ => match parse_char_escape(line) {
+                            Some(decoded) => literal.push(decoded),
+                            None => {
+                                literal.push('\\');
+                                literal.push(line.current());
+                                line.advance();
+                            }
+                        },
+                    }
+                }
+
+                '\n' => {
+                    return compilation_error(
+                        lines,
+                        line,
+                        "unescaped newline inside substitute replacement",
+                    );
+                }
+
+                c if c == delimiter => {
+                    line.advance(); // skip closing delimiter
+                    if !literal.is_empty() {
+                        parts.push(ReplacementPart::Literal(literal));
+                    }
+                    return Ok(ReplacementTemplate { parts });
+                }
+
+                c => {
+                    literal.push(c);
+                    line.advance();
+                }
+            }
+        }
+
+        // Fetch next line for continued replacement string
+        if let Some(next_line_string) = lines.next_line()? {
+            *line = ScriptCharProvider::new(&next_line_string);
+        } else {
+            return compilation_error(lines, line, "unterminated substitute replacement");
+        }
+    }
+}
+
+pub fn compile_subst_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<ContinueAction> {
+    line.advance(); // move past 's'
+
+    let delimiter = line.current();
+    if delimiter == '\0' || delimiter == '\\' {
+        return compilation_error(
+            lines,
+            line,
+            "substitute pattern cannot be delimited by newline or backslash",
+        );
+    }
+
+    let pattern = parse_regex(lines, line)?;
+    if pattern.is_empty() {
+        return compilation_error(lines, line, "unterminated substitute pattern");
+    }
+
+    let mut subst = Box::new(Substitution {
+        occurrence: 0,
+        print_flag: false,
+        ignore_case: false,
+        write_file: None,
+        file_descriptor: None,
+        regex: compile_regex(lines, line, &pattern, false)?, // temp compile
+        line_number: lines.get_line_number(),
+        replacement: ReplacementTemplate::default(),
+    });
+
+    subst.replacement = compile_replacement(lines, line)?;
+    compile_subst_flags(lines, line, &mut subst)?;
+
+    // Recompile regex with actual ignore_case flag
+    subst.regex = compile_regex(lines, line, &pattern, subst.ignore_case)?;
+
+    line.eat_spaces();
+    if !line.eol() && line.current() == ';' {
+        line.advance();
+        cmd.data = CommandData::Substitution(subst);
+        return Ok(ContinueAction::NextChar);
+    }
+
+    if !line.eol() {
+        return compilation_error(
+            lines,
+            line,
+            format!("extra characters at the end of the {} command", cmd.code),
+        );
+    }
+
+    cmd.data = CommandData::Substitution(subst);
+    Ok(ContinueAction::NextLine)
+}
+
+/// Parse the substitution command's optional flags
+pub fn compile_subst_flags(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    subst: &mut Substitution,
+) -> UResult<()> {
+    let mut seen_g_or_n = false;
+
+    subst.occurrence = 1; // default
+    subst.print_flag = false;
+    subst.ignore_case = false;
+    subst.write_file = None;
+
+    while !line.eol() {
+        line.eat_spaces();
+
+        match line.current() {
+            'g' => {
+                if seen_g_or_n {
+                    return compilation_error(
+                        lines,
+                        line,
+                        "multiple 'g' or numeric flags in substitute command",
+                    );
+                }
+                seen_g_or_n = true;
+                subst.occurrence = 0;
+                line.advance();
+            }
+
+            'p' => {
+                subst.print_flag = true;
+                line.advance();
+            }
+
+            'i' | 'I' => {
+                subst.ignore_case = true;
+                line.advance();
+            }
+
+            _c @ '1'..='9' => {
+                if seen_g_or_n {
+                    return compilation_error(
+                        lines,
+                        line,
+                        "multiple 'g' or numeric flags in substitute command",
+                    );
+                }
+
+                let mut number = 0usize;
+                while !line.eol() && line.current().is_ascii_digit() {
+                    number = number
+                        .checked_mul(10)
+                        .and_then(|n| n.checked_add(line.current().to_digit(10).unwrap() as usize))
+                        .ok_or_else(|| {
+                            compilation_error::<()>(
+                                lines,
+                                line,
+                                "overflow in numeric substitute flag",
+                            )
+                            .unwrap_err()
+                        })?;
+                    line.advance();
+                }
+
+                subst.occurrence = number;
+                seen_g_or_n = true;
+            }
+
+            'w' => {
+                line.advance();
+                line.eat_spaces();
+
+                let mut path = String::new();
+                while !line.eol() && line.current() != ';' {
+                    path.push(line.current());
+                    line.advance();
+                }
+
+                if path.is_empty() {
+                    return compilation_error(lines, line, "missing filename after 'w' flag");
+                }
+
+                subst.write_file = Some(PathBuf::from(path));
+                // NOTE: subst.file_descriptor is resolved later at runtime
+                return Ok(()); // 'w' is the last flag allowed
+            }
+
+            ';' | '\n' => break,
+
+            other => {
+                return compilation_error(
+                    lines,
+                    line,
+                    format!("invalid substitute flag: '{}'", other),
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // Compile the specified command
 fn compile_command(
     lines: &mut ScriptLineProvider,
@@ -457,6 +721,10 @@ fn compile_command(
         CommandArgs::NonSelect => { // !
              // Implemented at a heigher level.
         }
+        CommandArgs::Substitute => {
+            // s
+            return compile_subst_command(lines, line, &mut cmd);
+        }
         // TODO
         CommandArgs::Text => { // a c i
         }
@@ -473,8 +741,6 @@ fn compile_command(
         CommandArgs::ReadFile => { // r
         }
         CommandArgs::WriteFile => { // w
-        }
-        CommandArgs::Substitute => { // s
         }
         CommandArgs::Translate => { // y
         }
@@ -1162,5 +1428,229 @@ mod tests {
         assert_eq!(line, 1);
 
         assert!(cmd.next.is_none());
+    }
+
+    // compile_replacement
+    #[test]
+    fn test_compile_replacement_literal() {
+        let (mut lines, mut chars) = make_providers("/hello/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        dbg!(&template);
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_compile_replacement_backrefs_and_literal() {
+        let (mut lines, mut chars) = make_providers("/prefix \\1 and \\2/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 4);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "prefix "));
+        assert!(matches!(&template.parts[1], ReplacementPart::Group(1)));
+        assert!(matches!(&template.parts[2], ReplacementPart::Literal(s) if s == " and "));
+        assert!(matches!(&template.parts[3], ReplacementPart::Group(2)));
+    }
+
+    #[test]
+    fn test_compile_replacement_whole_match() {
+        let (mut lines, mut chars) = make_providers("/The match was: \\&/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 2);
+        assert!(
+            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "The match was: ")
+        );
+        assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
+    }
+
+    #[test]
+    fn test_compile_replacement_escape_sequences() {
+        let (mut lines, mut chars) = make_providers("/line\\nnewline\\tend/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(
+            &template.parts[0],
+            ReplacementPart::Literal(s) if s == "line\nnewline\tend"
+        ));
+    }
+
+    #[test]
+    fn test_compile_replacement_line_continuation() {
+        let script = vec![
+            ScriptValue::StringVal("/first line\\".to_string()),
+            ScriptValue::StringVal(" continued/".to_string()),
+        ];
+        let mut provider = ScriptLineProvider::new(script);
+        let first_line = provider.next_line().unwrap().unwrap();
+        let mut chars = ScriptCharProvider::new(&first_line);
+
+        let template = compile_replacement(&mut provider, &mut chars).unwrap();
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(
+            &template.parts[0],
+            ReplacementPart::Literal(s) if s == "first line continued"
+        ));
+    }
+
+    // compile_subst_flags
+    #[test]
+    fn test_compile_subst_flag_g() {
+        let (lines, mut chars) = make_providers("g");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        assert_eq!(subst.occurrence, 0); // 'g' means all occurrences
+    }
+
+    #[test]
+    fn test_compile_subst_flag_p() {
+        let (lines, mut chars) = make_providers("p");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        assert!(subst.print_flag);
+    }
+
+    #[test]
+    fn test_compile_subst_flag_uppercase_i() {
+        let (lines, mut chars) = make_providers("I");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        assert!(subst.ignore_case);
+    }
+
+    #[test]
+    fn test_compile_subst_flag_i_lowercase() {
+        let (lines, mut chars) = make_providers("i");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        assert!(subst.ignore_case);
+    }
+
+    #[test]
+    fn test_compile_subst_flag_number() {
+        let (lines, mut chars) = make_providers("3");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        assert_eq!(subst.occurrence, 3);
+    }
+
+    #[test]
+    fn test_compile_subst_flag_g_and_number_should_fail() {
+        let (lines, mut chars) = make_providers("g3");
+        let mut subst = Substitution::default();
+
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("multiple 'g' or numeric flags in substitute command"));
+    }
+
+    #[test]
+    fn test_compile_subst_flag_number_and_g_should_fail() {
+        let (lines, mut chars) = make_providers("2g");
+        let mut subst = Substitution::default();
+
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("multiple 'g' or numeric flags in substitute command"));
+    }
+
+    #[test]
+    fn test_compile_subst_flag_w_missing_filename() {
+        let (lines, mut chars) = make_providers("w ");
+        let mut subst = Substitution::default();
+
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
+        assert!(err.to_string().contains("missing filename"));
+    }
+
+    #[test]
+    fn test_compile_subst_flag_w_with_filename() {
+        let (lines, mut chars) = make_providers("w out.txt");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        assert_eq!(subst.write_file, Some(std::path::PathBuf::from("out.txt")));
+    }
+
+    #[test]
+    fn test_compile_subst_flag_invalid_flag() {
+        let (lines, mut chars) = make_providers("z");
+        let mut subst = Substitution::default();
+
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
+        assert!(err.to_string().contains("invalid substitute flag"));
+    }
+
+    // compile_subst_command
+    #[test]
+    fn test_compile_subst_invalid_delimiter_backslash() {
+        let (mut lines, mut chars) = make_providers("s\\foo\\bar\\");
+        let mut cmd = Command::default();
+
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("substitute pattern cannot be delimited"));
+    }
+
+    #[test]
+    fn test_compile_subst_empty_pattern() {
+        let (mut lines, mut chars) = make_providers("s//bar/");
+        let mut cmd = Command::default();
+
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap_err();
+        assert!(err.to_string().contains("unterminated substitute pattern"));
+    }
+
+    #[test]
+    fn test_compile_subst_extra_characters_at_end() {
+        let (mut lines, mut chars) = make_providers("s/foo/bar/x");
+        let mut cmd = Command::default();
+
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap_err();
+        assert!(err.to_string().contains("invalid substitute flag"));
+    }
+
+    #[test]
+    fn test_compile_subst_semicolon_indicates_continue() {
+        let (mut lines, mut chars) = make_providers("s/foo/bar/;");
+        let mut cmd = Command::default();
+
+        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        assert!(matches!(result, ContinueAction::NextChar));
+
+        if let CommandData::Substitution(subst) = &cmd.data {
+            assert_eq!(subst.replacement.parts.len(), 1);
+        } else {
+            panic!("Expected CommandData::Substitution");
+        }
+    }
+
+    #[test]
+    fn test_compile_subst_sets_command_data() {
+        let (mut lines, mut chars) = make_providers("s/foo/bar/");
+        let mut cmd = Command::default();
+
+        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        assert!(matches!(result, ContinueAction::NextLine));
+
+        match &cmd.data {
+            CommandData::Substitution(subst) => {
+                assert_eq!(subst.replacement.parts.len(), 1);
+                assert!(
+                    matches!(&subst.replacement.parts[0], ReplacementPart::Literal(s) if s == "bar")
+                );
+            }
+            _ => panic!("Expected CommandData::Substitution"),
+        }
     }
 }

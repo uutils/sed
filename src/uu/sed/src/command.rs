@@ -87,18 +87,20 @@ pub enum ReplacementPart {
     Group(u32),      // \1 to \9
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 /// All specified replacements for an RE
 pub struct ReplacementTemplate {
     pub parts: Vec<ReplacementPart>,
 }
 
-impl ReplacementTemplate {
-    /// Create an empty tamplate.
-    pub fn default() -> Self {
+impl Default for ReplacementTemplate {
+    /// Create an empty template.
+    fn default() -> Self {
         ReplacementTemplate { parts: Vec::new() }
     }
+}
 
+impl ReplacementTemplate {
     /// Apply the template to the given RE captures.
     /// Example:
     /// let result = regex.replace_all(input, |caps: &regex::Captures| {
@@ -145,6 +147,21 @@ pub struct Substitution {
     pub regex: Regex,                     // Regular expression
     pub line_number: usize,               // Line number
     pub replacement: ReplacementTemplate, // Specified broken-down replacement
+}
+
+impl Default for Substitution {
+    fn default() -> Self {
+        Substitution {
+            occurrence: 1,
+            print_flag: false,
+            ignore_case: false,
+            write_file: None,
+            file_descriptor: None,
+            regex: Regex::new("").unwrap(), // safe dummy regex
+            line_number: 0,
+            replacement: ReplacementTemplate::default(),
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -28,6 +28,8 @@ cargo run --release
 ### Spported GNU extensions
 * Command-line arguments can be specified in long (`--`) form.
 * Spaces can precede a regular expression modifier.
+* `I` can be used in as a synonym for the `i` (case insensitive) substitution
+  flag.
 
 ### Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.

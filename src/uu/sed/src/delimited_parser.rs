@@ -101,7 +101,7 @@ fn create_control_char(x: char) -> Option<char> {
 /// At entry line.current() must have advanced after the `\\`.
 /// Advance line to the first character not part of the escape.
 /// Return `None` if an invalid escape has been specified.
-fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
+pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
     match line.current() {
         'a' => {
             line.advance();

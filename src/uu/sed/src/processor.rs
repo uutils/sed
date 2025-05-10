@@ -17,7 +17,6 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::error::UResult;
 
-#[allow(dead_code)]
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
     addr: &Address,
