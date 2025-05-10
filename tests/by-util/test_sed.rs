@@ -185,3 +185,9 @@ check_output!(addr_last_separate, ["-ns", "$p", LINES1, LINES2]);
 check_output!(addr_two_lines_semicolon, ["-n", "-e", "4p;8p", LINES1]);
 check_output!(addr_two_lines_newline, ["-n", "-e", "4p\n8p", LINES1]);
 check_output!(addr_three_lines_semicolon, ["-n", "-e", "4p;8p;1p", LINES1]);
+check_output!(addr_one_line_negate, ["-n", "-e", "4!p", LINES1]);
+check_output!(addr_range_numeric_negate, ["-n", "1,4!p", LINES1]);
+check_output!(
+    addr_pattern_to_pattern_negate,
+    ["-n", "/1_4/,/10/!p", LINES1]
+);
