@@ -185,3 +185,8 @@ check_output!(
     ["-n", "/l1_6/,+2p", "lines1", "lines2"]
 );
 check_output!(addr_numeric_relative_straddle, ["-n", "12,+1p", "lines1"]);
+check_output!(
+    addr_first_separate,
+    ["-n", "--separate", "1p", "lines1", "lines2"]
+);
+check_output!(addr_last_separate, ["-ns", "$p", "lines1", "lines2"]);
