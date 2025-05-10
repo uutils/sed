@@ -691,6 +691,32 @@ pub fn compile_subst_flags(
     Ok(())
 }
 
+/// Compile a command that doesn't take any arguments
+// Handles d D g G h H l n N p P q x =
+pub fn compile_empty_command(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<ContinueAction> {
+    line.advance(); // Skip the command character
+    line.eat_spaces(); // Skip any trailing whitespace
+
+    if !line.eol() && line.current() == ';' {
+        line.advance();
+        return Ok(ContinueAction::NextChar);
+    }
+
+    if !line.eol() {
+        return compilation_error(
+            lines,
+            line,
+            format!("extra characters at the end of the {} command", cmd.code),
+        );
+    }
+
+    Ok(ContinueAction::NextLine)
+}
+
 // Compile the specified command
 fn compile_command(
     lines: &mut ScriptLineProvider,
@@ -704,19 +730,7 @@ fn compile_command(
     match cmd_spec.args {
         CommandArgs::Empty => {
             // d D g G h H l n N p P q x =
-            line.advance();
-            line.eat_spaces();
-            if !line.eol() && line.current() == ';' {
-                line.advance();
-                return Ok(ContinueAction::NextChar);
-            }
-            if !line.eol() {
-                return compilation_error(
-                    lines,
-                    line,
-                    format!("extra characters at the end of the {} command", cmd.code),
-                );
-            }
+            return compile_empty_command(lines, line, &mut cmd);
         }
         CommandArgs::NonSelect => { // !
              // Implemented at a heigher level.
