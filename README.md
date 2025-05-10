@@ -48,6 +48,8 @@ cargo run --release
 - The last line (`$`) address is interpreted as the last non-empty line of
   the last file.  If files specified in subsequent arguments until the last
   one are empty, then the last line condition will never be triggered.
+  This behavior is consistent with the
+  [original implementation](https://github.com/dspinellis/unix-history-repo/blob/Research-V7/usr/src/cmd/sed/sed1.c#L665).
 
 ## License
 
