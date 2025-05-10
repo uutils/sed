@@ -13,13 +13,12 @@ use crate::command::{
 };
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::in_place::InPlace;
+use crate::named_writer;
 use atty::Stream;
 use std::cell::RefCell;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
-use uucore::error::{UResult, USimpleError};
+use uucore::error::UResult;
 
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
@@ -205,23 +204,8 @@ fn substitute(
         }
 
         // Write to file if needed.
-        if let Some(ref path) = sub.write_file {
-            // Check and cache the file handle if not already done.
-            let handle = if let Some(ref mut file) = sub.write_handle {
-                file
-            } else {
-                let file = OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(path)
-                    .map_err(|e| {
-                        USimpleError::new(2, format!("Failed to open {}: {}", path.display(), e))
-                    })?;
-                sub.write_handle.get_or_insert(file)
-            };
-
-            writeln!(handle, "{}", pattern.try_as_str()?)?;
+        if let Some(ref writer) = sub.write_file {
+            writer.borrow_mut().write_line(pattern.try_as_str()?)?;
         }
     }
 
@@ -375,6 +359,9 @@ pub fn process_all_files(
 
         in_place.end()?;
     }
+
+    // Flush all output files
+    named_writer::flush_all()?;
 
     Ok(())
 }

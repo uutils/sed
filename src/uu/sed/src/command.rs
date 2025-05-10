@@ -11,11 +11,12 @@
 // TODO: remove when compile is implemented
 #![allow(dead_code)]
 
+use crate::named_writer::NamedWriter;
+
 use regex::Captures;
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fs::File;
 use std::path::PathBuf; // For file descriptors and equivalent
 use std::rc::Rc;
 use uucore::error::{UResult, USimpleError};
@@ -139,13 +140,12 @@ impl ReplacementTemplate {
 #[derive(Debug)]
 /// Substitution command
 pub struct Substitution {
-    pub occurrence: usize,                // Which occurrence to substitute
-    pub print_flag: bool,                 // True if 'p' flag
-    pub ignore_case: bool,                // True if 'I' flag
-    pub write_file: Option<PathBuf>,      // Path to file if 'w' flag is used
-    pub write_handle: Option<File>,       // Cached open file
-    pub regex: Regex,                     // Regular expression
-    pub line_number: usize,               // Line number
+    pub occurrence: usize, // Which occurrence to substitute
+    pub print_flag: bool,  // True if 'p' flag
+    pub ignore_case: bool, // True if 'I' flag
+    pub write_file: Option<Rc<RefCell<NamedWriter>>>, // Writer to file if 'w' flag is used
+    pub regex: Regex,      // Regular expression
+    pub line_number: usize, // Line number
     pub replacement: ReplacementTemplate, // Specified broken-down replacement
 }
 
@@ -156,7 +156,6 @@ impl Default for Substitution {
             print_flag: false,
             ignore_case: false,
             write_file: None,
-            write_handle: None,
             regex: Regex::new("").unwrap(), // safe dummy regex
             line_number: 0,
             replacement: ReplacementTemplate::default(),
@@ -206,7 +205,7 @@ pub enum CommandData {
     Subcommand(Rc<RefCell<Command>>), // Commands for 'b', 't', '{'
     Substitution(Box<Substitution>),  // Substitute command 's'
     Transliteration(Box<Transliteration>), // Transliteration command 'y'
-    WriteFileDescriptor(File),        // File descriptor for 'w'
+    NamedWriter(Box<NamedWriter>),    // File descriptor for 'w'
 }
 
 impl CommandData {

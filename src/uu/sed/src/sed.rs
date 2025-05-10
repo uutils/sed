@@ -13,6 +13,7 @@ pub mod compiler;
 pub mod delimited_parser;
 pub mod fast_io;
 pub mod in_place;
+pub mod named_writer;
 pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;

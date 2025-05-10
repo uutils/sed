@@ -13,6 +13,7 @@ use crate::command::{
     ReplacementTemplate, ScriptValue, Substitution,
 };
 use crate::delimited_parser::{compilation_error, parse_char_escape, parse_regex};
+use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
 use once_cell::sync::Lazy;
@@ -558,7 +559,6 @@ pub fn compile_subst_command(
         print_flag: false,
         ignore_case: false,
         write_file: None,
-        write_handle: None,
         regex: compile_regex(lines, line, &pattern, false)?, // temp compile
         line_number: lines.get_line_number(),
         replacement: ReplacementTemplate::default(),
@@ -672,7 +672,7 @@ pub fn compile_subst_flags(
                     return compilation_error(lines, line, "missing filename after 'w' flag");
                 }
 
-                subst.write_file = Some(PathBuf::from(path));
+                subst.write_file = Some(NamedWriter::new(PathBuf::from(path))?);
                 // NOTE: subst.write_handle is resolved later at runtime
                 return Ok(()); // 'w' is the last flag allowed
             }
@@ -1604,7 +1604,10 @@ mod tests {
         let mut subst = Substitution::default();
 
         compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
-        assert_eq!(subst.write_file, Some(std::path::PathBuf::from("out.txt")));
+        assert_eq!(
+            subst.write_file.as_ref().map(|w| w.borrow().path.clone()),
+            Some(std::path::PathBuf::from("out.txt"))
+        );
     }
 
     #[test]
