@@ -28,17 +28,32 @@ cd sed
 cargo build --release
 cargo run --release
 ```
-## Extensions
-### GNU
+## Extensions and incompatibilities
+### Spported GNU extensions
 * Command-line arguments can be specified in long (`--`) form.
 * Spaces can precede a regular expression modifier.
+* `I` can be used in as a synonym for the `i` (case insensitive) substitution
+  flag.
 
-### BSD and GNU
+### Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.
 
-### Other
+### New extensions
 * Unicode characters can be specified in regular expression pattern, replacement
   and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
+
+### Incompatibilities
+* The input is assumed to be valid UTF-8 (this includes 7-bit ASCII).
+  If the input is in another code page, consider converting it through UTF-8
+  in order to avoid errors on invalid UTF-8 sequences and for the correct
+  handling of regular expressions.
+  This _sed_ program can also handle arbitrary byte sequences if no part of the
+  input is treated as string.
+- The last line (`$`) address is interpreted as the last non-empty line of
+  the last file.  If files specified in subsequent arguments until the last
+  one are empty, then the last line condition will never be triggered.
+  This behavior is consistent with the
+  [original implementation](https://github.com/dspinellis/unix-history-repo/blob/Research-V7/usr/src/cmd/sed/sed1.c#L665).
 
 ## License
 

@@ -11,13 +11,15 @@
 pub mod command;
 pub mod compiler;
 pub mod delimited_parser;
+pub mod fast_io;
+pub mod in_place;
 pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;
 
-use crate::command::{CliOptions, ScriptValue};
+use crate::command::{ProcessingContext, ScriptValue};
 use crate::compiler::compile;
-use crate::processor::process;
+use crate::processor::process_all_files;
 use clap::{arg, Arg, ArgMatches, Command};
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
@@ -30,10 +32,10 @@ const USAGE: &str = "sed [OPTION]... [script] [file]...";
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
     let (scripts, files) = get_scripts_files(&matches)?;
-    let mut cli_options = build_context(&matches);
+    let mut processing_context = build_context(&matches);
 
-    let executable = compile(scripts, &mut cli_options)?;
-    process(executable, files, &mut cli_options)?;
+    let executable = compile(scripts, &mut processing_context)?;
+    process_all_files(executable, files, processing_context)?;
     Ok(())
 }
 
@@ -169,9 +171,9 @@ fn get_scripts_files(matches: &ArgMatches) -> UResult<(Vec<ScriptValue>, Vec<Pat
     Ok((scripts, files))
 }
 
-// Parse CLI flag arguments and return a CliOptions struct based on them
-fn build_context(matches: &ArgMatches) -> CliOptions {
-    CliOptions {
+// Parse CLI flag arguments and return a ProcessingContext struct based on them
+fn build_context(matches: &ArgMatches) -> ProcessingContext {
+    ProcessingContext {
         all_output_files: matches.get_flag("all-output-files"),
         debug: matches.get_flag("debug"),
         regexp_extended: matches.get_flag("regexp-extended"),
@@ -194,6 +196,12 @@ fn build_context(matches: &ArgMatches) -> CliOptions {
         sandbox: matches.get_flag("sandbox"),
         unbuffered: matches.get_flag("unbuffered"),
         null_data: matches.get_flag("null-data"),
+
+        // Other context
+        line_number: 0,
+        last_address: false,
+        last_line: false,
+        last_file: false,
     }
 }
 
