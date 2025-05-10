@@ -63,11 +63,11 @@ fn test_f_script_ok() {
 }
 
 const INPUT_FILES: &[&str] = &[
-    "two-lines.txt",
-    "no-new-line.txt",
-    "dots-4k.txt",
-    "dots-8k.txt",
-    "dots-64k.txt",
+    "input/two-lines.txt",
+    "input/no-new-line.txt",
+    "input/dots-4k.txt",
+    "input/dots-8k.txt",
+    "input/dots-64k.txt",
 ];
 
 #[test]
@@ -125,11 +125,15 @@ macro_rules! check_output {
     };
 }
 
+// Input files
+const LINES1: &str = "input/lines1";
+const LINES2: &str = "input/lines2";
+
 // Test address ranges
-check_output!(addr_one_line, ["-n", "-e", "4p", "lines1"]);
-check_output!(addr_straddle, ["-n", "-e", "20p", "lines1", "lines2"]);
-check_output!(addr_last_one_file, ["-n", "-e", "$p", "lines1"]);
-check_output!(addr_last_two_files, ["-n", "-e", "$p", "lines1", "lines2"]);
+check_output!(addr_one_line, ["-n", "-e", "4p", LINES1]);
+check_output!(addr_straddle, ["-n", "-e", "20p", LINES1, LINES2]);
+check_output!(addr_last_one_file, ["-n", "-e", "$p", LINES1]);
+check_output!(addr_last_two_files, ["-n", "-e", "$p", LINES1, LINES2]);
 
 // TODO: Enable and configure for Unix/Windows, when "a" is implemented.
 #[cfg(any())]
@@ -138,55 +142,55 @@ check_output!(addr_append_with_empty, ["-e", "$a\nhello", "/dev/null"]);
 #[cfg(unix)]
 check_output!(
     addr_last_with_empty,
-    ["-n", "-e", "$p", "lines1", "/dev/null", "lines2"]
+    ["-n", "-e", "$p", LINES1, "/dev/null", LINES2]
 );
 
 #[cfg(windows)]
 check_output!(
     addr_last_with_empty,
-    ["-n", "-e", "$p", "lines1", "NUL", "lines2"]
+    ["-n", "-e", "$p", LINES1, "NUL", LINES2]
 );
 
-check_output!(addr_past_last, ["-n", "-e", "20p", "lines1"]);
-check_output!(addr_not_found, ["-n", "-e", "/NOTFOUND/p", "lines1"]);
-check_output!(addr_found, ["-n", "/l1_7/p", "lines1"]);
-check_output!(addr_found_space, ["-n", " /l1_7/ p", "lines1"]);
-check_output!(addr_escaped_delimiter, ["-n", "\\_l1\\_7_p", "lines1"]);
-check_output!(addr_range_numeric, ["-n", "1,4p", "lines1"]);
-check_output!(addr_range_to_last, ["-n", "1,$p", "lines1", "lines2"]);
+check_output!(addr_past_last, ["-n", "-e", "20p", LINES1]);
+check_output!(addr_not_found, ["-n", "-e", "/NOTFOUND/p", LINES1]);
+check_output!(addr_found, ["-n", "/l1_7/p", LINES1]);
+check_output!(addr_found_space, ["-n", " /l1_7/ p", LINES1]);
+check_output!(addr_escaped_delimiter, ["-n", "\\_l1\\_7_p", LINES1]);
+check_output!(addr_range_numeric, ["-n", "1,4p", LINES1]);
+check_output!(addr_range_to_last, ["-n", "1,$p", LINES1, LINES2]);
 check_output!(
     addr_range_to_pattern,
-    ["-n", "1,/l2_9/p", "lines1", "lines2"]
+    ["-n", "1,/l2_9/p", LINES1, LINES2]
 );
-check_output!(addr_pattern_to_last, ["-n", "/4/,$p", "lines1", "lines2"]);
+check_output!(addr_pattern_to_last, ["-n", "/4/,$p", LINES1, LINES2]);
 check_output!(
     addr_pattern_to_straddle,
-    ["-n", "/4/,20p", "lines1", "lines2"]
+    ["-n", "/4/,20p", LINES1, LINES2]
 );
 check_output!(
     addr_pattern_to_pattern,
-    ["-n", "/4/,/10/p", "lines1", "lines2"]
+    ["-n", "/4/,/10/p", LINES1, LINES2]
 );
 check_output!(
     addr_pattern_straddle,
-    ["-n", "/l2_3/,/l1_8/p", "lines1", "lines2"]
+    ["-n", "/l2_3/,/l1_8/p", LINES1, LINES2]
 );
-check_output!(addr_range_reverse, ["-n", "12,3p", "lines1", "lines2"]);
+check_output!(addr_range_reverse, ["-n", "12,3p", LINES1, LINES2]);
 check_output!(
     addr_pattern_range_reverse,
-    ["-n", "/l1_7/,3p", "lines1", "lines2"]
+    ["-n", "/l1_7/,3p", LINES1, LINES2]
 );
 check_output!(
     addr_numeric_to_relative,
-    ["-n", "13,+4p", "lines1", "lines2"]
+    ["-n", "13,+4p", LINES1, LINES2]
 );
 check_output!(
     addr_pattern_to_relative,
-    ["-n", "/l1_6/,+2p", "lines1", "lines2"]
+    ["-n", "/l1_6/,+2p", LINES1, LINES2]
 );
-check_output!(addr_numeric_relative_straddle, ["-n", "12,+1p", "lines1"]);
+check_output!(addr_numeric_relative_straddle, ["-n", "12,+1p", LINES1]);
 check_output!(
     addr_first_separate,
-    ["-n", "--separate", "1p", "lines1", "lines2"]
+    ["-n", "--separate", "1p", LINES1, LINES2]
 );
-check_output!(addr_last_separate, ["-ns", "$p", "lines1", "lines2"]);
+check_output!(addr_last_separate, ["-ns", "$p", LINES1, LINES2]);
