@@ -474,16 +474,9 @@ pub fn compile_replacement(
                             line.advance();
                         }
 
-                        // \& or \\
-                        '&' => {
-                            if !literal.is_empty() {
-                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
-                            }
-                            parts.push(ReplacementPart::WholeMatch);
-                            line.advance();
-                        }
-                        '\\' => {
-                            literal.push('\\');
+                        // literal \ and &
+                        '\\' | '&' => {
+                            literal.push(line.current());
                             line.advance();
                         }
 
@@ -497,6 +490,14 @@ pub fn compile_replacement(
                             }
                         },
                     }
+                }
+
+                '&' => {
+                    if !literal.is_empty() {
+                        parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
+                    }
+                    parts.push(ReplacementPart::WholeMatch);
+                    line.advance();
                 }
 
                 '\n' => {
@@ -1469,7 +1470,7 @@ mod tests {
 
     #[test]
     fn test_compile_replacement_whole_match() {
-        let (mut lines, mut chars) = make_providers("/The match was: \\&/");
+        let (mut lines, mut chars) = make_providers("/The match was: &/");
         let template = compile_replacement(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 2);
@@ -1477,6 +1478,17 @@ mod tests {
             matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "The match was: ")
         );
         assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
+    }
+
+    #[test]
+    fn test_compile_replacement_ampersand() {
+        let (mut lines, mut chars) = make_providers("/Simon \\& Garfunkel/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(
+            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "Simon & Garfunkel")
+        );
     }
 
     #[test]
