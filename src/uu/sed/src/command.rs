@@ -143,7 +143,7 @@ pub struct Substitution {
     pub print_flag: bool,                 // True if 'p' flag
     pub ignore_case: bool,                // True if 'I' flag
     pub write_file: Option<PathBuf>,      // Path to file if 'w' flag is used
-    pub file_descriptor: Option<File>,    // Cached file descriptor
+    pub write_handle: Option<File>,       // Cached open file
     pub regex: Regex,                     // Regular expression
     pub line_number: usize,               // Line number
     pub replacement: ReplacementTemplate, // Specified broken-down replacement
@@ -156,7 +156,7 @@ impl Default for Substitution {
             print_flag: false,
             ignore_case: false,
             write_file: None,
-            file_descriptor: None,
+            write_handle: None,
             regex: Regex::new("").unwrap(), // safe dummy regex
             line_number: 0,
             replacement: ReplacementTemplate::default(),

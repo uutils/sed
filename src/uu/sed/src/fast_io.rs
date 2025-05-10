@@ -148,7 +148,7 @@ impl<'a> IOChunk<'a> {
         }
     }
 
-    /// Clear the object's contents, converting it it Owned if needed.
+    /// Clear the object's contents, converting it into Owned if needed.
     pub fn clear(&mut self) {
         self.utf8_verified = true;
         match &mut self.content {
@@ -163,6 +163,27 @@ impl<'a> IOChunk<'a> {
             #[cfg(unix)]
             _ => {
                 self.content = IOChunkContent::new_owned(String::new(), false);
+            }
+        }
+    }
+
+    /// Set the object's contents to the specified string.
+    ///  Convert it into Owned if needed.
+    pub fn set_to_string(&mut self, new_content: String, add_newline: bool) {
+        self.utf8_verified = true;
+        // TODO: Default newline to true and remove argumnt if always true.
+        match &mut self.content {
+            IOChunkContent::Owned {
+                content,
+                has_newline,
+                ..
+            } => {
+                *content = new_content;
+                *has_newline = add_newline;
+            }
+            #[cfg(unix)]
+            _ => {
+                self.content = IOChunkContent::new_owned(new_content, add_newline);
             }
         }
     }

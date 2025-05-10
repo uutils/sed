@@ -557,7 +557,7 @@ pub fn compile_subst_command(
         print_flag: false,
         ignore_case: false,
         write_file: None,
-        file_descriptor: None,
+        write_handle: None,
         regex: compile_regex(lines, line, &pattern, false)?, // temp compile
         line_number: lines.get_line_number(),
         replacement: ReplacementTemplate::default(),
@@ -672,7 +672,7 @@ pub fn compile_subst_flags(
                 }
 
                 subst.write_file = Some(PathBuf::from(path));
-                // NOTE: subst.file_descriptor is resolved later at runtime
+                // NOTE: subst.write_handle is resolved later at runtime
                 return Ok(()); // 'w' is the last flag allowed
             }
 

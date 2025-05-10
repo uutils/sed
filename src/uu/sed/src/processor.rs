@@ -8,14 +8,18 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{Address, AddressType, AddressValue, Command, ProcessingContext};
+use crate::command::{
+    Address, AddressType, AddressValue, Command, CommandData, ProcessingContext, Substitution,
+};
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::in_place::InPlace;
 use atty::Stream;
 use std::cell::RefCell;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
-use uucore::error::UResult;
+use uucore::error::{UResult, USimpleError};
 
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
@@ -157,6 +161,73 @@ fn write_chunk(
     Ok(())
 }
 
+/// Perform the specified RE replacement in the provided pattern space.
+fn substitute(
+    pattern: &mut IOChunk,
+    sub: &mut Substitution,
+    context: &ProcessingContext,
+    output: &mut OutputBuffer,
+) -> UResult<()> {
+    let mut count = 0;
+    let mut last_end = 0;
+    let mut result = String::new();
+    let mut replaced = false;
+
+    let text = pattern.try_as_str()?;
+
+    for caps in sub.regex.captures_iter(text) {
+        count += 1;
+        let m = caps.get(0).unwrap();
+
+        // Always write the unmatched text before this match.
+        result.push_str(&text[last_end..m.start()]);
+
+        if sub.occurrence == 0 || count == sub.occurrence {
+            let replacement = sub.replacement.apply(&caps)?;
+            result.push_str(&replacement);
+            replaced = true;
+        } else {
+            // Not the target match — leave the match unchanged.
+            result.push_str(m.as_str());
+        }
+
+        last_end = m.end();
+    }
+
+    // Handle substitution success.
+    if replaced {
+        result.push_str(&text[last_end..]);
+
+        pattern.set_to_string(result, true);
+
+        if sub.print_flag {
+            write_chunk(output, context, pattern)?;
+        }
+
+        // Write to file if needed.
+        if let Some(ref path) = sub.write_file {
+            // Check and cache the file handle if not already done.
+            let handle = if let Some(ref mut file) = sub.write_handle {
+                file
+            } else {
+                let file = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(path)
+                    .map_err(|e| {
+                        USimpleError::new(2, format!("Failed to open {}: {}", path.display(), e))
+                    })?;
+                sub.write_handle.get_or_insert(file)
+            };
+
+            writeln!(handle, "{}", pattern.try_as_str()?)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Process a single input file
 fn process_file(
     commands: &Option<Rc<RefCell<Command>>>,
@@ -239,7 +310,12 @@ fn process_file(
                     // TODO
                 }
                 's' => {
-                    // TODO
+                    let subst = match &mut command.data {
+                        CommandData::Substitution(subst) => subst,
+                        _ => panic!("Expected Substitution command data"),
+                    };
+
+                    substitute(&mut pattern, &mut *subst, context, output)?;
                 }
                 't' => {
                     // TODO
