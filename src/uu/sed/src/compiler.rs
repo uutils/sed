@@ -617,7 +617,7 @@ pub fn compile_subst_command(
     // Compile regex with now known ignore_case flag.
     subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
 
-    let re_captures = subst
+    let re_captures: u32 = subst
         .regex
         .captures_len()
         .saturating_sub(1)
