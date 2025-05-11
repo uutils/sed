@@ -193,7 +193,6 @@ check_output!(
 );
 check_output!(addr_empty_re_reuse, ["-n", "/_2/,//p", LINES1, LINES2]);
 
-
 // Test substitutions
 check_output!(subst_any, ["-e", r"s/./X/g", LINES1]);
 check_output!(subst_any_global, ["-e", r"s,.,X,g", LINES1]);
@@ -211,7 +210,12 @@ check_output!(
 );
 check_output!(
     subst_ere_numerical_groups,
-    ["--regexp-extended", "-e", r"s/(.)(.)(.)/x\3x\2x\1/g", LINES1]
+    [
+        "--regexp-extended",
+        "-e",
+        r"s/(.)(.)(.)/x\3x\2x\1/g",
+        LINES1
+    ]
 );
 check_output!(subst_multiline, ["-e", "s/_/u0\\\nu1\\\nu2/g", LINES1]);
 check_output!(subst_numbered_replacement, ["-e", r"s/./X/4", LINES1]);
