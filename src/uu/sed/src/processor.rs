@@ -18,7 +18,7 @@ use atty::Stream;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-use uucore::error::UResult;
+use uucore::error::{UResult, USimpleError};
 
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
@@ -349,7 +349,12 @@ pub fn process_all_files(
 
     for (index, path) in files.iter().enumerate() {
         context.last_file = index == last_file_index;
-        let mut reader = LineReader::open(path)?;
+        let mut reader = LineReader::open(path).map_err(|e| {
+            USimpleError::new(
+                2,
+                format!("Error opening input file {}: {}", path.display(), e),
+            )
+        })?;
         let output = in_place.begin(path)?;
 
         if context.separate {

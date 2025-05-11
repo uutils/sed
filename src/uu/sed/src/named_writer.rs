@@ -36,7 +36,12 @@ impl NamedWriter {
             .write(true)
             .truncate(true)
             .open(&path)
-            .map_err(|e| USimpleError::new(2, format!("{}: {}", path.display(), e)))?;
+            .map_err(|e| {
+                USimpleError::new(
+                    2,
+                    format!("Error opening output file {}: {}", path.display(), e),
+                )
+            })?;
 
         let writer = Rc::new(RefCell::new(NamedWriter {
             path,

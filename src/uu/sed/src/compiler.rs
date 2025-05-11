@@ -233,7 +233,7 @@ fn compile_thread(
     let mut next_p = &mut head;
 
     'next_line: loop {
-        match lines.next_line().unwrap() {
+        match lines.next_line()? {
             None => {
                 // TODO: Error if stack isn't empty
                 return Ok(head);
