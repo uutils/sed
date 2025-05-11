@@ -24,11 +24,6 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::error::UResult;
 
-thread_local! {
-    /// The previously saved RE. It is reused when specifying an empty one.
-    static SAVED_REGEX: RefCell<Option<Regex>> = const { RefCell::new(None) };
-}
-
 // A global, immutable map of command properties, initialized on first access
 static CMD_MAP: Lazy<HashMap<char, CommandSpec>> = Lazy::new(build_command_map);
 
@@ -451,13 +446,12 @@ fn compile_regex(
     icase: bool,
 ) -> UResult<Regex> {
     if pattern.is_empty() {
-        SAVED_REGEX.with(|cell| {
-            if let Some(existing) = &*cell.borrow() {
-                Ok(existing.clone())
-            } else {
-                compilation_error(lines, line, "no previously compiled regex available")
-            }
-        })
+        let maybe_existing = context.saved_regex.borrow();
+        if let Some(existing) = &*maybe_existing {
+            Ok(existing.clone())
+        } else {
+            compilation_error(lines, line, "no previously compiled regex available")
+        }
     } else {
         // Convert basic to extended regular expression if needed.
         let ere_pattern = if context.regex_extended {
@@ -482,9 +476,8 @@ fn compile_regex(
                 .unwrap_err()
         })?;
 
-        SAVED_REGEX.with(|cell| {
-            *cell.borrow_mut() = Some(compiled.clone());
-        });
+        *context.saved_regex.borrow_mut() = Some(compiled.clone());
+
         Ok(compiled)
     }
 }
@@ -873,12 +866,8 @@ mod tests {
     }
 
     /// Return a default ProcessingContext for use in tests.
-
-    fn ctx() -> &'static ProcessingContext {
-        use std::sync::OnceLock;
-
-        static CONTEXT: OnceLock<ProcessingContext> = OnceLock::new();
-        CONTEXT.get_or_init(ProcessingContext::default)
+    pub fn ctx() -> ProcessingContext {
+        ProcessingContext::default()
     }
 
     // lookup_command
@@ -1084,7 +1073,7 @@ mod tests {
     #[test]
     fn test_compile_re_basic() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", ctx(), false).unwrap();
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), false).unwrap();
         assert!(regex.is_match("abc"));
         assert!(!regex.is_match("ABC"));
     }
@@ -1092,7 +1081,7 @@ mod tests {
     #[test]
     fn test_compile_re_case_insensitive() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", ctx(), true).unwrap();
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), true).unwrap();
         assert!(regex.is_match("abc"));
         assert!(regex.is_match("ABC"));
         assert!(regex.is_match("AbC"));
@@ -1100,33 +1089,29 @@ mod tests {
 
     #[test]
     fn test_compile_re_saved_and_reuse() {
+        let context = ctx();
         // Save a regex
         let (lines1, chars1) = dummy_providers();
-        let _ = compile_regex(&lines1, &chars1, "abc", ctx(), false).unwrap();
+        let _ = compile_regex(&lines1, &chars1, "abc", &context, false).unwrap();
 
         // Now try to reuse it
         let (lines2, chars2) = dummy_providers();
-        let reused = compile_regex(&lines2, &chars2, "", ctx(), false).unwrap();
+        let reused = compile_regex(&lines2, &chars2, "", &context, false).unwrap();
 
         assert!(reused.is_match("abc"));
     }
 
     #[test]
     fn test_compile_re_empty_and_not_saved() {
-        // Clear saved regex
-        SAVED_REGEX.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
-
         let (lines, chars) = dummy_providers();
-        let result = compile_regex(&lines, &chars, "", ctx(), false);
+        let result = compile_regex(&lines, &chars, "", &ctx(), false);
         assert!(result.is_err()); // Should fail because nothing was saved
     }
 
     #[test]
     fn test_compile_re_invalid() {
         let (lines, chars) = dummy_providers();
-        let result = compile_regex(&lines, &chars, "a[d", ctx(), false);
+        let result = compile_regex(&lines, &chars, "a[d", &ctx(), false);
         assert!(result.is_err()); // Should fail due to open bracketed expression
     }
 
@@ -1134,7 +1119,7 @@ mod tests {
     #[test]
     fn test_compile_addr_line_number() {
         let (lines, mut chars) = make_providers("42");
-        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Line));
         if let AddressValue::LineNumber(n) = addr.value {
             assert_eq!(n, 42);
@@ -1146,7 +1131,7 @@ mod tests {
     #[test]
     fn test_compile_addr_relative_line() {
         let (lines, mut chars) = make_providers("+7");
-        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::RelLine));
         if let AddressValue::LineNumber(n) = addr.value {
             assert_eq!(n, 7);
@@ -1158,14 +1143,14 @@ mod tests {
     #[test]
     fn test_compile_addr_last_line() {
         let (lines, mut chars) = make_providers("$");
-        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Last));
     }
 
     #[test]
     fn test_compile_addr_regex() {
         let (lines, mut chars) = make_providers("/hello/");
-        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(re) = addr.value {
             assert!(re.is_match("hello"));
@@ -1177,7 +1162,7 @@ mod tests {
     #[test]
     fn test_compile_addr_regex_other_delimiter() {
         let (lines, mut chars) = make_providers("\\#hello#");
-        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(re) = addr.value {
             assert!(re.is_match("hello"));
@@ -1189,7 +1174,7 @@ mod tests {
     #[test]
     fn test_compile_addr_regex_with_modifier() {
         let (lines, mut chars) = make_providers("/hello/I");
-        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(re) = addr.value {
             assert!(re.is_match("HELLO")); // case-insensitive
@@ -1200,13 +1185,14 @@ mod tests {
 
     #[test]
     fn test_compile_addr_empty_regex_saved() {
+        let context = ctx();
         // First save a regex
         let (lines1, mut chars1) = make_providers("/saved/");
-        let _ = compile_address(&lines1, &mut chars1, ctx()).unwrap();
+        let _ = compile_address(&lines1, &mut chars1, &context).unwrap();
 
         // Then reuse it with empty regex
         let (lines2, mut chars2) = make_providers("//");
-        let addr = compile_address(&lines2, &mut chars2, ctx()).unwrap();
+        let addr = compile_address(&lines2, &mut chars2, &context).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(re) = addr.value {
             assert!(re.is_match("saved"));
@@ -1220,7 +1206,7 @@ mod tests {
     fn test_compile_single_line_address() {
         let (lines, mut chars) = make_providers("42");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1233,7 +1219,7 @@ mod tests {
     fn test_compile_relative_address_range() {
         let (lines, mut chars) = make_providers("2,+3");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
         assert_eq!(n_addr, 2);
 
@@ -1262,7 +1248,7 @@ mod tests {
     fn test_compile_last_address() {
         let (lines, mut chars) = make_providers("$");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1275,7 +1261,7 @@ mod tests {
     fn test_compile_absolute_address_range() {
         let (lines, mut chars) = make_providers("5,10");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
         assert_eq!(n_addr, 2);
         assert!(matches!(
@@ -1292,7 +1278,7 @@ mod tests {
     fn test_compile_regex_address() {
         let (lines, mut chars) = make_providers("/foo/");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1311,7 +1297,7 @@ mod tests {
     fn test_compile_regex_address_range_other_delimiter() {
         let (lines, mut chars) = make_providers("\\#foo# , \\|bar|");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
         assert_eq!(n_addr, 2);
 
@@ -1342,7 +1328,7 @@ mod tests {
     fn test_compile_regex_with_modifier() {
         let (lines, mut chars) = make_providers("/foo/I");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1359,15 +1345,16 @@ mod tests {
 
     #[test]
     fn test_compile_re_reuse_saved() {
+        let context = ctx();
         // First save a regex
         let (lines1, mut chars1) = make_providers("/abc/");
         let mut cmd1 = Rc::new(RefCell::new(Command::default()));
-        compile_address_range(&lines1, &mut chars1, &mut cmd1, ctx()).unwrap();
+        compile_address_range(&lines1, &mut chars1, &mut cmd1, &context).unwrap();
 
         // Now reuse it
         let (lines2, mut chars2) = make_providers("//");
         let mut cmd2 = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines2, &mut chars2, &mut cmd2, ctx()).unwrap();
+        let n_addr = compile_address_range(&lines2, &mut chars2, &mut cmd2, &context).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1391,7 +1378,7 @@ mod tests {
     #[test]
     fn test_compile_thread_empty_input() {
         let mut provider = make_provider(&[]);
-        let mut opts = ctx();
+        let mut opts = &ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         assert!(result.is_none());
@@ -1400,7 +1387,7 @@ mod tests {
     #[test]
     fn test_compile_thread_comment_only() {
         let mut provider = make_provider(&["# comment", "   ", ";;"]);
-        let mut opts = ctx();
+        let mut opts = &ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         assert!(result.is_none());
@@ -1409,7 +1396,7 @@ mod tests {
     #[test]
     fn test_compile_thread_single_command() {
         let mut provider = make_provider(&["42q"]);
-        let mut opts = ctx();
+        let mut opts = &ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1433,7 +1420,7 @@ mod tests {
     #[test]
     fn test_compile_thread_non_selected_single_command() {
         let mut provider = make_provider(&["42!p"]);
-        let mut opts = ctx();
+        let mut opts = &ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1457,7 +1444,7 @@ mod tests {
     #[test]
     fn test_compile_thread_multiple_lines() {
         let mut provider = make_provider(&["1q", "2d"]);
-        let mut opts = ctx();
+        let mut opts = &ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1473,7 +1460,7 @@ mod tests {
     #[test]
     fn test_compile_thread_single_line_multiple_commands() {
         let mut provider = make_provider(&["1q;2d"]);
-        let mut opts = ctx();
+        let mut opts = &ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1689,7 +1676,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s\\foo\\bar\\");
         let mut cmd = Command::default();
 
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap_err();
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
         assert!(err
             .to_string()
             .contains("substitute pattern cannot be delimited"));
@@ -1700,7 +1687,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s//bar/");
         let mut cmd = Command::default();
 
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap_err();
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
         assert!(err.to_string().contains("unterminated substitute pattern"));
     }
 
@@ -1709,7 +1696,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s/foo/bar/x");
         let mut cmd = Command::default();
 
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap_err();
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
 
@@ -1718,7 +1705,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s/foo/bar/;");
         let mut cmd = Command::default();
 
-        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap();
+        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap();
         assert!(matches!(result, ContinueAction::NextChar));
 
         if let CommandData::Substitution(subst) = &cmd.data {
@@ -1733,7 +1720,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s/foo/bar/");
         let mut cmd = Command::default();
 
-        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap();
+        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap();
         assert!(matches!(result, ContinueAction::NextLine));
 
         match &cmd.data {

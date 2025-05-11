@@ -49,6 +49,8 @@ pub struct ProcessingContext {
     pub last_line: bool,
     /// True if the file is the last file of the ones specified
     pub last_file: bool,
+    /// Previously compiled RE, saved for reuse when specifying an empty RE
+    pub saved_regex: RefCell<Option<Regex>>,
 }
 
 #[derive(Debug, PartialEq)]
