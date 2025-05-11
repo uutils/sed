@@ -29,6 +29,19 @@ jobs:
           # Force LF line endings
           core.autocrlf: false
       - uses: dtolnay/rust-toolchain@stable
+      - name: File type before conversion
+        run: file tests/fixtures/sed/*/*
+      - name: Remove carriage return
+        shell: bash
+        run: |
+          if command -v dos2unix >/dev/null 2>&1; then
+            echo "dos2unix is available; converting"
+            dos2unix tests/fixtures/sed/*/*
+          else
+            echo "dos2unix is NOT available"
+          fi
+      - name: File type after convesion
+        run: file tests/fixtures/sed/*/*
       - run: cargo test --all
 
   coverage:
