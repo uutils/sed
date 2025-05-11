@@ -9,9 +9,11 @@
 // file that was distributed with this source code.
 
 use crate::command::ScriptValue;
+use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
+#[derive(Debug)]
 /// The provider of script lines across all specified scripts
 /// Scripts can be specified to sed as files or as strings.
 pub struct ScriptLineProvider {
@@ -19,7 +21,7 @@ pub struct ScriptLineProvider {
     state: State,
 }
 
-// Encapsulation of the script line provider's state
+/// Encapsulation of the script line provider's state
 enum State {
     NotStarted, // Processing has not yet started
     Active {
@@ -75,6 +77,10 @@ impl ScriptLineProvider {
                         Some(*index + 1) // finished reading this source
                     } else {
                         *line_number += 1;
+                        // Remove trailing newline
+                        if line.ends_with('\n') {
+                            line.pop();
+                        }
                         return Ok(Some(line));
                     }
                 }
@@ -136,6 +142,27 @@ impl ScriptLineProvider {
         }
 
         Ok(())
+    }
+}
+
+impl fmt::Debug for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            State::NotStarted => f.debug_struct("NotStarted").finish(),
+            State::Done => f.debug_struct("Done").finish(),
+            State::Active {
+                index,
+                input_name,
+                line_number,
+                ..
+            } => f
+                .debug_struct("Active")
+                .field("index", index)
+                .field("input_name", input_name)
+                .field("line_number", line_number)
+                .field("reader", &"<BufRead>")
+                .finish(),
+        }
     }
 }
 

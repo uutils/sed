@@ -784,6 +784,14 @@ mod tests {
     }
 
     #[test]
+    fn test_regex_with_capture() {
+        let (lines, mut line) = make_providers(r"/\(.\)/c/");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, r"\(.\)");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
     fn test_regex_with_escape_sequence() {
         let (lines, mut line) = make_providers("/ab\\n/");
         let parsed = parse_regex(&lines, &mut line).unwrap();

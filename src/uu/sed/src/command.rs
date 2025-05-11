@@ -28,7 +28,7 @@ pub struct ProcessingContext {
     // Command-line flags with corresponding names
     pub all_output_files: bool,
     pub debug: bool,
-    pub regexp_extended: bool,
+    pub regex_extended: bool,
     pub follow_symlinks: bool,
     pub in_place: bool,
     pub in_place_suffix: Option<String>,

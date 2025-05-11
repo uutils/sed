@@ -191,3 +191,31 @@ check_output!(
     addr_pattern_to_pattern_negate,
     ["-n", "/1_4/,/10/!p", LINES1]
 );
+
+
+// Test substitutions
+check_output!(subst_any, ["-e", r"s/./X/g", LINES1]);
+check_output!(subst_any_global, ["-e", r"s,.,X,g", LINES1]);
+check_output!(subst_escaped_magic_separator, ["-e", r"s.\..X.g", LINES1]);
+check_output!(subst_escaped_braced_separator, ["-e", r"s/[\/]/Q/", LINES1]);
+check_output!(subst_escaped_separator, ["-e", r"s_\__X_", LINES1]);
+check_output!(subst_whole_match_group, ["-e", r"s/./(&)/g", LINES1]);
+check_output!(
+    subst_escaped_whole_match_group,
+    ["-e", r"s/./(\&)/g", LINES1]
+);
+check_output!(
+    subst_numerical_groups,
+    ["-e", r"s/\(.\)\(.\)\(.\)/x\3x\2x\1/g", LINES1]
+);
+check_output!(
+    subst_ere_numerical_groups,
+    ["--regexp-extended", "-e", r"s/(.)(.)(.)/x\3x\2x\1/g", LINES1]
+);
+check_output!(subst_multiline, ["-e", "s/_/u0\\\nu1\\\nu2/g", LINES1]);
+check_output!(subst_numbered_replacement, ["-e", r"s/./X/4", LINES1]);
+
+#[cfg(unix)]
+check_output!(subst_write_file, ["-e", r"s/1/X/w /dev/stdout", LINES1]);
+
+check_output!(subst_brace, ["-e", r"s/[123]/X/g", LINES1]);

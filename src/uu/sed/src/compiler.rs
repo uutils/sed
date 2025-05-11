@@ -226,7 +226,7 @@ pub fn compile(
 // Compile provided scripts into a thread of commands
 fn compile_thread(
     lines: &mut ScriptLineProvider,
-    _processing_context: &mut ProcessingContext,
+    context: &ProcessingContext,
 ) -> UResult<Option<Rc<RefCell<Command>>>> {
     let mut head: Option<Rc<RefCell<Command>>> = None;
     // A mutable reference to the place we’ll insert next
@@ -252,7 +252,7 @@ fn compile_thread(
                     }
 
                     let mut cmd = Rc::new(RefCell::new(Command::default()));
-                    let n_addr = compile_address_range(lines, &mut line, &mut cmd)?;
+                    let n_addr = compile_address_range(lines, &mut line, &mut cmd, context)?;
                     let mut cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
 
                     // The ! command shall be followed by another one
@@ -264,7 +264,7 @@ fn compile_thread(
                     }
 
                     // Move cmd into next_p, transferring its ownership
-                    let action = compile_command(lines, &mut line, &mut cmd, cmd_spec)?;
+                    let action = compile_command(lines, &mut line, &mut cmd, cmd_spec, context)?;
 
                     *next_p = Some(cmd);
                     // Intermediate let binding to avoid the temporary drop
@@ -296,13 +296,14 @@ fn compile_address_range(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Rc<RefCell<Command>>,
+    context: &ProcessingContext,
 ) -> UResult<usize> {
     let mut n_addr = 0;
     let mut cmd = cmd.borrow_mut();
 
     line.eat_spaces();
     if !line.eol() && is_address_char(line.current()) {
-        if let Ok(addr1) = compile_address(lines, line) {
+        if let Ok(addr1) = compile_address(lines, line, context) {
             cmd.addr1 = Some(addr1);
             n_addr += 1;
         }
@@ -313,7 +314,7 @@ fn compile_address_range(
         line.advance();
         line.eat_spaces();
         if !line.eol() {
-            if let Ok(addr2) = compile_address(lines, line) {
+            if let Ok(addr2) = compile_address(lines, line, context) {
                 cmd.addr2 = Some(addr2);
                 n_addr += 1;
             }
@@ -324,7 +325,11 @@ fn compile_address_range(
 }
 
 /// Compile and return a single range address specification.
-fn compile_address(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<Address> {
+fn compile_address(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    context: &ProcessingContext,
+) -> UResult<Address> {
     let mut icase = false;
 
     if line.eol() {
@@ -350,7 +355,7 @@ fn compile_address(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) ->
 
             Ok(Address {
                 atype: AddressType::Re,
-                value: AddressValue::Regex(compile_regex(lines, line, &re, icase)?),
+                value: AddressValue::Regex(compile_regex(lines, line, &re, context, icase)?),
             })
         }
         '$' => {
@@ -395,11 +400,54 @@ fn parse_number(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UR
         .map_err(|msg| compilation_error::<usize>(lines, line, msg).unwrap_err())
 }
 
+/// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
+/// - Translates `\(` and `\)` into `(` and `)`
+/// - Escapes ERE-only metacharacters: `+ ? { } | ( )`
+/// - Leaves all other characters as-is
+fn bre_to_ere(pattern: &str) -> String {
+    let mut result = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some('(') => {
+                    chars.next();
+                    result.push('('); // group start
+                }
+                Some(')') => {
+                    chars.next();
+                    result.push(')'); // group end
+                }
+                Some(&next) => {
+                    chars.next();
+                    result.push('\\');
+                    result.push(next); // preserve other escaped characters
+                }
+                None => {
+                    result.push('\\'); // trailing backslash, keep it
+                }
+            }
+        } else {
+            match c {
+                '+' | '?' | '{' | '}' | '|' | '(' | ')' => {
+                    result.push('\\'); // escape unsupported ERE metacharacters
+                    result.push(c);
+                }
+                _ => result.push(c),
+            }
+        }
+    }
+
+    result
+}
+
 /// Compile the provided regular expression string into a corresponding engine.
 fn compile_regex(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
     pattern: &str,
+    context: &ProcessingContext,
     icase: bool,
 ) -> UResult<Regex> {
     if pattern.is_empty() {
@@ -411,15 +459,24 @@ fn compile_regex(
             }
         })
     } else {
-        let full_pattern = if icase {
-            if pattern.is_empty() {
-                return compilation_error(lines, line, "cannot specify a modifier on an empty RE");
-            }
-            format!("(?i){}", pattern)
+        // Convert basic to extended regular expression if needed.
+        let ere_pattern = if context.regex_extended {
+            pattern
         } else {
-            pattern.to_string()
+            &bre_to_ere(pattern)
         };
 
+        // Add case-insensitive modifier if needed.
+        let full_pattern = if icase {
+            if ere_pattern.is_empty() {
+                return compilation_error(lines, line, "cannot specify a modifier on an empty RE");
+            }
+            format!("(?i){}", ere_pattern)
+        } else {
+            ere_pattern.to_string()
+        };
+
+        // Compile into engine.
         let compiled = Regex::new(&full_pattern).map_err(|e| {
             compilation_error::<Regex>(lines, line, format!("invalid regex '{}': {}", pattern, e))
                 .unwrap_err()
@@ -452,6 +509,7 @@ pub fn compile_replacement(
                     // Line continuation
                     if line.eol() {
                         if let Some(next_line_string) = lines.next_line()? {
+                            literal.push('\n');
                             *line = ScriptCharProvider::new(&next_line_string);
                             continue;
                         } else {
@@ -537,6 +595,7 @@ pub fn compile_subst_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
+    context: &ProcessingContext,
 ) -> UResult<ContinueAction> {
     line.advance(); // move past 's'
 
@@ -559,7 +618,7 @@ pub fn compile_subst_command(
         print_flag: false,
         ignore_case: false,
         write_file: None,
-        regex: compile_regex(lines, line, &pattern, false)?, // temp compile
+        regex: compile_regex(lines, line, &pattern, context, false)?, // temp compile
         line_number: lines.get_line_number(),
         replacement: ReplacementTemplate::default(),
     });
@@ -568,7 +627,7 @@ pub fn compile_subst_command(
     compile_subst_flags(lines, line, &mut subst)?;
 
     // Recompile regex with actual ignore_case flag
-    subst.regex = compile_regex(lines, line, &pattern, subst.ignore_case)?;
+    subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
 
     line.eat_spaces();
     if !line.eol() && line.current() == ';' {
@@ -724,6 +783,7 @@ fn compile_command(
     line: &mut ScriptCharProvider,
     cmd: &mut Rc<RefCell<Command>>,
     cmd_spec: &'static CommandSpec,
+    context: &ProcessingContext,
 ) -> UResult<ContinueAction> {
     let mut cmd = cmd.borrow_mut();
     cmd.code = line.current();
@@ -738,7 +798,7 @@ fn compile_command(
         }
         CommandArgs::Substitute => {
             // s
-            return compile_subst_command(lines, line, &mut cmd);
+            return compile_subst_command(lines, line, &mut cmd, context);
         }
         // TODO
         CommandArgs::Text => { // a c i
@@ -810,6 +870,15 @@ mod tests {
         let lines = ScriptLineProvider::new(vec![]); // Empty for tests
         let line = ScriptCharProvider::new(input);
         (lines, line)
+    }
+
+    /// Return a default ProcessingContext for use in tests.
+
+    fn ctx() -> &'static ProcessingContext {
+        use std::sync::OnceLock;
+
+        static CONTEXT: OnceLock<ProcessingContext> = OnceLock::new();
+        CONTEXT.get_or_init(ProcessingContext::default)
     }
 
     // lookup_command
@@ -1015,7 +1084,7 @@ mod tests {
     #[test]
     fn test_compile_re_basic() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", false).unwrap();
+        let regex = compile_regex(&lines, &chars, "abc", ctx(), false).unwrap();
         assert!(regex.is_match("abc"));
         assert!(!regex.is_match("ABC"));
     }
@@ -1023,7 +1092,7 @@ mod tests {
     #[test]
     fn test_compile_re_case_insensitive() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", true).unwrap();
+        let regex = compile_regex(&lines, &chars, "abc", ctx(), true).unwrap();
         assert!(regex.is_match("abc"));
         assert!(regex.is_match("ABC"));
         assert!(regex.is_match("AbC"));
@@ -1033,11 +1102,11 @@ mod tests {
     fn test_compile_re_saved_and_reuse() {
         // Save a regex
         let (lines1, chars1) = dummy_providers();
-        let _ = compile_regex(&lines1, &chars1, "abc", false).unwrap();
+        let _ = compile_regex(&lines1, &chars1, "abc", ctx(), false).unwrap();
 
         // Now try to reuse it
         let (lines2, chars2) = dummy_providers();
-        let reused = compile_regex(&lines2, &chars2, "", false).unwrap();
+        let reused = compile_regex(&lines2, &chars2, "", ctx(), false).unwrap();
 
         assert!(reused.is_match("abc"));
     }
@@ -1050,14 +1119,14 @@ mod tests {
         });
 
         let (lines, chars) = dummy_providers();
-        let result = compile_regex(&lines, &chars, "", false);
+        let result = compile_regex(&lines, &chars, "", ctx(), false);
         assert!(result.is_err()); // Should fail because nothing was saved
     }
 
     #[test]
     fn test_compile_re_invalid() {
         let (lines, chars) = dummy_providers();
-        let result = compile_regex(&lines, &chars, "a[d", false);
+        let result = compile_regex(&lines, &chars, "a[d", ctx(), false);
         assert!(result.is_err()); // Should fail due to open bracketed expression
     }
 
@@ -1065,7 +1134,7 @@ mod tests {
     #[test]
     fn test_compile_addr_line_number() {
         let (lines, mut chars) = make_providers("42");
-        let addr = compile_address(&lines, &mut chars).unwrap();
+        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Line));
         if let AddressValue::LineNumber(n) = addr.value {
             assert_eq!(n, 42);
@@ -1077,7 +1146,7 @@ mod tests {
     #[test]
     fn test_compile_addr_relative_line() {
         let (lines, mut chars) = make_providers("+7");
-        let addr = compile_address(&lines, &mut chars).unwrap();
+        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::RelLine));
         if let AddressValue::LineNumber(n) = addr.value {
             assert_eq!(n, 7);
@@ -1089,14 +1158,14 @@ mod tests {
     #[test]
     fn test_compile_addr_last_line() {
         let (lines, mut chars) = make_providers("$");
-        let addr = compile_address(&lines, &mut chars).unwrap();
+        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Last));
     }
 
     #[test]
     fn test_compile_addr_regex() {
         let (lines, mut chars) = make_providers("/hello/");
-        let addr = compile_address(&lines, &mut chars).unwrap();
+        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(re) = addr.value {
             assert!(re.is_match("hello"));
@@ -1108,7 +1177,7 @@ mod tests {
     #[test]
     fn test_compile_addr_regex_other_delimiter() {
         let (lines, mut chars) = make_providers("\\#hello#");
-        let addr = compile_address(&lines, &mut chars).unwrap();
+        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(re) = addr.value {
             assert!(re.is_match("hello"));
@@ -1120,7 +1189,7 @@ mod tests {
     #[test]
     fn test_compile_addr_regex_with_modifier() {
         let (lines, mut chars) = make_providers("/hello/I");
-        let addr = compile_address(&lines, &mut chars).unwrap();
+        let addr = compile_address(&lines, &mut chars, ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(re) = addr.value {
             assert!(re.is_match("HELLO")); // case-insensitive
@@ -1133,11 +1202,11 @@ mod tests {
     fn test_compile_addr_empty_regex_saved() {
         // First save a regex
         let (lines1, mut chars1) = make_providers("/saved/");
-        let _ = compile_address(&lines1, &mut chars1).unwrap();
+        let _ = compile_address(&lines1, &mut chars1, ctx()).unwrap();
 
         // Then reuse it with empty regex
         let (lines2, mut chars2) = make_providers("//");
-        let addr = compile_address(&lines2, &mut chars2).unwrap();
+        let addr = compile_address(&lines2, &mut chars2, ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(re) = addr.value {
             assert!(re.is_match("saved"));
@@ -1151,7 +1220,7 @@ mod tests {
     fn test_compile_single_line_address() {
         let (lines, mut chars) = make_providers("42");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1164,7 +1233,7 @@ mod tests {
     fn test_compile_relative_address_range() {
         let (lines, mut chars) = make_providers("2,+3");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
 
         assert_eq!(n_addr, 2);
 
@@ -1193,7 +1262,7 @@ mod tests {
     fn test_compile_last_address() {
         let (lines, mut chars) = make_providers("$");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1206,7 +1275,7 @@ mod tests {
     fn test_compile_absolute_address_range() {
         let (lines, mut chars) = make_providers("5,10");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
 
         assert_eq!(n_addr, 2);
         assert!(matches!(
@@ -1223,7 +1292,7 @@ mod tests {
     fn test_compile_regex_address() {
         let (lines, mut chars) = make_providers("/foo/");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1242,7 +1311,7 @@ mod tests {
     fn test_compile_regex_address_range_other_delimiter() {
         let (lines, mut chars) = make_providers("\\#foo# , \\|bar|");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
 
         assert_eq!(n_addr, 2);
 
@@ -1273,7 +1342,7 @@ mod tests {
     fn test_compile_regex_with_modifier() {
         let (lines, mut chars) = make_providers("/foo/I");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd).unwrap();
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, ctx()).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1293,12 +1362,12 @@ mod tests {
         // First save a regex
         let (lines1, mut chars1) = make_providers("/abc/");
         let mut cmd1 = Rc::new(RefCell::new(Command::default()));
-        compile_address_range(&lines1, &mut chars1, &mut cmd1).unwrap();
+        compile_address_range(&lines1, &mut chars1, &mut cmd1, ctx()).unwrap();
 
         // Now reuse it
         let (lines2, mut chars2) = make_providers("//");
         let mut cmd2 = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines2, &mut chars2, &mut cmd2).unwrap();
+        let n_addr = compile_address_range(&lines2, &mut chars2, &mut cmd2, ctx()).unwrap();
 
         assert_eq!(n_addr, 1);
         assert!(matches!(
@@ -1319,14 +1388,10 @@ mod tests {
         ScriptLineProvider::new(input)
     }
 
-    fn make_processing_context() -> ProcessingContext {
-        ProcessingContext::default()
-    }
-
     #[test]
     fn test_compile_thread_empty_input() {
         let mut provider = make_provider(&[]);
-        let mut opts = make_processing_context();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         assert!(result.is_none());
@@ -1335,7 +1400,7 @@ mod tests {
     #[test]
     fn test_compile_thread_comment_only() {
         let mut provider = make_provider(&["# comment", "   ", ";;"]);
-        let mut opts = make_processing_context();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         assert!(result.is_none());
@@ -1344,7 +1409,7 @@ mod tests {
     #[test]
     fn test_compile_thread_single_command() {
         let mut provider = make_provider(&["42q"]);
-        let mut opts = make_processing_context();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1368,7 +1433,7 @@ mod tests {
     #[test]
     fn test_compile_thread_non_selected_single_command() {
         let mut provider = make_provider(&["42!p"]);
-        let mut opts = make_processing_context();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1392,7 +1457,7 @@ mod tests {
     #[test]
     fn test_compile_thread_multiple_lines() {
         let mut provider = make_provider(&["1q", "2d"]);
-        let mut opts = make_processing_context();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1408,7 +1473,7 @@ mod tests {
     #[test]
     fn test_compile_thread_single_line_multiple_commands() {
         let mut provider = make_provider(&["1q;2d"]);
-        let mut opts = make_processing_context();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1450,7 +1515,6 @@ mod tests {
     fn test_compile_replacement_literal() {
         let (mut lines, mut chars) = make_providers("/hello/");
         let template = compile_replacement(&mut lines, &mut chars).unwrap();
-        dbg!(&template);
 
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "hello"));
@@ -1517,7 +1581,7 @@ mod tests {
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(
             &template.parts[0],
-            ReplacementPart::Literal(s) if s == "first line continued"
+            ReplacementPart::Literal(s) if s == "first line\n continued"
         ));
     }
 
@@ -1625,7 +1689,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s\\foo\\bar\\");
         let mut cmd = Command::default();
 
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap_err();
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap_err();
         assert!(err
             .to_string()
             .contains("substitute pattern cannot be delimited"));
@@ -1636,7 +1700,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s//bar/");
         let mut cmd = Command::default();
 
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap_err();
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap_err();
         assert!(err.to_string().contains("unterminated substitute pattern"));
     }
 
@@ -1645,7 +1709,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s/foo/bar/x");
         let mut cmd = Command::default();
 
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap_err();
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
 
@@ -1654,7 +1718,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s/foo/bar/;");
         let mut cmd = Command::default();
 
-        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap();
         assert!(matches!(result, ContinueAction::NextChar));
 
         if let CommandData::Substitution(subst) = &cmd.data {
@@ -1669,7 +1733,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s/foo/bar/");
         let mut cmd = Command::default();
 
-        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd, ctx()).unwrap();
         assert!(matches!(result, ContinueAction::NextLine));
 
         match &cmd.data {
@@ -1681,5 +1745,39 @@ mod tests {
             }
             _ => panic!("Expected CommandData::Substitution"),
         }
+    }
+
+    // bre_to_ere
+    #[test]
+    fn test_bre_group_translation() {
+        assert_eq!(bre_to_ere(r"\(abc\)"), "(abc)");
+        assert_eq!(bre_to_ere(r"a\(b\)c"), "a(b)c");
+    }
+
+    #[test]
+    fn test_ere_metacharacters_escaped() {
+        assert_eq!(bre_to_ere(r"a+b?c{1}|(d)"), r"a\+b\?c\{1\}\|\(d\)");
+    }
+
+    #[test]
+    fn test_literal_backslashes_preserved() {
+        assert_eq!(bre_to_ere(r"foo\\bar"), r"foo\\bar");
+        assert_eq!(bre_to_ere(r"\."), r"\.");
+    }
+
+    #[test]
+    fn test_character_classes_unchanged() {
+        assert_eq!(bre_to_ere(r"[a-z]"), "[a-z]");
+        assert_eq!(bre_to_ere(r"[^0-9]"), "[^0-9]");
+    }
+
+    #[test]
+    fn test_anchors_and_dot_and_star() {
+        assert_eq!(bre_to_ere(r"^a.*b$"), "^a.*b$");
+    }
+
+    #[test]
+    fn test_trailing_backslash_is_preserved() {
+        assert_eq!(bre_to_ere(r"abc\"), r"abc\");
     }
 }

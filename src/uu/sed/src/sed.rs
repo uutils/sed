@@ -177,7 +177,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
     ProcessingContext {
         all_output_files: matches.get_flag("all-output-files"),
         debug: matches.get_flag("debug"),
-        regexp_extended: matches.get_flag("regexp-extended"),
+        regex_extended: matches.get_flag("regexp-extended"),
         follow_symlinks: matches.get_flag("follow-symlinks"),
         in_place: matches.contains_id("in-place"),
         in_place_suffix: matches.get_one::<String>("in-place").and_then(|s| {
@@ -316,7 +316,7 @@ mod tests {
 
         assert!(!ctx.all_output_files);
         assert!(!ctx.debug);
-        assert!(!ctx.regexp_extended);
+        assert!(!ctx.regex_extended);
         assert!(!ctx.follow_symlinks);
         assert!(!ctx.in_place);
         assert_eq!(ctx.in_place_suffix, None);
@@ -351,7 +351,7 @@ mod tests {
 
         assert!(ctx.all_output_files);
         assert!(ctx.debug);
-        assert!(ctx.regexp_extended);
+        assert!(ctx.regex_extended);
         assert!(ctx.follow_symlinks);
         assert!(ctx.in_place);
         assert!(ctx.in_place_suffix.is_none());
