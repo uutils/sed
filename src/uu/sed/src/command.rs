@@ -154,7 +154,7 @@ pub struct Substitution {
 impl Default for Substitution {
     fn default() -> Self {
         Substitution {
-            occurrence: 1,
+            occurrence: 0,
             print_flag: false,
             ignore_case: false,
             write_file: None,

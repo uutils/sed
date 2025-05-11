@@ -607,19 +607,14 @@ pub fn compile_subst_command(
     }
 
     let mut subst = Box::new(Substitution {
-        occurrence: 0,
-        print_flag: false,
-        ignore_case: false,
-        write_file: None,
-        regex: compile_regex(lines, line, &pattern, context, false)?, // temp compile
         line_number: lines.get_line_number(),
-        replacement: ReplacementTemplate::default(),
+        ..Default::default()
     });
 
     subst.replacement = compile_replacement(lines, line)?;
     compile_subst_flags(lines, line, &mut subst)?;
 
-    // Recompile regex with actual ignore_case flag
+    // Compile regex with now known ignore_case flag.
     subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
 
     line.eat_spaces();
@@ -725,7 +720,6 @@ pub fn compile_subst_flags(
                 }
 
                 subst.write_file = Some(NamedWriter::new(PathBuf::from(path))?);
-                // NOTE: subst.write_handle is resolved later at runtime
                 return Ok(()); // 'w' is the last flag allowed
             }
 
