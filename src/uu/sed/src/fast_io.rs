@@ -122,13 +122,9 @@ impl ReadLineCursor {
         }
         // O(1) check whether it ended in '\n'
         let has_newline = self.buffer.ends_with('\n');
-        // Strip it if you don’t want to expose it to the caller.
+        // strip it if you don’t want to expose it to the caller
         if has_newline {
             self.buffer.pop();
-        }
-        // Also strip \r on Windows.
-        if cfg!(windows) && self.buffer.ends_with('\r') {
-            self.buffer.pop(); // remove '\r'
         }
         let line = std::mem::take(&mut self.buffer);
         let is_last_line = self.reader.fill_buf()?.is_empty();
@@ -503,7 +499,7 @@ impl OutputBuffer {
             } => {
                 self.out.write_all(content.as_bytes())?;
                 if *has_newline {
-                    self.out.write_all(b"\r\n")?;
+                    self.out.write_all(b"\n")?;
                 }
                 Ok(())
             }
