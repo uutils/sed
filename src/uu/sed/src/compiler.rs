@@ -617,6 +617,24 @@ pub fn compile_subst_command(
     // Compile regex with now known ignore_case flag.
     subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
 
+    let re_captures = subst
+        .regex
+        .captures_len()
+        .saturating_sub(1)
+        .try_into()
+        .unwrap();
+    let max_group_number = subst.replacement.max_group_number();
+    if max_group_number > re_captures {
+        return compilation_error(
+            lines,
+            line,
+            format!(
+                "group number \\{} is larger than the {} available RE groups",
+                max_group_number, re_captures
+            ),
+        );
+    }
+
     line.eat_spaces();
     if !line.eol() && line.current() == ';' {
         line.advance();
@@ -1726,6 +1744,17 @@ mod tests {
             }
             _ => panic!("Expected CommandData::Substitution"),
         }
+    }
+
+    #[test]
+    fn test_compile_subst_invalid_group_number() {
+        let (mut lines, mut chars) = make_providers(r"s/\(.\)\(.\)/\3\2\1/");
+        let mut cmd = Command::default();
+
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("group number \\3 is larger than the 2 available RE groups"));
     }
 
     // bre_to_ere

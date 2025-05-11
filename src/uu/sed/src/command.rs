@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf; // For file descriptors and equivalent
 use std::rc::Rc;
-use uucore::error::{UResult, USimpleError};
+use uucore::error::UResult;
 
 // Compilation and processing options provided mostly through the
 // command-line interface
@@ -121,21 +121,31 @@ impl ReplacementTemplate {
                 }
 
                 ReplacementPart::Group(n) => {
-                    let group_index = *n as usize;
-                    if group_index >= caps.len() {
-                        return Err(USimpleError::new(
-                            2,
-                            // TODO: Provide code location info
-                            format!("\\{} not defined in the regular expression", n),
-                        ));
-                    }
-
-                    result.push_str(caps.get(group_index).map_or("", |m| m.as_str()));
+                    // Compilation guarantees we only get valid group numbers
+                    result.push_str(
+                        caps.get((*n).try_into().unwrap())
+                            .map_or("", |m| m.as_str()),
+                    );
                 }
             }
         }
 
         Ok(result)
+    }
+
+    /// Returns the highest capture group number referenced in this template.
+    pub fn max_group_number(&self) -> u32 {
+        self.parts
+            .iter()
+            .filter_map(|part| {
+                if let ReplacementPart::Group(n) = part {
+                    Some(*n)
+                } else {
+                    None
+                }
+            })
+            .max()
+            .unwrap_or(0)
     }
 }
 
@@ -329,15 +339,30 @@ mod tests {
         assert_eq!(result, "key: x, value: 123");
     }
 
+    // max_group_number
     #[test]
-    // s/(a)(b)/\3/
-    fn test_invalid_backreference() {
+    fn test_max_group_number_with_groups() {
         let template = ReplacementTemplate {
-            parts: vec![ReplacementPart::Group(3)],
+            parts: vec![
+                ReplacementPart::Literal("a".into()),
+                ReplacementPart::Group(2),
+                ReplacementPart::WholeMatch,
+                ReplacementPart::Group(5),
+                ReplacementPart::Literal("z".into()),
+            ],
         };
-        let caps = caps_for(r"(a)(b)", "ab"); // only groups 1 and 2 exist
+        assert_eq!(template.max_group_number(), 5);
+    }
 
-        let err = template.apply(&caps).unwrap_err();
-        assert!(err.to_string().contains(r"\3 not defined"));
+    #[test]
+    fn test_max_group_number_without_groups() {
+        let template = ReplacementTemplate {
+            parts: vec![
+                ReplacementPart::Literal("no".into()),
+                ReplacementPart::WholeMatch,
+                ReplacementPart::Literal("groups".into()),
+            ],
+        };
+        assert_eq!(template.max_group_number(), 0);
     }
 }
