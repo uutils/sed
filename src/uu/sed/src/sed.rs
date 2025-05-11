@@ -18,7 +18,7 @@ pub mod script_line_provider;
 use crate::command::{CliOptions, ScriptValue};
 use crate::compiler::compile;
 use crate::processor::process;
-use clap::{arg, Arg, ArgMatches, Command};
+use clap::{Arg, ArgMatches, Command, arg};
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
 use uucore::format_usage;
@@ -177,13 +177,9 @@ fn build_context(matches: &ArgMatches) -> CliOptions {
         regexp_extended: matches.get_flag("regexp-extended"),
         follow_symlinks: matches.get_flag("follow-symlinks"),
         in_place: matches.contains_id("in-place"),
-        in_place_suffix: matches.get_one::<String>("in-place").and_then(|s| {
-            if s.is_empty() {
-                None
-            } else {
-                Some(s.clone())
-            }
-        }),
+        in_place_suffix: matches
+            .get_one::<String>("in-place")
+            .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
         length: matches
             .get_one::<u32>("length")
             .map(|v| *v as usize)
