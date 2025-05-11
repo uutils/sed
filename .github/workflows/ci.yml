@@ -25,6 +25,9 @@ jobs:
         os: [ubuntu-latest, macOS-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Force LF line endings
+          core.autocrlf: false
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --all
 
