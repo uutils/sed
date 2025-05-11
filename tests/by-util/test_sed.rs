@@ -8,7 +8,8 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use std::io::Write;
+use std::fs;
+use std::io::{Read, Write};
 use tempfile::NamedTempFile;
 use uutests::new_ucmd;
 use uutests::util::TestScenario;
@@ -219,8 +220,21 @@ check_output!(
 );
 check_output!(subst_multiline, ["-e", "s/_/u0\\\nu1\\\nu2/g", LINES1]);
 check_output!(subst_numbered_replacement, ["-e", r"s/./X/4", LINES1]);
-
-#[cfg(unix)]
-check_output!(subst_write_file, ["-e", r"s/1/X/w /dev/stdout", LINES1]);
-
 check_output!(subst_brace, ["-e", r"s/[123]/X/g", LINES1]);
+
+#[test]
+fn subst_write_file() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let path = temp.path();
+    let cmd = format!("s/_1/S_1/w {}", path.display());
+
+    new_ucmd!().args(&["-n", &cmd, LINES1]).succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+
+    let expected = fs::read_to_string("tests/fixtures/sed/output/subst_write_file")?;
+    assert_eq!(actual, expected, "Output did not match fixture");
+
+    Ok(())
+}
