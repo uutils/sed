@@ -1,7 +1,7 @@
 # sed (uutils)
 # * see the repository LICENSE, README, and CONTRIBUTING files for more information
 
-# spell-checker:ignore (libs) bigdecimal datetime fundu gethostid kqueue libselinux mangen memmap sed uuhelp
+# spell-checker:ignore (libs) mangen sed
 
 [package]
 name = "sed"
@@ -16,8 +16,7 @@ repository = "https://github.com/uutils/sed"
 readme = "README.md"
 keywords = ["sed", "uutils", "cross-platform", "cli", "utility"]
 categories = ["command-line-utilities"]
-rust-version = "1.70.0"
-edition = "2021"
+edition = "2024"
 
 build = "build.rs"
 
@@ -31,25 +30,25 @@ feat_common_core = [
 
 [workspace.dependencies]
 atty = "0.2"
-uucore = "0.0.30"
+bytesize = "2.0.0"
+chrono = { version = "0.4.37", default-features = false, features = [
+  "clock",
+] }
 clap = { version = "4.4", features = ["wrap_help", "cargo"] }
 clap_complete = "4.5"
 clap_mangen = "0.2"
-regex = "1.10.4"
-sysinfo = "0.35"
 libc = "0.2.153"
 memmap2 = "0.5"
 once_cell = "1.21"
 phf = "0.11.2"
 phf_codegen = "0.11.2"
-textwrap = { version = "0.16.1", features = ["terminal_size"] }
-xattr = "1.3.1"
-tempfile = "3.10.1"
 rand = { version = "0.9", features = ["small_rng"] }
-bytesize = "2.0.0"
-chrono = { version = "0.4.37", default-features = false, features = [
-  "clock",
-] }
+regex = "1.10.4"
+sysinfo = "0.35"
+tempfile = "3.10.1"
+textwrap = { version = "0.16.1", features = ["terminal_size"] }
+uucore = "0.0.30"
+xattr = "1.3.1"
 
 
 [dependencies]
@@ -57,24 +56,23 @@ atty = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 clap_mangen = { workspace = true }
-uucore = { workspace = true }
-phf = { workspace = true }
-textwrap = { workspace = true }
-sysinfo = { workspace = true }
-
-sed = { optional = true, version = "0.0.1", package = "uu_sed", path = "src/uu/sed" }
-uutests = "0.0.30"
 ctor = "0.4.1"
 memmap2.workspace = true
+phf = { workspace = true }
+sed = { optional = true, version = "0.0.1", package = "uu_sed", path = "src/uu/sed" }
+sysinfo = { workspace = true }
+textwrap = { workspace = true }
+uucore = { workspace = true }
+uutests = "0.0.30"
 
 [dev-dependencies]
+chrono = { workspace = true }
+libc = { workspace = true }
 pretty_assertions = "1"
+rand = { workspace = true }
 regex = { workspace = true }
 tempfile = { workspace = true }
-libc = { workspace = true }
-rand = { workspace = true }
 uucore = { workspace = true, features = ["entries", "process", "signals"] }
-chrono = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }

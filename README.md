@@ -12,6 +12,10 @@ with some [GNU sed](https://www.gnu.org/software/sed/manual/sed.html),
 [FreeBSD sed](https://man.freebsd.org/cgi/man.cgi?sed(1)),
 and other extensions.
 
+## Status
+
+It is currently work in progress!
+
 ## Installation
 
 Ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).

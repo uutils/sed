@@ -1,7 +1,7 @@
 [package]
 name = "uu_sed"
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 authors = ["uutils developers"]
 license = "MIT"
 description = "sed ~ (uutils) stream editor for filtering/transforming text"
@@ -14,12 +14,12 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 atty = { workspace = true }
-uucore = { workspace = true }
 clap = { workspace = true }
 once_cell = { workspace = true }
 regex = { workspace = true }
 tempfile = { workspace = true }
 memmap2 = { workspace = true }
+uucore = { workspace = true }
 
 [lib]
 path = "src/sed.rs"

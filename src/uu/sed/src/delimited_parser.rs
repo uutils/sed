@@ -817,9 +817,10 @@ mod tests {
     fn errors_on_backslash_delimiter() {
         let (lines, mut line) = make_providers("\\bad");
         let err = parse_regex(&lines, &mut line).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("\\ cannot be used as a string delimiter"));
+        assert!(
+            err.to_string()
+                .contains("\\ cannot be used as a string delimiter")
+        );
     }
 
     #[test]
@@ -907,17 +908,19 @@ mod tests {
     fn errors_on_unterminated_transliteration() {
         let (lines, mut line) = make_providers("/unterminated");
         let err = parse_transliteration(&lines, &mut line).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("unterminated transliteration string"));
+        assert!(
+            err.to_string()
+                .contains("unterminated transliteration string")
+        );
     }
 
     #[test]
     fn errors_on_esc_at_tr_eol() {
         let (lines, mut line) = make_providers("/foo\\");
         let err = parse_transliteration(&lines, &mut line).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("unterminated transliteration string"));
+        assert!(
+            err.to_string()
+                .contains("unterminated transliteration string")
+        );
     }
 }
