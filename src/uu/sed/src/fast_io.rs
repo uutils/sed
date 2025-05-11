@@ -247,7 +247,9 @@ impl IOChunkContent<'_> {
     #[cfg(unix)]
     unsafe fn as_str_unchecked(&self) -> &str {
         match self {
-            IOChunkContent::MmapInput { content, .. } => std::str::from_utf8_unchecked(content),
+            IOChunkContent::MmapInput { content, .. } => unsafe {
+                std::str::from_utf8_unchecked(content)
+            },
             IOChunkContent::Owned { content, .. } => content,
         }
     }
