@@ -201,6 +201,7 @@ check_output!(subst_escaped_magic_separator, ["-e", r"s.\..X.g", LINES1]);
 check_output!(subst_escaped_braced_separator, ["-e", r"s/[\/]/Q/", LINES1]);
 check_output!(subst_escaped_separator, ["-e", r"s_\__X_", LINES1]);
 check_output!(subst_whole_match_group, ["-e", r"s/./(&)/g", LINES1]);
+check_output!(subst_print, ["-ne", "s/1_1/S&/p", LINES1]);
 check_output!(
     subst_escaped_whole_match_group,
     ["-e", r"s/./(\&)/g", LINES1]
@@ -221,6 +222,7 @@ check_output!(
 check_output!(subst_multiline, ["-e", "s/_/u0\\\nu1\\\nu2/g", LINES1]);
 check_output!(subst_numbered_replacement, ["-e", r"s/./X/4", LINES1]);
 check_output!(subst_brace, ["-e", r"s/[123]/X/g", LINES1]);
+check_output!(subst_case_insensitive, ["-e", r"s/L/Line/", LINES1]);
 
 #[test]
 fn subst_write_file() -> std::io::Result<()> {
