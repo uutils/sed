@@ -325,7 +325,7 @@ fn process_file(
                 // The compilation should supply only valid codes.
                 _ => panic!("invalid command code"),
             } // match
-              // Advance to next command.
+            // Advance to next command.
             current = command.next.clone();
         }
 

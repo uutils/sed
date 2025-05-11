@@ -799,7 +799,7 @@ fn compile_command(
             return compile_empty_command(lines, line, &mut cmd);
         }
         CommandArgs::NonSelect => { // !
-             // Implemented at a heigher level.
+            // Implemented at a higher level.
         }
         CommandArgs::Substitute => {
             // s
@@ -1636,9 +1636,10 @@ mod tests {
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("multiple 'g' or numeric flags in substitute command"));
+        assert!(
+            err.to_string()
+                .contains("multiple 'g' or numeric flags in substitute command")
+        );
     }
 
     #[test]
@@ -1647,9 +1648,10 @@ mod tests {
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("multiple 'g' or numeric flags in substitute command"));
+        assert!(
+            err.to_string()
+                .contains("multiple 'g' or numeric flags in substitute command")
+        );
     }
 
     #[test]
@@ -1689,9 +1691,10 @@ mod tests {
         let mut cmd = Command::default();
 
         let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("substitute pattern cannot be delimited"));
+        assert!(
+            err.to_string()
+                .contains("substitute pattern cannot be delimited")
+        );
     }
 
     #[test]
@@ -1752,9 +1755,10 @@ mod tests {
         let mut cmd = Command::default();
 
         let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("group number \\3 is larger than the 2 available RE groups"));
+        assert!(
+            err.to_string()
+                .contains("group number \\3 is larger than the 2 available RE groups")
+        );
     }
 
     // bre_to_ere
