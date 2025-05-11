@@ -191,6 +191,7 @@ check_output!(
     addr_pattern_to_pattern_negate,
     ["-n", "/1_4/,/10/!p", LINES1]
 );
+check_output!(addr_empty_re_reuse, ["-n", "/_2/,//p", LINES1, LINES2]);
 
 
 // Test substitutions
