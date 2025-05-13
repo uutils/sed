@@ -240,3 +240,9 @@ fn subst_write_file() -> std::io::Result<()> {
 
     Ok(())
 }
+
+check_output!(trans_simple, ["-e", r"y/0123456789/9876543210/", LINES1]);
+check_output!(
+    trans_delimiter,
+    ["-e", r"y10\123456789198765432\101", LINES1]
+);

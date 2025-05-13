@@ -10,6 +10,7 @@
 
 use crate::command::{
     Address, AddressType, AddressValue, Command, CommandData, ProcessingContext, Substitution,
+    Transliteration,
 };
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::in_place::InPlace;
@@ -212,6 +213,29 @@ fn substitute(
     Ok(())
 }
 
+/// Apply the specified transliteration in the provided pattern space.
+fn transliterate(pattern: &mut IOChunk, trans: &Transliteration) -> UResult<()> {
+    let text = pattern.try_as_str()?;
+    let mut result = String::with_capacity(text.len());
+    let mut replaced = false;
+
+    // Perform the transliteration.
+    for ch in text.chars() {
+        let mapped = trans.lookup(ch);
+        if mapped != ch {
+            replaced = true;
+        }
+        result.push(mapped);
+    }
+
+    // Lazy replace.
+    if replaced {
+        pattern.set_to_string(result, true);
+    }
+
+    Ok(())
+}
+
 /// Process a single input file
 fn process_file(
     commands: &Option<Rc<RefCell<Command>>>,
@@ -311,7 +335,12 @@ fn process_file(
                     // TODO
                 }
                 'y' => {
-                    // TODO
+                    let trans = match &mut command.data {
+                        CommandData::Transliteration(trans) => trans,
+                        _ => panic!("Expected Transliteration command data"),
+                    };
+
+                    transliterate(&mut pattern, trans)?;
                 }
                 ':' => {
                     // TODO

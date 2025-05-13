@@ -10,9 +10,11 @@
 
 use crate::command::{
     Address, AddressType, AddressValue, Command, CommandData, ProcessingContext, ReplacementPart,
-    ReplacementTemplate, ScriptValue, Substitution,
+    ReplacementTemplate, ScriptValue, Substitution, Transliteration,
 };
-use crate::delimited_parser::{compilation_error, parse_char_escape, parse_regex};
+use crate::delimited_parser::{
+    compilation_error, parse_char_escape, parse_regex, parse_transliteration,
+};
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
@@ -30,18 +32,18 @@ static CMD_MAP: Lazy<HashMap<char, CommandSpec>> = Lazy::new(build_command_map);
 // Types of command arguments recognized by the parser
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandArgs {
-    Empty,      // d D g G h H l n N p P q x = \0
-    Text,       // a c i
-    NonSelect,  // !
-    Group,      // {
-    EndGroup,   // }
-    Comment,    // #
-    Branch,     // b t
-    Label,      // :
-    ReadFile,   // r
-    WriteFile,  // w
-    Substitute, // s
-    Translate,  // y
+    Empty,         // d D g G h H l n N p P q x = \0
+    Text,          // a c i
+    NonSelect,     // !
+    Group,         // {
+    EndGroup,      // }
+    Comment,       // #
+    Branch,        // b t
+    Label,         // :
+    ReadFile,      // r
+    WriteFile,     // w
+    Substitute,    // s
+    Transliterate, // y
 }
 
 // Command specification
@@ -173,7 +175,7 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
         CommandSpec {
             code: 'y',
             n_addr: 2,
-            args: CommandArgs::Translate,
+            args: CommandArgs::Transliterate,
         },
         CommandSpec {
             code: '!',
@@ -396,7 +398,7 @@ fn parse_number(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UR
 }
 
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
-/// - Translates `\(` and `\)` into `(` and `)`
+/// - Replacces `\(` and `\)` with `(` and `)`
 /// - Escapes ERE-only metacharacters: `+ ? { } | ( )`
 /// - Leaves all other characters as-is
 fn bre_to_ere(pattern: &str) -> String {
@@ -654,6 +656,53 @@ pub fn compile_subst_command(
     Ok(ContinueAction::NextLine)
 }
 
+pub fn compile_trans_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<ContinueAction> {
+    line.advance(); // move past 'y'
+
+    let delimiter = line.current();
+    if delimiter == '\0' || delimiter == '\\' {
+        return compilation_error(
+            lines,
+            line,
+            "transliteration string cannot be delimited by newline or backslash",
+        );
+    }
+
+    let source = parse_transliteration(lines, line)?;
+    let target = parse_transliteration(lines, line)?;
+    if source.chars().count() != target.chars().count() {
+        return compilation_error(
+            lines,
+            line,
+            "transliteration strings are not the same length",
+        );
+    }
+
+    let transliteration = Box::new(Transliteration::from_strings(&source, &target));
+
+    line.advance(); // move past last delimiter
+    if !line.eol() && line.current() == ';' {
+        line.advance();
+        cmd.data = CommandData::Transliteration(transliteration);
+        return Ok(ContinueAction::NextChar);
+    }
+
+    if !line.eol() {
+        return compilation_error(
+            lines,
+            line,
+            format!("extra characters at the end of the {} command", cmd.code),
+        );
+    }
+
+    cmd.data = CommandData::Transliteration(transliteration);
+    Ok(ContinueAction::NextLine)
+}
+
 /// Parse the substitution command's optional flags
 pub fn compile_subst_flags(
     lines: &ScriptLineProvider,
@@ -805,6 +854,10 @@ fn compile_command(
             // s
             return compile_subst_command(lines, line, &mut cmd, context);
         }
+        CommandArgs::Transliterate => {
+            // y
+            return compile_trans_command(lines, line, &mut cmd);
+        }
         // TODO
         CommandArgs::Text => { // a c i
         }
@@ -821,8 +874,6 @@ fn compile_command(
         CommandArgs::ReadFile => { // r
         }
         CommandArgs::WriteFile => { // w
-        }
-        CommandArgs::Translate => { // y
         }
     }
 
@@ -964,7 +1015,7 @@ mod tests {
     fn test_lookup_translate_command() {
         let cmd = lookup_command('y').unwrap();
         assert_eq!(cmd.n_addr, 2);
-        assert_eq!(cmd.args, CommandArgs::Translate);
+        assert_eq!(cmd.args, CommandArgs::Transliterate);
     }
 
     #[test]

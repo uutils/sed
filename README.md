@@ -34,6 +34,9 @@ cargo run --release
 * Spaces can precede a regular expression modifier.
 * `I` can be used in as a synonym for the `i` (case insensitive) substitution
   flag.
+* In addition to `\n`, other escape sequences (octal, hex, C) are supported
+  in the strings of the `y` command.
+  Under POSIX these yield undefined behavior.
 
 ### Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.

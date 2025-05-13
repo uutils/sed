@@ -175,11 +175,61 @@ impl Default for Substitution {
     }
 }
 
+/// The block of the first and most common Unicode characters:
+/// ASCII, Latin Extended, Greek, Curillic, Coptic, Arabic, etc.
+/// It comprises all UCS-2 characters.  We use a fast lookup array for these.
+const COMMON_UNICODE: usize = 2048;
+
 #[derive(Debug)]
 /// Transliteration command (y)
 pub struct Transliteration {
-    pub byte_table: [u8; 256],          // Byte translation table
-    pub multi_map: HashMap<char, char>, // Direct mapping from one char to another
+    fast: [char; COMMON_UNICODE],
+    slow: HashMap<char, char>,
+}
+
+impl Default for Transliteration {
+    /// Create a new Transliteration with identity mapping for the fast-path.
+    fn default() -> Self {
+        let mut fast = ['\0'; COMMON_UNICODE];
+        for (i, slot) in fast.iter_mut().enumerate() {
+            *slot = char::from_u32(i as u32).unwrap_or('\0');
+        }
+        Self {
+            fast,
+            slow: HashMap::new(),
+        }
+    }
+}
+
+impl Transliteration {
+    /// Create through character mappings from `source` to `target`.
+    pub fn from_strings(source: &str, target: &str) -> Self {
+        let mut result = Self::default();
+        for (from, to) in source.chars().zip(target.chars()) {
+            result.insert(from, to);
+        }
+        result
+    }
+
+    /// Set a transliteration mapping from one character to another.
+    fn insert(&mut self, from: char, to: char) {
+        let cp = from as usize;
+        if cp < COMMON_UNICODE {
+            self.fast[cp] = to;
+        } else {
+            self.slow.insert(from, to);
+        }
+    }
+
+    /// Look up a character transliteration.
+    pub fn lookup(&self, ch: char) -> char {
+        let cp = ch as usize;
+        if cp < COMMON_UNICODE {
+            self.fast[cp]
+        } else {
+            self.slow.get(&ch).copied().unwrap_or(ch)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -364,5 +414,91 @@ mod tests {
             ],
         };
         assert_eq!(template.max_group_number(), 0);
+    }
+
+    // Transliteration
+    // Creation and internal functions
+    #[test]
+    fn test_identity_lookup_fast_path() {
+        let t = Transliteration::default();
+        assert_eq!(t.lookup('A'), 'A');
+        assert_eq!(t.lookup('z'), 'z');
+        assert_eq!(t.lookup('\u{07FF}'), '\u{07FF}'); // highest 2-byte UTF-8 char
+    }
+
+    #[test]
+    fn test_identity_lookup_slow_path() {
+        let t = Transliteration::default();
+        assert_eq!(t.lookup('\u{0800}'), '\u{0800}'); // just outside fast path
+        assert_eq!(t.lookup('\u{1F600}'), '\u{1F600}'); // 😀
+    }
+
+    #[test]
+    fn test_insert_and_lookup_fast_path() {
+        let mut t = Transliteration::default();
+        t.insert('a', 'α');
+        t.insert('b', 'β');
+        assert_eq!(t.lookup('a'), 'α');
+        assert_eq!(t.lookup('b'), 'β');
+        assert_eq!(t.lookup('c'), 'c'); // unchanged
+    }
+
+    #[test]
+    fn test_insert_and_lookup_slow_path() {
+        let mut t = Transliteration::default();
+        t.insert('🦀', 'c'); // U+1F980 Crab emoji -> 'c'
+        assert_eq!(t.lookup('🦀'), 'c');
+        assert_eq!(t.lookup('🦁'), '🦁'); // unchanged
+    }
+
+    #[test]
+    fn test_overwrite_mapping() {
+        let mut t = Transliteration::default();
+        t.insert('x', '1');
+        assert_eq!(t.lookup('x'), '1');
+        t.insert('x', '2');
+        assert_eq!(t.lookup('x'), '2');
+    }
+
+    #[test]
+    fn test_all_fast_path_mapped_to_space() {
+        let mut t = Transliteration::default();
+        for cp in 0..COMMON_UNICODE {
+            if let Some(ch) = char::from_u32(cp as u32) {
+                t.insert(ch, ' ');
+            }
+        }
+        assert_eq!(t.lookup('A'), ' ');
+        assert_eq!(t.lookup('\u{07FF}'), ' ');
+    }
+
+    // from_strings
+    fn test_basic_transliteration() {
+        let t = Transliteration::from_strings("abcδ", "1234");
+
+        assert_eq!(t.lookup('a'), '1');
+        assert_eq!(t.lookup('b'), '2');
+        assert_eq!(t.lookup('c'), '3');
+        assert_eq!(t.lookup('δ'), '4');
+        assert_eq!(t.lookup('e'), 'e'); // not mapped, fallback
+    }
+
+    #[test]
+    fn test_unicode_slow_path() {
+        let source = "é漢🦀";
+        let target = "e文c";
+        let t = Transliteration::from_strings(source, target);
+
+        assert_eq!(t.lookup('é'), 'e');
+        assert_eq!(t.lookup('漢'), '文');
+        assert_eq!(t.lookup('🦀'), 'c');
+        assert_eq!(t.lookup('x'), 'x'); // fast fallback
+        assert_eq!(t.lookup('文'), '文'); // slow fallback
+    }
+
+    #[test]
+    fn test_overwrite_fast_path() {
+        let t = Transliteration::from_strings("aa", "12");
+        assert_eq!(t.lookup('a'), '2'); // last mapping wins
     }
 }
