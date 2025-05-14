@@ -202,7 +202,7 @@ impl<'a> IOChunk<'a> {
         }
     }
 
-    /// Return the content as a string.
+    /// Return the content as a str.
     pub fn try_as_str(&mut self) -> Result<&str, Box<dyn UError>> {
         match &self.content {
             #[cfg(unix)]
@@ -217,6 +217,38 @@ impl<'a> IOChunk<'a> {
                 }
             }
             IOChunkContent::Owned { content, .. } => Ok(content),
+        }
+    }
+
+    /// Convert content to the Owned variant if it's not already.
+    /// Fails if the conversion to UTF-8 fails.
+    pub fn ensure_owned(&mut self) -> Result<(), Box<dyn UError>> {
+        match &self.content {
+            IOChunkContent::Owned { .. } => Ok(()), // already owned
+            #[cfg(unix)]
+            IOChunkContent::MmapInput { content, full_span } => {
+                match std::str::from_utf8(content) {
+                    Ok(valid_str) => {
+                        let has_newline = full_span.last().copied() == Some(b'\n');
+                        self.content =
+                            IOChunkContent::new_owned(valid_str.to_string(), has_newline);
+                        self.utf8_verified = true;
+                        Ok(())
+                    }
+                    Err(e) => Err(USimpleError::new(1, e.to_string())),
+                }
+            }
+        }
+    }
+
+    /// Return mutable access to the content as a String.
+    pub fn as_mut_string(&mut self) -> Result<&mut String, Box<dyn UError>> {
+        self.ensure_owned()?;
+
+        match &mut self.content {
+            IOChunkContent::Owned { content, .. } => Ok(content),
+            #[allow(unreachable_patterns)]
+            _ => unreachable!("ensure_owned should convert to Owned"),
         }
     }
 }
@@ -993,6 +1025,7 @@ mod tests {
         Ok(())
     }
 
+    // is_newline_terminated
     #[test]
     fn test_owned_newline_terminated() {
         let chunk = IOChunk::from_content(IOChunkContent::new_owned("line".to_string(), true));
@@ -1030,5 +1063,146 @@ mod tests {
         let full_span = b"";
         let chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
         assert!(!chunk.is_newline_terminated());
+    }
+
+    // ensure_owned()
+    #[test]
+    fn test_ensure_owned_on_owned() {
+        let mut chunk =
+            IOChunk::from_content(IOChunkContent::new_owned("already owned".to_string(), true));
+
+        let result = chunk.ensure_owned();
+        assert!(result.is_ok());
+
+        // Content must be unchanged
+        match &chunk.content {
+            IOChunkContent::Owned {
+                content,
+                has_newline,
+                ..
+            } => {
+                assert_eq!(content, "already owned");
+                assert!(*has_newline);
+            }
+            #[cfg(unix)]
+            _ => panic!("Expected Owned variant"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ensure_owned_on_mmap_valid_utf8() {
+        let content = b"mmap string";
+        let full_span = b"mmap string\n";
+
+        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+
+        let result = chunk.ensure_owned();
+        assert!(result.is_ok());
+
+        match &chunk.content {
+            IOChunkContent::Owned {
+                content,
+                has_newline,
+                ..
+            } => {
+                assert_eq!(content, "mmap string");
+                assert!(*has_newline);
+            }
+            _ => panic!("Expected Owned variant after ensure_owned"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ensure_owned_on_mmap_valid_utf8_no_newline() {
+        let content = b"no newline";
+        let full_span = b"no newline";
+
+        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+
+        let result = chunk.ensure_owned();
+        assert!(result.is_ok());
+
+        match &chunk.content {
+            IOChunkContent::Owned {
+                content,
+                has_newline,
+                ..
+            } => {
+                assert_eq!(content, "no newline");
+                assert!(!*has_newline);
+            }
+            _ => panic!("Expected Owned variant after ensure_owned"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_ensure_owned_on_mmap_invalid_utf8() {
+        let content = b"bad\xFFutf8";
+        let full_span = b"bad\xFFutf8\n";
+
+        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+
+        let result = chunk.ensure_owned();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("invalid utf-8"),
+            "Unexpected error message: {}",
+            err_msg
+        );
+    }
+
+    // as_mut_string
+    #[test]
+    fn test_as_mut_string_on_owned() {
+        let mut chunk =
+            IOChunk::from_content(IOChunkContent::new_owned("hello".to_string(), false));
+
+        let s = chunk.as_mut_string().unwrap();
+        s.push_str(" world");
+
+        assert_eq!(chunk.try_as_str().unwrap(), "hello world");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_as_mut_string_on_mmap_input_valid_utf8() {
+        let content = b"foo";
+        let full_span = b"foo\n";
+        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+
+        {
+            let s = chunk.as_mut_string().unwrap();
+            s.push_str("bar");
+        }
+
+        assert_eq!(chunk.try_as_str().unwrap(), "foobar");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_as_mut_string_on_utf8_multibyte() {
+        let content = "λινe".as_bytes();
+        let full_span = "λινe\n".as_bytes();
+        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+
+        chunk.as_mut_string().unwrap().push_str(" Δεδομένα");
+
+        assert_eq!(chunk.try_as_str().unwrap(), "λινe Δεδομένα");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_as_mut_string_invalid_utf8() {
+        let content = b"abc\xFF"; // invalid UTF-8
+        let full_span = b"abc\xFF\n";
+        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+
+        let result = chunk.as_mut_string();
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("invalid utf-8"));
     }
 }
