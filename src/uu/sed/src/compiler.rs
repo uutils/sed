@@ -501,7 +501,7 @@ pub fn compile_replacement(
                 '\\' => {
                     line.advance();
 
-                    // Line continuation
+                    // Line input_action
                     if line.eol() {
                         if let Some(next_line_string) = lines.next_line()? {
                             literal.push('\n');

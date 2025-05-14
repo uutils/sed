@@ -249,3 +249,18 @@ check_output!(
     ["-e", r"y10\123456789198765432\101", LINES1]
 );
 check_output!(trans_no_new_line, ["-e", r"y/l/L/", NO_NEW_LINE]);
+check_output!(trans_newline, ["-e", r"1N;2y/\n/X/", LINES1]);
+
+// TODO: Enable when "{}" is implemented.
+#[cfg(any())]
+check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
+
+// TODO: Enable when "{}" is implemented.
+#[cfg(any())]
+check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
+
+// TODO: Enable when "{}" is implemented.
+#[cfg(any())]
+check_output!(print_to_newline, ["-n", r"1{;N;P;P;p;}", LINES1]);
+
+check_output!(pattern_next_print, ["-n", r"N;N;P", LINES1]);

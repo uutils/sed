@@ -9,8 +9,8 @@
 // file that was distributed with this source code.
 
 use crate::command::{
-    Address, AddressType, AddressValue, Command, CommandData, ProcessingContext, Substitution,
-    Transliteration,
+    Address, AddressType, AddressValue, Command, CommandData, InputAction, ProcessingContext,
+    Substitution, Transliteration,
 };
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::in_place::InPlace;
@@ -243,10 +243,28 @@ fn process_file(
     output: &mut OutputBuffer,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
+    // Loop over the input lines
     while let Some((mut pattern, last_line)) = reader.get_line()? {
         context.last_line = last_line;
         context.line_number += 1;
-        let mut current: Option<Rc<RefCell<Command>>> = commands.clone();
+
+        // Set the script command from which to start.
+        let mut current: Option<Rc<RefCell<Command>>> =
+            if let Some(action) = context.input_action.take() {
+                // Continue processing the `N` command.
+                let current_line = pattern.try_as_str()?;
+                let mut combined_lines = action.prepend;
+                combined_lines.push('\n');
+                combined_lines.push_str(current_line);
+
+                pattern.set_to_string(combined_lines, pattern.is_newline_terminated());
+                action.next_command
+            } else {
+                // Start from the script top.
+                commands.clone()
+            };
+
+        // Loop over script commands.
         while let Some(command_rc) = current {
             let mut command = command_rc.borrow_mut();
 
@@ -256,7 +274,6 @@ fn process_file(
                 continue;
             }
 
-            // TODO: continue if command doesn't apply
             match command.code {
                 '{' => {
                     current = Some(command.data.get_subcommand());
@@ -302,14 +319,32 @@ fn process_file(
                     // TODO
                 }
                 'N' => {
-                    // TODO
+                    // Append to pattern `\n` and the next line
+                    // Rather than reading input here, which would result
+                    // in a double borrow on reader, modify the action
+                    // to perform when the next line is read.
+                    context.input_action = Some(InputAction {
+                        next_command: command.next.clone(),
+                        prepend: pattern.try_as_str()?.to_string(),
+                    });
+                    break;
                 }
                 'p' => {
                     // Write the pattern space to standard output.
                     write_chunk(output, context, &pattern)?;
                 }
                 'P' => {
-                    // TODO
+                    // Output pattern space, up to the first \n.
+                    let line = pattern.try_as_str()?;
+                    match line.find('\n') {
+                        Some(pos) => {
+                            output.write_str(&line[..=pos])?;
+                        }
+                        None => {
+                            output.write_str(line)?;
+                            output.write_str("\n")?;
+                        }
+                    }
                 }
                 'q' => {
                     // TODO
@@ -346,7 +381,7 @@ fn process_file(
                     // TODO
                 }
                 '}' => {
-                    // TODO
+                    // Nothing to do here
                 }
                 '=' => {
                     // TODO
@@ -358,7 +393,7 @@ fn process_file(
             current = command.next.clone();
         }
 
-        if !context.quiet {
+        if !context.quiet && context.input_action.is_none() {
             write_chunk(output, context, &pattern)?;
         }
     }

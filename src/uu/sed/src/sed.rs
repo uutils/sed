@@ -201,6 +201,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         last_line: false,
         last_file: false,
         saved_regex: const { RefCell::new(None) },
+        input_action: None,
     }
 }
 

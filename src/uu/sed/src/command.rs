@@ -51,6 +51,10 @@ pub struct ProcessingContext {
     pub last_file: bool,
     /// Previously compiled RE, saved for reuse when specifying an empty RE
     pub saved_regex: RefCell<Option<Regex>>,
+    /// Modification of input processing action
+    // This is required to avoid doubly borrowing the reader in the 'N'
+    // command.
+    pub input_action: Option<InputAction>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -308,6 +312,15 @@ pub struct Space {
     pub deleted: bool,        // Whether content was deleted
     pub append_newline: bool, // Whether originally terminated by \n
     pub backup: String,       // Backing memory
+}
+
+#[derive(Debug, Clone)]
+/// Action to execute after reading a new input line
+pub struct InputAction {
+    /// Next command to execute (rather than commands from start)
+    pub next_command: Option<Rc<RefCell<Command>>>,
+    /// Data to prepend to the read contents
+    pub prepend: String,
 }
 
 #[cfg(test)]
