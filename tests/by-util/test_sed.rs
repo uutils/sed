@@ -129,6 +129,7 @@ macro_rules! check_output {
 // Input files
 const LINES1: &str = "input/lines1";
 const LINES2: &str = "input/lines2";
+const NO_NEW_LINE: &str = "input/no-new-line.txt";
 
 // Test address ranges
 check_output!(addr_one_line, ["-n", "-e", "4p", LINES1]);
@@ -223,6 +224,7 @@ check_output!(subst_multiline, ["-e", "s/_/u0\\\nu1\\\nu2/g", LINES1]);
 check_output!(subst_numbered_replacement, ["-e", r"s/./X/4", LINES1]);
 check_output!(subst_brace, ["-e", r"s/[123]/X/g", LINES1]);
 check_output!(subst_case_insensitive, ["-e", r"s/L/Line/", LINES1]);
+check_output!(subst_no_new_line, ["-e", r"s/l/L/g", NO_NEW_LINE]);
 
 #[test]
 fn subst_write_file() -> std::io::Result<()> {
@@ -246,3 +248,4 @@ check_output!(
     trans_delimiter,
     ["-e", r"y10\123456789198765432\101", LINES1]
 );
+check_output!(trans_no_new_line, ["-e", r"y/l/L/", NO_NEW_LINE]);

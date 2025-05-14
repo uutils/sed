@@ -198,7 +198,7 @@ fn substitute(
     if replaced {
         result.push_str(&text[last_end..]);
 
-        pattern.set_to_string(result, true);
+        pattern.set_to_string(result, pattern.is_newline_terminated());
 
         if sub.print_flag {
             write_chunk(output, context, pattern)?;
@@ -230,7 +230,7 @@ fn transliterate(pattern: &mut IOChunk, trans: &Transliteration) -> UResult<()> 
 
     // Lazy replace.
     if replaced {
-        pattern.set_to_string(result, true);
+        pattern.set_to_string(result, pattern.is_newline_terminated());
     }
 
     Ok(())

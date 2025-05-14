@@ -167,11 +167,25 @@ impl<'a> IOChunk<'a> {
         }
     }
 
+    /// Return true if the content ends with a newline.
+    pub fn is_newline_terminated(&self) -> bool {
+        match &self.content {
+            IOChunkContent::Owned { has_newline, .. } => *has_newline,
+            #[cfg(unix)]
+            IOChunkContent::MmapInput { full_span, .. } => {
+                if let Some(&last) = full_span.last() {
+                    last == b'\n'
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
     /// Set the object's contents to the specified string.
-    ///  Convert it into Owned if needed.
+    /// Convert it into Owned if needed.
     pub fn set_to_string(&mut self, new_content: String, add_newline: bool) {
         self.utf8_verified = true;
-        // TODO: Default newline to true and remove argumnt if always true.
         match &mut self.content {
             IOChunkContent::Owned {
                 content,
@@ -977,5 +991,44 @@ mod tests {
         assert_eq!(reader.get_line()?, None);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_owned_newline_terminated() {
+        let chunk = IOChunk::from_content(IOChunkContent::new_owned("line".to_string(), true));
+        assert!(chunk.is_newline_terminated());
+    }
+
+    #[test]
+    fn test_owned_not_newline_terminated() {
+        let chunk = IOChunk::from_content(IOChunkContent::new_owned("line".to_string(), false));
+        assert!(!chunk.is_newline_terminated());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_mmap_newline_terminated() {
+        let content = b"line";
+        let full_span = b"line\n";
+        let chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        assert!(chunk.is_newline_terminated());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_mmap_not_newline_terminated() {
+        let content = b"line";
+        let full_span = b"line";
+        let chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        assert!(!chunk.is_newline_terminated());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_mmap_empty() {
+        let content = b"";
+        let full_span = b"";
+        let chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        assert!(!chunk.is_newline_terminated());
     }
 }
