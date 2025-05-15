@@ -295,7 +295,18 @@ fn process_file(
                     break;
                 }
                 'D' => {
-                    // TODO
+                    // Delete up to \n and start a new cycle without new input.
+                    if let Some(pos) = pattern.try_as_str()?.find('\n') {
+                        // Clone just the needed slice before mutating pattern.
+                        let tail = pattern.try_as_str()?[pos + 1..].to_string();
+                        pattern.set_to_string(tail, pattern.is_newline_terminated());
+                        current = commands.clone();
+                        continue;
+                    } else {
+                        // Same as d
+                        pattern.clear();
+                        break;
+                    }
                 }
                 'g' => {
                     // TODO
