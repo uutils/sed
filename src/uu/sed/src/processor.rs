@@ -297,9 +297,8 @@ fn process_file(
                 'D' => {
                     // Delete up to \n and start a new cycle without new input.
                     if let Some(pos) = pattern.try_as_str()?.find('\n') {
-                        // Clone just the needed slice before mutating pattern.
-                        let tail = pattern.try_as_str()?[pos + 1..].to_string();
-                        pattern.set_to_string(tail, pattern.is_newline_terminated());
+                        let s = pattern.as_mut_string().unwrap();
+                        s.drain(..=pos);
                         current = commands.clone();
                         continue;
                     } else {

@@ -264,5 +264,5 @@ check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
 check_output!(print_to_newline, ["-n", r"1{;N;P;P;p;}", LINES1]);
 
 check_output!(pattern_next_print, ["-n", r"N;N;P", LINES1]);
-check_output!(pattern_delete_to_newline, ["-n", r"N;N;N;D", LINES1]);
+check_output!(pattern_delete_to_newline, ["-n", r"2N;3p;3D;3p", LINES1]);
 check_output!(pattern_delete_no_newline, ["-e", r"2D", LINES1]);
