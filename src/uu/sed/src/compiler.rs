@@ -397,6 +397,28 @@ fn parse_number(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UR
         .map_err(|msg| compilation_error::<usize>(lines, line, msg).unwrap_err())
 }
 
+/// Parse the end of a command, returning the appropriate ContinueAction
+fn parse_command_ending(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<ContinueAction> {
+    if !line.eol() && line.current() == ';' {
+        line.advance();
+        return Ok(ContinueAction::NextChar);
+    }
+
+    if !line.eol() {
+        return compilation_error(
+            lines,
+            line,
+            format!("extra characters at the end of the {} command", cmd.code),
+        );
+    }
+
+    Ok(ContinueAction::NextLine)
+}
+
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
 /// - Replacces `\(` and `\)` with `(` and `)`
 /// - Escapes ERE-only metacharacters: `+ ? { } | ( )`
@@ -586,7 +608,7 @@ pub fn compile_replacement(
     }
 }
 
-pub fn compile_subst_command(
+fn compile_subst_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
@@ -637,26 +659,12 @@ pub fn compile_subst_command(
         );
     }
 
-    line.eat_spaces();
-    if !line.eol() && line.current() == ';' {
-        line.advance();
-        cmd.data = CommandData::Substitution(subst);
-        return Ok(ContinueAction::NextChar);
-    }
-
-    if !line.eol() {
-        return compilation_error(
-            lines,
-            line,
-            format!("extra characters at the end of the {} command", cmd.code),
-        );
-    }
-
     cmd.data = CommandData::Substitution(subst);
-    Ok(ContinueAction::NextLine)
+
+    parse_command_ending(lines, line, cmd)
 }
 
-pub fn compile_trans_command(
+fn compile_trans_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
@@ -683,24 +691,10 @@ pub fn compile_trans_command(
     }
 
     let transliteration = Box::new(Transliteration::from_strings(&source, &target));
+    cmd.data = CommandData::Transliteration(transliteration);
 
     line.advance(); // move past last delimiter
-    if !line.eol() && line.current() == ';' {
-        line.advance();
-        cmd.data = CommandData::Transliteration(transliteration);
-        return Ok(ContinueAction::NextChar);
-    }
-
-    if !line.eol() {
-        return compilation_error(
-            lines,
-            line,
-            format!("extra characters at the end of the {} command", cmd.code),
-        );
-    }
-
-    cmd.data = CommandData::Transliteration(transliteration);
-    Ok(ContinueAction::NextLine)
+    parse_command_ending(lines, line, cmd)
 }
 
 /// Parse the substitution command's optional flags
@@ -807,7 +801,7 @@ pub fn compile_subst_flags(
 
 /// Compile a command that doesn't take any arguments
 // Handles d D g G h H l n N p P q x =
-pub fn compile_empty_command(
+fn compile_empty_command(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
@@ -815,20 +809,7 @@ pub fn compile_empty_command(
     line.advance(); // Skip the command character
     line.eat_spaces(); // Skip any trailing whitespace
 
-    if !line.eol() && line.current() == ';' {
-        line.advance();
-        return Ok(ContinueAction::NextChar);
-    }
-
-    if !line.eol() {
-        return compilation_error(
-            lines,
-            line,
-            format!("extra characters at the end of the {} command", cmd.code),
-        );
-    }
-
-    Ok(ContinueAction::NextLine)
+    parse_command_ending(lines, line, cmd)
 }
 
 // Compile the specified command
