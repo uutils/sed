@@ -202,20 +202,14 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
     formats.into_iter().map(|f| (f.code, f)).collect()
 }
 
-// How to continue after processing a command
-#[derive(Debug)]
-pub enum ContinueAction {
-    NextLine,
-    NextChar,
-}
-
 pub fn compile(
     scripts: Vec<ScriptValue>,
     processing_context: &mut ProcessingContext,
 ) -> UResult<Option<Rc<RefCell<Command>>>> {
     let mut make_providers = ScriptLineProvider::new(scripts);
 
-    let result = compile_thread(&mut make_providers, processing_context)?;
+    let mut empty_line = ScriptCharProvider::new("");
+    let result = compile_thread(&mut make_providers, &mut empty_line, processing_context)?;
     // TODO: fix-up labels, check used labels, setup append & match structures
     Ok(result)
 }
@@ -223,60 +217,51 @@ pub fn compile(
 // Compile provided scripts into a thread of commands
 fn compile_thread(
     lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
     context: &ProcessingContext,
 ) -> UResult<Option<Rc<RefCell<Command>>>> {
     let mut head: Option<Rc<RefCell<Command>>> = None;
     let mut tail: Option<Rc<RefCell<Command>>> = None;
 
-    'next_line: loop {
-        match lines.next_line()? {
-            None => {
-                // TODO: Error if stack isn't empty
-                return Ok(head);
-            }
-            Some(line_string) => {
-                let mut line = ScriptCharProvider::new(&line_string);
-
-                // TODO: set processing_context.quiet for StringVal starting with #n
-                'next_char: loop {
-                    line.eat_spaces();
-                    if line.eol() || line.current() == '#' {
-                        continue 'next_line;
-                    } else if line.current() == ';' {
-                        line.advance();
-                        continue 'next_char;
-                    }
-
-                    let mut cmd = Rc::new(RefCell::new(Command::default()));
-                    let n_addr = compile_address_range(lines, &mut line, &mut cmd, context)?;
-                    let mut cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
-
-                    // The ! command shall be followed by another one
-                    if cmd_spec.args == CommandArgs::NonSelect {
-                        line.advance();
-                        line.eat_spaces();
-                        cmd.borrow_mut().non_select = true;
-                        cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
-                    }
-
-                    let action = compile_command(lines, &mut line, &mut cmd, cmd_spec, context)?;
-                    if let Some(ref t) = tail {
-                        // there's already a tail: link it
-                        t.borrow_mut().next = Some(cmd.clone());
-                    } else {
-                        // first element: set head
-                        head = Some(cmd.clone());
-                    }
-
-                    tail = Some(cmd);
-
-                    match action {
-                        ContinueAction::NextLine => continue 'next_line,
-                        ContinueAction::NextChar => continue 'next_char,
-                    }
+    loop {
+        line.eat_spaces();
+        if line.eol() || line.current() == '#' {
+            // TODO: set processing_context.quiet for StringVal starting with #n
+            match lines.next_line()? {
+                None => {
+                    return Ok(head);
+                }
+                Some(line_string) => {
+                    *line = ScriptCharProvider::new(&line_string);
                 }
             }
+            continue;
+        } else if line.current() == ';' {
+            line.advance();
+            continue;
         }
+
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let n_addr = compile_address_range(lines, line, &mut cmd, context)?;
+        let mut cmd_spec = get_cmd_spec(lines, line, n_addr)?;
+
+        // The ! command shall be followed by another one
+        if cmd_spec.args == CommandArgs::NonSelect {
+            line.advance();
+            line.eat_spaces();
+            cmd.borrow_mut().non_select = true;
+            cmd_spec = get_cmd_spec(lines, line, n_addr)?;
+        }
+
+        compile_command(lines, line, &mut cmd, cmd_spec, context)?;
+        if let Some(ref t) = tail {
+            // there's already a tail: link it
+            t.borrow_mut().next = Some(cmd.clone());
+        } else {
+            // first element: set head
+            head = Some(cmd.clone());
+        }
+        tail = Some(cmd);
     }
 }
 
@@ -395,15 +380,15 @@ fn parse_number(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UR
         .map_err(|msg| compilation_error::<usize>(lines, line, msg).unwrap_err())
 }
 
-/// Parse the end of a command, returning the appropriate ContinueAction
+/// Parse the end of a command, failing with an error on extra characters.
 fn parse_command_ending(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-) -> UResult<ContinueAction> {
+) -> UResult<()> {
     if !line.eol() && line.current() == ';' {
         line.advance();
-        return Ok(ContinueAction::NextChar);
+        return Ok(());
     }
 
     if !line.eol() {
@@ -414,7 +399,7 @@ fn parse_command_ending(
         );
     }
 
-    Ok(ContinueAction::NextLine)
+    Ok(())
 }
 
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
@@ -611,7 +596,7 @@ fn compile_subst_command(
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
     context: &ProcessingContext,
-) -> UResult<ContinueAction> {
+) -> UResult<()> {
     line.advance(); // move past 's'
 
     let delimiter = line.current();
@@ -666,7 +651,7 @@ fn compile_trans_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-) -> UResult<ContinueAction> {
+) -> UResult<()> {
     line.advance(); // move past 'y'
 
     let delimiter = line.current();
@@ -803,7 +788,7 @@ fn compile_empty_command(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-) -> UResult<ContinueAction> {
+) -> UResult<()> {
     line.advance(); // Skip the command character
     line.eat_spaces(); // Skip any trailing whitespace
 
@@ -817,7 +802,7 @@ fn compile_command(
     cmd: &mut Rc<RefCell<Command>>,
     cmd_spec: &'static CommandSpec,
     context: &ProcessingContext,
-) -> UResult<ContinueAction> {
+) -> UResult<()> {
     let mut cmd = cmd.borrow_mut();
     cmd.code = line.current();
 
@@ -856,7 +841,7 @@ fn compile_command(
         }
     }
 
-    Ok(ContinueAction::NextLine)
+    Ok(())
 }
 
 // Return the specification for the command letter at the current line position
@@ -1417,12 +1402,16 @@ mod tests {
         ScriptLineProvider::new(input)
     }
 
+    fn empty_line() -> ScriptCharProvider {
+        ScriptCharProvider::new("")
+    }
+
     #[test]
     fn test_compile_thread_empty_input() {
         let mut provider = make_provider(&[]);
         let mut opts = &ctx();
 
-        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         assert!(result.is_none());
     }
 
@@ -1431,7 +1420,7 @@ mod tests {
         let mut provider = make_provider(&["# comment", "   ", ";;"]);
         let mut opts = &ctx();
 
-        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         assert!(result.is_none());
     }
 
@@ -1440,7 +1429,7 @@ mod tests {
         let mut provider = make_provider(&["42q"]);
         let mut opts = &ctx();
 
-        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
         let cmd = binding.borrow();
 
@@ -1464,7 +1453,7 @@ mod tests {
         let mut provider = make_provider(&["42!p"]);
         let mut opts = &ctx();
 
-        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
         let cmd = binding.borrow();
 
@@ -1488,7 +1477,7 @@ mod tests {
         let mut provider = make_provider(&["1q", "2d"]);
         let mut opts = &ctx();
 
-        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
         let first = binding.borrow();
 
@@ -1504,7 +1493,7 @@ mod tests {
         let mut provider = make_provider(&["1q;2d"]);
         let mut opts = &ctx();
 
-        let result = compile_thread(&mut provider, &mut opts).unwrap();
+        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
         let first = binding.borrow();
 
@@ -1750,8 +1739,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s/foo/bar/;");
         let mut cmd = Command::default();
 
-        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap();
-        assert!(matches!(result, ContinueAction::NextChar));
+        compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
         if let CommandData::Substitution(subst) = &cmd.data {
             assert_eq!(subst.replacement.parts.len(), 1);
@@ -1765,9 +1753,7 @@ mod tests {
         let (mut lines, mut chars) = make_providers("s/foo/bar/");
         let mut cmd = Command::default();
 
-        let result = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap();
-        assert!(matches!(result, ContinueAction::NextLine));
-
+        compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap();
         match &cmd.data {
             CommandData::Substitution(subst) => {
                 assert_eq!(subst.replacement.parts.len(), 1);
