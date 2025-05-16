@@ -24,17 +24,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macOS-latest, windows-latest]
     steps:
+      - name: Set Git to use LF, even on Windows
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Remove carriage returns
-        shell: bash
-        run: |
-          if command -v dos2unix >/dev/null 2>&1; then
-            echo "dos2unix is available; converting"
-            dos2unix tests/fixtures/sed/*/*
-          else
-            echo "dos2unix is NOT available"
-          fi
       - run: cargo test --all
 
   coverage:
@@ -48,16 +43,11 @@ jobs:
           - { os: macos-latest   , features: macos }
           - { os: windows-latest , features: windows }
     steps:
-    - uses: actions/checkout@v4
-    - name: Remove carriage returns
-      shell: bash
+    - name: Set Git to use LF, even on Windows
       run: |
-        if command -v dos2unix >/dev/null 2>&1; then
-          echo "dos2unix is available; converting"
-          dos2unix tests/fixtures/sed/*/*
-        else
-          echo "dos2unix is NOT available"
-        fi
+        git config --global core.autocrlf false
+        git config --global core.eol lf
+    - uses: actions/checkout@v4
     - name: Initialize workflow variables
       id: vars
       shell: bash
