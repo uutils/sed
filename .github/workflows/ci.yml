@@ -25,13 +25,8 @@ jobs:
         os: [ubuntu-latest, macOS-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Force LF line endings
-          core.autocrlf: false
       - uses: dtolnay/rust-toolchain@stable
-      - name: File type before conversion
-        run: file tests/fixtures/sed/*/*
-      - name: Remove carriage return
+      - name: Remove carriage returns
         shell: bash
         run: |
           if command -v dos2unix >/dev/null 2>&1; then
@@ -40,8 +35,6 @@ jobs:
           else
             echo "dos2unix is NOT available"
           fi
-      - name: File type after convesion
-        run: file tests/fixtures/sed/*/*
       - run: cargo test --all
 
   coverage:
