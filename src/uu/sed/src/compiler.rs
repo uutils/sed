@@ -226,8 +226,7 @@ fn compile_thread(
     context: &ProcessingContext,
 ) -> UResult<Option<Rc<RefCell<Command>>>> {
     let mut head: Option<Rc<RefCell<Command>>> = None;
-    // A mutable reference to the place we’ll insert next
-    let mut next_p = &mut head;
+    let mut tail: Option<Rc<RefCell<Command>>> = None;
 
     'next_line: loop {
         match lines.next_line()? {
@@ -260,17 +259,16 @@ fn compile_thread(
                         cmd_spec = get_cmd_spec(lines, &line, n_addr)?;
                     }
 
-                    // Move cmd into next_p, transferring its ownership
                     let action = compile_command(lines, &mut line, &mut cmd, cmd_spec, context)?;
-
-                    *next_p = Some(cmd);
-                    // Intermediate let binding to avoid the temporary drop
-                    let cmd_rc = next_p.as_mut().unwrap();
-                    let cmd_ptr =
-                        &mut cmd_rc.borrow_mut().next as *mut Option<Rc<RefCell<Command>>>;
-                    unsafe {
-                        next_p = &mut *cmd_ptr;
+                    if let Some(ref t) = tail {
+                        // there's already a tail: link it
+                        t.borrow_mut().next = Some(cmd.clone());
+                    } else {
+                        // first element: set head
+                        head = Some(cmd.clone());
                     }
+
+                    tail = Some(cmd);
 
                     match action {
                         ContinueAction::NextLine => continue 'next_line,
