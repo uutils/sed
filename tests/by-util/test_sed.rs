@@ -266,3 +266,23 @@ check_output!(print_to_newline, ["-n", r"1{;N;P;P;p;}", LINES1]);
 check_output!(pattern_next_print, ["-n", r"N;N;P", LINES1]);
 check_output!(pattern_delete_to_newline, ["-n", r"2N;3p;3D;3p", LINES1]);
 check_output!(pattern_delete_no_newline, ["-e", r"2D", LINES1]);
+check_output!(pattern_delete_print, ["-n", r"4d;p", LINES1]);
+
+// FreeBSD sed does not produce any output for the following two
+check_output!(pattern_append_delete, ["-e", r"N;N;N;D", LINES1]);
+check_output!(pattern_append_delete_2, ["-e", r"N;N;N;D", LINES1, LINES2]);
+
+check_output!(
+    pattern_append_delete2_separate,
+    ["-s", r"N;N;N;D", LINES1, LINES2]
+);
+check_output!(
+    pattern_hold_append_swap,
+    ["-e", r"2h;3H;4g;5G;6x;6p;6x;6p", LINES1]
+);
+check_output!(pattern_next_output, ["-e", r"4n", LINES1]);
+check_output!(pattern_next_no_output, ["-n", "-e", r"4n", LINES1]);
+check_output!(pattern_next_print_output, ["-e", r"4n;p", LINES1]);
+check_output!(pattern_next_print_no_output, ["-n", "-e", r"4n;p", LINES1]);
+check_output!(pattern_quit, [r"5q", LINES1]);
+check_output!(pattern_quit_2, [r"5q", LINES1, LINES2]);

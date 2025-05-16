@@ -18,7 +18,7 @@ pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;
 
-use crate::command::{ProcessingContext, ScriptValue};
+use crate::command::{ProcessingContext, ScriptValue, StringSpace};
 use crate::compiler::compile;
 use crate::processor::process_all_files;
 use clap::{Arg, ArgMatches, Command, arg};
@@ -200,8 +200,10 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         last_address: false,
         last_line: false,
         last_file: false,
+        stop_processing: false,
         saved_regex: const { RefCell::new(None) },
         input_action: None,
+        hold: StringSpace::default(),
     }
 }
 

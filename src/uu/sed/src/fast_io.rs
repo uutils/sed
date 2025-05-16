@@ -241,12 +241,16 @@ impl<'a> IOChunk<'a> {
         }
     }
 
-    /// Return mutable access to the content as a String.
-    pub fn as_mut_string(&mut self) -> Result<&mut String, Box<dyn UError>> {
+    /// Return mutable access to the content and has_newline fields.
+    pub fn fields_mut(&mut self) -> Result<(&mut String, &mut bool), Box<dyn UError>> {
         self.ensure_owned()?;
 
         match &mut self.content {
-            IOChunkContent::Owned { content, .. } => Ok(content),
+            IOChunkContent::Owned {
+                content,
+                has_newline,
+                ..
+            } => Ok((content, has_newline)),
             #[allow(unreachable_patterns)]
             _ => unreachable!("ensure_owned should convert to Owned"),
         }
@@ -1155,13 +1159,13 @@ mod tests {
         );
     }
 
-    // as_mut_string
+    // fields_mut
     #[test]
-    fn test_as_mut_string_on_owned() {
+    fn test_fields_mut_on_owned() {
         let mut chunk =
             IOChunk::from_content(IOChunkContent::new_owned("hello".to_string(), false));
 
-        let s = chunk.as_mut_string().unwrap();
+        let (s, _) = chunk.fields_mut().unwrap();
         s.push_str(" world");
 
         assert_eq!(chunk.try_as_str().unwrap(), "hello world");
@@ -1169,13 +1173,13 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_as_mut_string_on_mmap_input_valid_utf8() {
+    fn test_fields_mut_on_mmap_input_valid_utf8() {
         let content = b"foo";
         let full_span = b"foo\n";
         let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
 
         {
-            let s = chunk.as_mut_string().unwrap();
+            let (s, _) = chunk.fields_mut().unwrap();
             s.push_str("bar");
         }
 
@@ -1184,24 +1188,25 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_as_mut_string_on_utf8_multibyte() {
-        let content = "λινe".as_bytes();
-        let full_span = "λινe\n".as_bytes();
+    fn test_fields_mut_on_utf8_multibyte() {
+        let content = "Ζωντανά!".as_bytes();
+        let full_span = "Ζωντανά!\n".as_bytes();
         let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
 
-        chunk.as_mut_string().unwrap().push_str(" Δεδομένα");
+        let (s, _) = chunk.fields_mut().unwrap();
+        s.push_str(" Δεδομένα");
 
-        assert_eq!(chunk.try_as_str().unwrap(), "λινe Δεδομένα");
+        assert_eq!(chunk.try_as_str().unwrap(), "Ζωντανά! Δεδομένα");
     }
 
     #[cfg(unix)]
     #[test]
-    fn test_as_mut_string_invalid_utf8() {
+    fn test_fields_mut_invalid_utf8() {
         let content = b"abc\xFF"; // invalid UTF-8
         let full_span = b"abc\xFF\n";
         let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
 
-        let result = chunk.as_mut_string();
+        let result = chunk.fields_mut();
         assert!(result.is_err());
         assert!(format!("{}", result.unwrap_err()).contains("invalid utf-8"));
     }

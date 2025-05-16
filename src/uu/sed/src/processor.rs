@@ -244,7 +244,7 @@ fn process_file(
     context: &mut ProcessingContext,
 ) -> UResult<()> {
     // Loop over the input lines
-    while let Some((mut pattern, last_line)) = reader.get_line()? {
+    'lines: while let Some((mut pattern, last_line)) = reader.get_line()? {
         context.last_line = last_line;
         context.line_number += 1;
 
@@ -297,7 +297,7 @@ fn process_file(
                 'D' => {
                     // Delete up to \n and start a new cycle without new input.
                     if let Some(pos) = pattern.try_as_str()?.find('\n') {
-                        let s = pattern.as_mut_string().unwrap();
+                        let (s, _) = pattern.fields_mut()?;
                         s.drain(..=pos);
                         current = commands.clone();
                         continue;
@@ -308,16 +308,26 @@ fn process_file(
                     }
                 }
                 'g' => {
-                    // TODO
+                    // Replace pattern with the contents of the hold space.
+                    pattern.set_to_string(context.hold.content.clone(), context.hold.has_newline);
                 }
                 'G' => {
-                    // TODO
+                    // Append to pattern \n followed by hold space contents.
+                    let (pat_content, pat_has_newline) = pattern.fields_mut()?;
+                    pat_content.push('\n');
+                    pat_content.push_str(&context.hold.content);
+                    *pat_has_newline = context.hold.has_newline;
                 }
                 'h' => {
-                    // TODO
+                    // Replace hold with the contents of the pattern space.
+                    context.hold.content = pattern.try_as_str()?.to_string();
+                    context.hold.has_newline = pattern.is_newline_terminated();
                 }
                 'H' => {
-                    // TODO
+                    // Append to hold \n followed by pattern space contents.
+                    context.hold.content.push('\n');
+                    context.hold.content.push_str(pattern.try_as_str()?);
+                    context.hold.has_newline = pattern.is_newline_terminated();
                 }
                 'i' => {
                     // TODO
@@ -326,7 +336,7 @@ fn process_file(
                     // TODO
                 }
                 'n' => {
-                    // TODO
+                    break;
                 }
                 'N' => {
                     // Append to pattern `\n` and the next line
@@ -337,7 +347,7 @@ fn process_file(
                         next_command: command.next.clone(),
                         prepend: pattern.try_as_str()?.to_string(),
                     });
-                    break;
+                    continue 'lines;
                 }
                 'p' => {
                     // Write the pattern space to standard output.
@@ -357,7 +367,8 @@ fn process_file(
                     }
                 }
                 'q' => {
-                    // TODO
+                    context.stop_processing = true;
+                    break;
                 }
                 'r' => {
                     // TODO
@@ -377,7 +388,10 @@ fn process_file(
                     // TODO
                 }
                 'x' => {
-                    // TODO
+                    // Exchange the contents of the pattern and hold spaces.
+                    let (pat_content, pat_has_newline) = pattern.fields_mut()?;
+                    std::mem::swap(pat_content, &mut context.hold.content);
+                    std::mem::swap(pat_has_newline, &mut context.hold.has_newline);
                 }
                 'y' => {
                     let trans = match &mut command.data {
@@ -403,10 +417,27 @@ fn process_file(
             current = command.next.clone();
         }
 
-        if !context.quiet && context.input_action.is_none() {
+        if !context.quiet {
             write_chunk(output, context, &pattern)?;
         }
+
+        if context.stop_processing {
+            break;
+        }
     }
+
+    // Handle any N command remains.
+    if context.separate && !context.quiet {
+        if let Some(action) = context.input_action.take() {
+            let mut pending = action.prepend;
+            pending.push('\n');
+            output.write_str(pending)?;
+            if context.unbuffered {
+                output.flush()?;
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -436,7 +467,20 @@ pub fn process_all_files(
         }
         process_file(&commands, &mut reader, output, &mut context)?;
 
+        // Handle any N command remains.
+        if context.last_file && !context.separate && !context.quiet {
+            if let Some(action) = context.input_action.take() {
+                let mut pending = action.prepend;
+                pending.push('\n');
+                output.write_str(pending)?;
+            }
+        }
+
         in_place.end()?;
+
+        if context.stop_processing {
+            break;
+        }
     }
 
     // Flush all output files
