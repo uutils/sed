@@ -30,7 +30,7 @@ fn match_address(
     match addr.atype {
         AddressType::Re => {
             if let AddressValue::Regex(ref re) = addr.value {
-                Ok(re.is_match(pattern.try_as_str()?))
+                Ok(re.is_match(pattern.as_str()?))
             } else {
                 Ok(false)
             }
@@ -173,7 +173,7 @@ fn substitute(
     let mut result = String::new();
     let mut replaced = false;
 
-    let text = pattern.try_as_str()?;
+    let text = pattern.as_str()?;
 
     for caps in sub.regex.captures_iter(text) {
         count += 1;
@@ -206,7 +206,7 @@ fn substitute(
 
         // Write to file if needed.
         if let Some(ref writer) = sub.write_file {
-            writer.borrow_mut().write_line(pattern.try_as_str()?)?;
+            writer.borrow_mut().write_line(pattern.as_str()?)?;
         }
     }
 
@@ -215,7 +215,7 @@ fn substitute(
 
 /// Apply the specified transliteration in the provided pattern space.
 fn transliterate(pattern: &mut IOChunk, trans: &Transliteration) -> UResult<()> {
-    let text = pattern.try_as_str()?;
+    let text = pattern.as_str()?;
     let mut result = String::with_capacity(text.len());
     let mut replaced = false;
 
@@ -252,7 +252,7 @@ fn process_file(
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
                 // Continue processing the `N` command.
-                let current_line = pattern.try_as_str()?;
+                let current_line = pattern.as_str()?;
                 let mut combined_lines = action.prepend;
                 combined_lines.push('\n');
                 combined_lines.push_str(current_line);
@@ -296,7 +296,7 @@ fn process_file(
                 }
                 'D' => {
                     // Delete up to \n and start a new cycle without new input.
-                    if let Some(pos) = pattern.try_as_str()?.find('\n') {
+                    if let Some(pos) = pattern.as_str()?.find('\n') {
                         let (s, _) = pattern.fields_mut()?;
                         s.drain(..=pos);
                         current = commands.clone();
@@ -320,13 +320,13 @@ fn process_file(
                 }
                 'h' => {
                     // Replace hold with the contents of the pattern space.
-                    context.hold.content = pattern.try_as_str()?.to_string();
+                    context.hold.content = pattern.as_str()?.to_string();
                     context.hold.has_newline = pattern.is_newline_terminated();
                 }
                 'H' => {
                     // Append to hold \n followed by pattern space contents.
                     context.hold.content.push('\n');
-                    context.hold.content.push_str(pattern.try_as_str()?);
+                    context.hold.content.push_str(pattern.as_str()?);
                     context.hold.has_newline = pattern.is_newline_terminated();
                 }
                 'i' => {
@@ -345,7 +345,7 @@ fn process_file(
                     // to perform when the next line is read.
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
-                        prepend: pattern.try_as_str()?.to_string(),
+                        prepend: pattern.as_str()?.to_string(),
                     });
                     continue 'lines;
                 }
@@ -355,7 +355,7 @@ fn process_file(
                 }
                 'P' => {
                     // Output pattern space, up to the first \n.
-                    let line = pattern.try_as_str()?;
+                    let line = pattern.as_str()?;
                     match line.find('\n') {
                         Some(pos) => {
                             output.write_str(&line[..=pos])?;

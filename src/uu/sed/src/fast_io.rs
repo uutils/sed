@@ -203,7 +203,7 @@ impl<'a> IOChunk<'a> {
     }
 
     /// Return the content as a str.
-    pub fn try_as_str(&mut self) -> Result<&str, Box<dyn UError>> {
+    pub fn as_str(&mut self) -> Result<&str, Box<dyn UError>> {
         match &self.content {
             #[cfg(unix)]
             IOChunkContent::MmapInput { content, .. } => {
@@ -951,7 +951,7 @@ mod tests {
         }
 
         if let Some((mut content, last_line)) = reader.get_line()? {
-            assert_eq!(content.try_as_str().unwrap(), "last line");
+            assert_eq!(content.as_str().unwrap(), "last line");
             assert!(last_line);
         } else {
             panic!("Expected IOChunk");
@@ -1015,11 +1015,11 @@ mod tests {
         }
 
         if let Some((mut content, last_line)) = reader.get_line()? {
-            assert_eq!(content.try_as_str().unwrap(), "last line");
+            assert_eq!(content.as_str().unwrap(), "last line");
             assert!(content.utf8_verified);
             assert!(last_line);
             // Cached version
-            assert_eq!(content.try_as_str().unwrap(), "last line");
+            assert_eq!(content.as_str().unwrap(), "last line");
         } else {
             panic!("Expected IOChunk");
         }
@@ -1168,7 +1168,7 @@ mod tests {
         let (s, _) = chunk.fields_mut().unwrap();
         s.push_str(" world");
 
-        assert_eq!(chunk.try_as_str().unwrap(), "hello world");
+        assert_eq!(chunk.as_str().unwrap(), "hello world");
     }
 
     #[cfg(unix)]
@@ -1183,7 +1183,7 @@ mod tests {
             s.push_str("bar");
         }
 
-        assert_eq!(chunk.try_as_str().unwrap(), "foobar");
+        assert_eq!(chunk.as_str().unwrap(), "foobar");
     }
 
     #[cfg(unix)]
@@ -1196,7 +1196,7 @@ mod tests {
         let (s, _) = chunk.fields_mut().unwrap();
         s.push_str(" Δεδομένα");
 
-        assert_eq!(chunk.try_as_str().unwrap(), "Ζωντανά! Δεδομένα");
+        assert_eq!(chunk.as_str().unwrap(), "Ζωντανά! Δεδομένα");
     }
 
     #[cfg(unix)]
