@@ -21,9 +21,9 @@ use std::path::PathBuf; // For file descriptors and equivalent
 use std::rc::Rc;
 use uucore::error::UResult;
 
-// Compilation and processing options provided mostly through the
-// command-line interface
 #[derive(Debug, Default, Clone)]
+/// Compilation and processing options provided mostly through the
+/// command-line interface
 pub struct ProcessingContext {
     // Command-line flags with corresponding names
     pub all_output_files: bool,
@@ -294,10 +294,8 @@ impl CommandData {
     }
 }
 
-/*
- * Structure containing things to append before a line is read
- */
 #[derive(Debug)]
+/// Text to append before a line is read
 pub struct AppendBuffer {
     append_type: AppendType,
     content: String,
@@ -309,20 +307,11 @@ pub enum AppendType {
     File,
 }
 
-/// Flag for space modifications
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Flag for space modifications
 pub enum SpaceFlag {
     Append,  // Append to contents
     Replace, // Replace contents
-}
-
-/// Structure for a processing space (process, hold, otherwise).
-#[derive(Debug)]
-pub struct Space {
-    pub current: String,      // Current space content
-    pub deleted: bool,        // Whether content was deleted
-    pub append_newline: bool, // Whether originally terminated by \n
-    pub backup: String,       // Backing memory
 }
 
 #[derive(Debug, Clone)]
