@@ -61,6 +61,8 @@ pub struct ProcessingContext {
     pub hold: StringSpace,
     /// Nesting of { } at compile time
     pub parsed_block_nesting: usize,
+    /// Command associated with each label
+    pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -279,13 +281,15 @@ impl Default for Command {
 
 #[derive(Debug)]
 /// Command-specific data
+/// After parsing, t, b Label elements are converted into BranchTarget ones.
 pub enum CommandData {
     None,
     Block(Option<Rc<RefCell<Command>>>), // Commands for '{'
     BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't'
+    Label(Option<String>),               // Label name for 'b', 't', ':'
+    NamedWriter(Box<NamedWriter>),       // File descriptor for 'w'
     Substitution(Box<Substitution>),     // Substitute command 's'
     Transliteration(Box<Transliteration>), // Transliteration command 'y'
-    NamedWriter(Box<NamedWriter>),       // File descriptor for 'w'
 }
 
 #[derive(Debug)]

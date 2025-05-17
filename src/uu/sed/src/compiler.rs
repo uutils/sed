@@ -37,9 +37,7 @@ enum CommandArgs {
     NonSelect,     // !
     BeginGroup,    // {
     EndGroup,      // }
-    Comment,       // #
-    Branch,        // b t
-    Label,         // :
+    Label,         // b t :
     ReadFile,      // r
     WriteFile,     // w
     Substitute,    // s
@@ -75,7 +73,7 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
         CommandSpec {
             code: 'b',
             n_addr: 2,
-            args: CommandArgs::Branch,
+            args: CommandArgs::Label,
         },
         CommandSpec {
             code: 'c',
@@ -160,7 +158,7 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
         CommandSpec {
             code: 't',
             n_addr: 2,
-            args: CommandArgs::Branch,
+            args: CommandArgs::Label,
         },
         CommandSpec {
             code: 'w',
@@ -186,11 +184,6 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
             code: ':',
             n_addr: 0,
             args: CommandArgs::Label,
-        },
-        CommandSpec {
-            code: '#',
-            n_addr: 0,
-            args: CommandArgs::Comment,
         },
         CommandSpec {
             code: '=',
@@ -874,6 +867,33 @@ fn compile_empty_command(
     parse_command_ending(lines, line, cmd)
 }
 
+fn compile_label_command(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<()> {
+    line.advance(); // Skip the command character
+    line.eat_spaces(); // Skip any leading whitespace
+
+    let mut label = String::new();
+    while !line.eol() && line.current().is_ascii_alphabetic() {
+        label.push(line.current());
+        line.advance();
+    }
+
+    if label.is_empty() {
+        if cmd.code == ':' {
+            return compilation_error(lines, line, "empty label");
+        }
+        cmd.data = CommandData::Label(None);
+    } else {
+        cmd.data = CommandData::Label(Some(label));
+    }
+
+    line.eat_spaces(); // Skip any trailing whitespace
+    parse_command_ending(lines, line, cmd)
+}
+
 // Compile the specified command
 fn compile_command(
     lines: &mut ScriptLineProvider,
@@ -886,9 +906,23 @@ fn compile_command(
     cmd.code = line.current();
 
     match cmd_spec.args {
+        CommandArgs::BeginGroup => {
+            // {
+            line.advance(); // move past '{'
+            context.parsed_block_nesting += 1;
+            let block_body = compile_sequence(lines, line, context)?;
+            cmd.data = CommandData::Block(block_body);
+        }
+        CommandArgs::EndGroup => { // }
+            // Implemented at a higher level.
+        }
         CommandArgs::Empty => {
             // d D g G h H l n N p P q x =
             return compile_empty_command(lines, line, &mut cmd);
+        }
+        CommandArgs::Label => {
+            // b t :
+            compile_label_command(lines, line, &mut cmd)?;
         }
         CommandArgs::NonSelect => { // !
             // Implemented at a higher level.
@@ -903,21 +937,6 @@ fn compile_command(
         }
         // TODO
         CommandArgs::Text => { // a c i
-        }
-        CommandArgs::BeginGroup => {
-            // {
-            line.advance(); // move past '{'
-            context.parsed_block_nesting += 1;
-            let block_body = compile_sequence(lines, line, context)?;
-            cmd.data = CommandData::Block(block_body);
-        }
-        CommandArgs::EndGroup => { // }
-        }
-        CommandArgs::Comment => { // #
-        }
-        CommandArgs::Branch => { // b t
-        }
-        CommandArgs::Label => { // :
         }
         CommandArgs::ReadFile => { // r
         }
@@ -1015,20 +1034,6 @@ mod tests {
         let cmd = lookup_command('}').unwrap();
         assert_eq!(cmd.n_addr, 0);
         assert_eq!(cmd.args, CommandArgs::EndGroup);
-    }
-
-    #[test]
-    fn test_lookup_comment_command() {
-        let cmd = lookup_command('#').unwrap();
-        assert_eq!(cmd.n_addr, 0);
-        assert_eq!(cmd.args, CommandArgs::Comment);
-    }
-
-    #[test]
-    fn test_lookup_branch_command() {
-        let cmd = lookup_command('b').unwrap();
-        assert_eq!(cmd.n_addr, 2);
-        assert_eq!(cmd.args, CommandArgs::Branch);
     }
 
     #[test]
@@ -1786,7 +1791,6 @@ mod tests {
         let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
-
     // compile_subst_command
     #[test]
     fn test_compile_subst_invalid_delimiter_backslash() {
@@ -2026,5 +2030,46 @@ mod tests {
         assert_eq!(collect_codes(head), vec!['a', '{', 'b']);
         assert_eq!(collect_codes(outer), vec!['{', 'b']);
         assert_eq!(collect_codes(inner), vec!['x', 'b']);
+    }
+
+    // compile_label_command
+    #[test]
+    fn test_compile_label_command() {
+        let (mut lines, mut chars) = make_providers(": foo");
+        let mut cmd = Command::default();
+
+        compile_label_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        match &cmd.data {
+            CommandData::Label(label) => {
+                let name = label.clone().unwrap();
+                assert_eq!(name, "foo");
+            }
+            _ => panic!("Expected CommandData::Label"),
+        }
+    }
+
+    #[test]
+    fn test_compile_missing_label_command() {
+        let (mut lines, mut chars) = make_providers(": ;");
+        let mut cmd = Command::default();
+
+        cmd.code = ':';
+        let err = compile_label_command(&mut lines, &mut chars, &mut cmd).unwrap_err();
+        assert!(err.to_string().contains("empty label"));
+    }
+
+    #[test]
+    fn test_compile_empty_label_command() {
+        let (mut lines, mut chars) = make_providers("b ;");
+        let mut cmd = Command::default();
+
+        cmd.code = 'b';
+        compile_label_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        match &cmd.data {
+            CommandData::Label(label) => {
+                assert!(label.is_none());
+            }
+            _ => panic!("Expected CommandData::Label(None)"),
+        }
     }
 }

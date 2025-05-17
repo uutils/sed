@@ -23,6 +23,7 @@ use crate::compiler::compile;
 use crate::processor::process_all_files;
 use clap::{Arg, ArgMatches, Command, arg};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
 use uucore::format_usage;
@@ -205,6 +206,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         input_action: None,
         hold: StringSpace::default(),
         parsed_block_nesting: 0,
+        label_to_command_map: HashMap::new(),
     }
 }
 
