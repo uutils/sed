@@ -209,7 +209,7 @@ pub fn compile(
     let mut make_providers = ScriptLineProvider::new(scripts);
 
     let mut empty_line = ScriptCharProvider::new("");
-    let result = compile_thread(&mut make_providers, &mut empty_line, context)?;
+    let result = compile_sequence(&mut make_providers, &mut empty_line, context)?;
 
     if context.parsed_block_nesting > 0 {
         return Err(USimpleError::new(1, "unmatched `{'"));
@@ -276,7 +276,7 @@ fn patch_block_endings(head: Option<Rc<RefCell<Command>>>) {
 }
 
 // Compile provided scripts into a thread of commands
-fn compile_thread(
+fn compile_sequence(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     context: &mut ProcessingContext,
@@ -908,7 +908,7 @@ fn compile_command(
             // {
             line.advance(); // move past '{'
             context.parsed_block_nesting += 1;
-            let block_body = compile_thread(lines, line, context)?;
+            let block_body = compile_sequence(lines, line, context)?;
             cmd.data = CommandData::Block(block_body);
         }
         CommandArgs::EndGroup => { // }
@@ -1477,7 +1477,7 @@ mod tests {
         };
     }
 
-    // compile_thread
+    // compile_sequence
     fn make_provider(lines: &[&str]) -> ScriptLineProvider {
         let input = lines
             .iter()
@@ -1491,29 +1491,29 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_thread_empty_input() {
+    fn test_compile_sequence_empty_input() {
         let mut provider = make_provider(&[]);
         let mut opts = ctx();
 
-        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
+        let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_compile_thread_comment_only() {
+    fn test_compile_sequence_comment_only() {
         let mut provider = make_provider(&["# comment", "   ", ";;"]);
         let mut opts = ctx();
 
-        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
+        let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_compile_thread_single_command() {
+    fn test_compile_sequence_single_command() {
         let mut provider = make_provider(&["42q"]);
         let mut opts = ctx();
 
-        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
+        let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
         let cmd = binding.borrow();
 
@@ -1533,11 +1533,11 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_thread_non_selected_single_command() {
+    fn test_compile_sequence_non_selected_single_command() {
         let mut provider = make_provider(&["42!p"]);
         let mut opts = ctx();
 
-        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
+        let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
         let cmd = binding.borrow();
 
@@ -1557,11 +1557,11 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_thread_multiple_lines() {
+    fn test_compile_sequence_multiple_lines() {
         let mut provider = make_provider(&["1q", "2d"]);
         let mut opts = ctx();
 
-        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
+        let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
         let first = binding.borrow();
 
@@ -1573,11 +1573,11 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_thread_single_line_multiple_commands() {
+    fn test_compile_sequence_single_line_multiple_commands() {
         let mut provider = make_provider(&["1q;2d"]);
         let mut opts = ctx();
 
-        let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
+        let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
         let first = binding.borrow();
 
