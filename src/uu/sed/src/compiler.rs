@@ -22,6 +22,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::mem;
 use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::error::{UResult, USimpleError};
@@ -204,18 +205,21 @@ pub fn compile(
     let mut empty_line = ScriptCharProvider::new("");
     let result = compile_sequence(&mut make_providers, &mut empty_line, context)?;
 
+    // Link the ends of
     if context.parsed_block_nesting > 0 {
         return Err(USimpleError::new(1, "unmatched `{'"));
     }
     patch_block_endings(result.clone());
 
+    // Link branch commands to the target label commands.
     populate_label_map(result.clone(), context);
+    resolve_branch_targets(result.clone(), context)?;
 
     // Comment-out the following to show the compiled script.
     #[cfg(any())]
     dbg!(&result);
 
-    // TODO: fix-up labels, check used labels, setup append & match structures
+    // TODO: setup append & match structures
     Ok(result)
 }
 
@@ -294,7 +298,53 @@ fn populate_label_map(mut cur: Option<Rc<RefCell<Command>>>, context: &mut Proce
     }
 }
 
-// Compile provided scripts into a thread of commands
+/// Replace branch labels with references to the corresponding commands.
+/// Raise an error on undefined labels.
+fn resolve_branch_targets(
+    mut cur: Option<Rc<RefCell<Command>>>,
+    context: &mut ProcessingContext,
+) -> UResult<()> {
+    while let Some(rc_cmd) = cur {
+        // Borrow mutably just long enough to inspect/rewire this node
+        let mut cmd = rc_cmd.borrow_mut();
+
+        // Recurse into blocks
+        if let CommandData::Block(Some(sub_head)) = &cmd.data {
+            resolve_branch_targets(Some(sub_head.clone()), context)?;
+        }
+
+        // Only for 't' or 'b' commands:
+        if matches!(cmd.code, 't' | 'b') {
+            // Take ownership of the current data
+            let old_data = mem::replace(&mut cmd.data, CommandData::None);
+
+            // Build the replacement
+            let new_data = match old_data {
+                CommandData::Label(Some(label)) => {
+                    let target = context
+                        .label_to_command_map
+                        .get(&label)
+                        .cloned()
+                        .ok_or_else(|| {
+                            USimpleError::new(2, format!("undefined label `{}'", label))
+                        })?;
+                    CommandData::BranchTarget(Some(target))
+                }
+                CommandData::Label(None) => CommandData::BranchTarget(None),
+                other => other, // put back anything else unchanged
+            };
+
+            // Store it back
+            cmd.data = new_data;
+        }
+
+        // Advance to the next sibling
+        cur = cmd.next.clone();
+    }
+    Ok(())
+}
+
+/// Compile provided scripts into a sequence of commands.
 fn compile_sequence(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
@@ -2167,5 +2217,94 @@ mod tests {
 
         // The map should remain empty since the label is None
         assert_eq!(context.label_to_command_map.len(), 0);
+    }
+
+    #[test]
+    fn test_branch_target_resolved() {
+        let target = command_with_data(CommandData::Label(Some("end".to_string())));
+        target.borrow_mut().code = ':';
+
+        let branch = command_with_data(CommandData::Label(Some("end".to_string())));
+        branch.borrow_mut().code = 'b';
+
+        let head = link_commands(vec![branch.clone(), target.clone()]);
+        let mut context = ProcessingContext::default();
+
+        populate_label_map(head.clone(), &mut context);
+        let result = resolve_branch_targets(head.clone(), &mut context);
+        assert!(result.is_ok());
+
+        match &branch.borrow().data {
+            CommandData::BranchTarget(Some(ptr)) => {
+                assert!(Rc::ptr_eq(ptr, &target));
+            }
+            _ => panic!("Expected BranchTarget(Some(...))"),
+        }
+    }
+
+    // resolve_branch_targets
+    #[test]
+    fn test_branch_target_missing_label_gives_error() {
+        let branch = command_with_data(CommandData::Label(Some("nope".to_string())));
+        branch.borrow_mut().code = 't';
+
+        let mut context = ProcessingContext::default();
+        let result = resolve_branch_targets(Some(branch.clone()), &mut context);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("undefined label `nope'"));
+    }
+
+    #[test]
+    fn test_branch_with_no_label_resolves_to_none() {
+        let branch = command_with_data(CommandData::Label(None));
+        branch.borrow_mut().code = 'b';
+
+        let mut context = ProcessingContext::default();
+        let result = resolve_branch_targets(Some(branch.clone()), &mut context);
+
+        assert!(result.is_ok());
+        match &branch.borrow().data {
+            CommandData::BranchTarget(None) => {} // ok
+            _ => panic!("Expected BranchTarget(None)"),
+        }
+    }
+
+    #[test]
+    fn test_non_branch_label_is_unchanged() {
+        let cmd = command_with_data(CommandData::Label(Some("unchanged".to_string())));
+        cmd.borrow_mut().code = 'q'; // not a branch command
+
+        let mut context = ProcessingContext::default();
+        let result = resolve_branch_targets(Some(cmd.clone()), &mut context);
+        assert!(result.is_ok());
+
+        match &cmd.borrow().data {
+            CommandData::Label(Some(label)) => assert_eq!(label, "unchanged"),
+            _ => panic!("Expected Label(Some(...)) to remain unchanged"),
+        }
+    }
+
+    #[test]
+    fn test_branch_in_nested_block() {
+        let label = command_with_data(CommandData::Label(Some("inner".to_string())));
+        label.borrow_mut().code = ':';
+
+        let branch = command_with_data(CommandData::Label(Some("inner".to_string())));
+        branch.borrow_mut().code = 't';
+
+        let block = command_with_data(CommandData::Block(Some(label.clone())));
+        let head = link_commands(vec![branch.clone(), block]);
+
+        let mut context = ProcessingContext::default();
+        populate_label_map(Some(label.clone()), &mut context);
+        let result = resolve_branch_targets(head.clone(), &mut context);
+
+        assert!(result.is_ok());
+        match &branch.borrow().data {
+            CommandData::BranchTarget(Some(ptr)) => assert!(Rc::ptr_eq(ptr, &label)),
+            _ => panic!("Expected BranchTarget(Some(...))"),
+        }
     }
 }
