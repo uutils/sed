@@ -209,6 +209,8 @@ pub fn compile(
     }
     patch_block_endings(result.clone());
 
+    populate_label_map(result.clone(), context);
+
     // Comment-out the following to show the compiled script.
     #[cfg(any())]
     dbg!(&result);
@@ -266,6 +268,30 @@ fn patch_block_endings(head: Option<Rc<RefCell<Command>>>) {
 
     // top-level has no parent, so pass None
     patch_block_endings_to_parent(head, None);
+}
+
+/// Populate the context's label map with references to associated commands.
+fn populate_label_map(mut cur: Option<Rc<RefCell<Command>>>, context: &mut ProcessingContext) {
+    while let Some(rc_cmd) = cur {
+        // Borrow mutably just long enough to inspect/rewire this node
+        let cmd = rc_cmd.borrow_mut();
+
+        // Extract any label to insert after borrow ends
+        let maybe_label = match &cmd.data {
+            CommandData::Block(Some(sub_head)) => {
+                populate_label_map(Some(sub_head.clone()), context);
+                None
+            }
+            CommandData::Label(Some(label)) => Some(label.clone()),
+            _ => None,
+        };
+
+        if let Some(label) = maybe_label {
+            context.label_to_command_map.insert(label, rc_cmd.clone());
+        }
+
+        cur = cmd.next.clone();
+    }
 }
 
 // Compile provided scripts into a thread of commands
@@ -1902,7 +1928,7 @@ mod tests {
     // patch_block_endings
 
     // Create a command with the specified code.
-    fn cmd(code: char) -> Rc<RefCell<Command>> {
+    fn command_with_code(code: char) -> Rc<RefCell<Command>> {
         Rc::new(RefCell::new(Command {
             code,
             ..Default::default()
@@ -1910,7 +1936,7 @@ mod tests {
     }
 
     // Link the vector of passed commands into a list, returning head.
-    fn link(cmds: Vec<Rc<RefCell<Command>>>) -> Option<Rc<RefCell<Command>>> {
+    fn link_commands(cmds: Vec<Rc<RefCell<Command>>>) -> Option<Rc<RefCell<Command>>> {
         for i in 0..cmds.len().saturating_sub(1) {
             cmds[i].borrow_mut().next = Some(cmds[i + 1].clone());
         }
@@ -1930,9 +1956,9 @@ mod tests {
 
     #[test]
     fn test_flat_chain() {
-        let a = cmd('a');
-        let b = cmd('b');
-        let head = link(vec![a.clone(), b.clone()]);
+        let a = command_with_code('a');
+        let b = command_with_code('b');
+        let head = link_commands(vec![a.clone(), b.clone()]);
 
         patch_block_endings(head.clone());
 
@@ -1942,14 +1968,14 @@ mod tests {
     #[test]
     fn test_simple_block_relinks_tail() {
         // a ; { x ; y ; } b
-        let a = cmd('a');
-        let block = cmd('{');
-        let x = cmd('x');
-        let y = cmd('y');
-        let b = cmd('b');
+        let a = command_with_code('a');
+        let block = command_with_code('{');
+        let x = command_with_code('x');
+        let y = command_with_code('y');
+        let b = command_with_code('b');
 
-        let head = link(vec![a.clone(), block.clone(), b.clone()]);
-        let sub_head = link(vec![x.clone(), y.clone()]);
+        let head = link_commands(vec![a.clone(), block.clone(), b.clone()]);
+        let sub_head = link_commands(vec![x.clone(), y.clone()]);
         block.borrow_mut().data = CommandData::Block(sub_head.clone());
 
         patch_block_endings(head.clone());
@@ -1962,7 +1988,7 @@ mod tests {
 
     #[test]
     fn test_empty_block_no_panic() {
-        let a = cmd('a');
+        let a = command_with_code('a');
         a.borrow_mut().data = CommandData::Block(None);
 
         patch_block_endings(Some(a.clone()));
@@ -1982,18 +2008,18 @@ mod tests {
         //   n
         // }
         // b
-        let a = cmd('a');
-        let b = cmd('b');
-        let x = cmd('x');
-        let y = cmd('y');
-        let m = cmd('m');
-        let n = cmd('n');
-        let outer_block = cmd('{');
-        let inner_block = cmd('{');
+        let a = command_with_code('a');
+        let b = command_with_code('b');
+        let x = command_with_code('x');
+        let y = command_with_code('y');
+        let m = command_with_code('m');
+        let n = command_with_code('n');
+        let outer_block = command_with_code('{');
+        let inner_block = command_with_code('{');
 
-        let head = link(vec![a.clone(), outer_block.clone(), b.clone()]);
-        let outer = link(vec![m.clone(), inner_block.clone(), n.clone()]);
-        let inner = link(vec![x.clone(), y.clone()]);
+        let head = link_commands(vec![a.clone(), outer_block.clone(), b.clone()]);
+        let outer = link_commands(vec![m.clone(), inner_block.clone(), n.clone()]);
+        let inner = link_commands(vec![x.clone(), y.clone()]);
         outer_block.borrow_mut().data = CommandData::Block(outer.clone());
         inner_block.borrow_mut().data = CommandData::Block(inner.clone());
 
@@ -2013,15 +2039,15 @@ mod tests {
         //   }
         // }
         // b
-        let a = cmd('a');
-        let b = cmd('b');
-        let x = cmd('x');
-        let outer_block = cmd('{');
-        let inner_block = cmd('{');
+        let a = command_with_code('a');
+        let b = command_with_code('b');
+        let x = command_with_code('x');
+        let outer_block = command_with_code('{');
+        let inner_block = command_with_code('{');
 
-        let head = link(vec![a.clone(), outer_block.clone(), b.clone()]);
-        let outer = link(vec![inner_block.clone()]);
-        let inner = link(vec![x.clone()]);
+        let head = link_commands(vec![a.clone(), outer_block.clone(), b.clone()]);
+        let outer = link_commands(vec![inner_block.clone()]);
+        let inner = link_commands(vec![x.clone()]);
         outer_block.borrow_mut().data = CommandData::Block(outer.clone());
         inner_block.borrow_mut().data = CommandData::Block(inner.clone());
 
@@ -2071,5 +2097,75 @@ mod tests {
             }
             _ => panic!("Expected CommandData::Label(None)"),
         }
+    }
+
+    // populate_label_map
+    fn command_with_data(data: CommandData) -> Rc<RefCell<Command>> {
+        Rc::new(RefCell::new(Command {
+            data,
+            ..Default::default()
+        }))
+    }
+
+    #[test]
+    fn test_single_label() {
+        let cmd = command_with_data(CommandData::Label(Some("start".to_string())));
+        let mut context = ProcessingContext::default();
+
+        populate_label_map(Some(cmd.clone()), &mut context);
+
+        assert_eq!(context.label_to_command_map.len(), 1);
+        assert!(context.label_to_command_map.contains_key("start"));
+        assert!(Rc::ptr_eq(&context.label_to_command_map["start"], &cmd));
+    }
+
+    #[test]
+    fn test_label_inside_block() {
+        let nested = command_with_data(CommandData::Label(Some("inside".to_string())));
+        let block = command_with_data(CommandData::Block(Some(nested.clone())));
+        let mut context = ProcessingContext::default();
+
+        populate_label_map(Some(block.clone()), &mut context);
+
+        assert_eq!(context.label_to_command_map.len(), 1);
+        assert!(context.label_to_command_map.contains_key("inside"));
+        assert!(Rc::ptr_eq(&context.label_to_command_map["inside"], &nested));
+    }
+
+    #[test]
+    fn test_multiple_labels() {
+        let a = command_with_data(CommandData::Label(Some("a".to_string())));
+        let b = command_with_data(CommandData::Label(Some("b".to_string())));
+        let head = link_commands(vec![a.clone(), b.clone()]);
+
+        let mut context = ProcessingContext::default();
+        populate_label_map(head, &mut context);
+
+        assert_eq!(context.label_to_command_map.len(), 2);
+        assert!(context.label_to_command_map.contains_key("a"));
+        assert!(context.label_to_command_map.contains_key("b"));
+    }
+
+    #[test]
+    fn test_no_labels() {
+        let a = command_with_data(CommandData::None);
+        let b = command_with_data(CommandData::None);
+        let head = link_commands(vec![a.clone(), b.clone()]);
+
+        let mut context = ProcessingContext::default();
+        populate_label_map(head, &mut context);
+
+        assert_eq!(context.label_to_command_map.len(), 0);
+    }
+
+    #[test]
+    fn test_label_none_is_ignored() {
+        let cmd = command_with_data(CommandData::Label(None));
+        let mut context = ProcessingContext::default();
+
+        populate_label_map(Some(cmd.clone()), &mut context);
+
+        // The map should remain empty since the label is None
+        assert_eq!(context.label_to_command_map.len(), 0);
     }
 }
