@@ -276,15 +276,30 @@ fn process_file(
 
             match command.code {
                 '{' => {
-                    current = Some(command.data.get_subcommand());
+                    // Block begin; start processing the enclosed ones.
+                    let block_body = {
+                        match &mut command.data {
+                            CommandData::Subcommand(block) => block.clone(),
+                            _ => panic!("Expected Subcommand command data"),
+                        }
+                    };
+                    context.processing_block_stack.push(command.next.clone());
+                    current = block_body;
+                    continue;
+                }
+                '}' => {
+                    // Block end: continue with the block's next command.
+                    current = context
+                        .processing_block_stack
+                        .pop()
+                        .expect("empty block command stack");
                     continue;
                 }
                 'a' => {
                     // TODO
                 }
                 'b' => {
-                    current = Some(command.data.get_subcommand());
-                    continue;
+                    // TODO
                 }
                 'c' => {
                     // TODO
@@ -403,9 +418,6 @@ fn process_file(
                 }
                 ':' => {
                     // TODO
-                }
-                '}' => {
-                    // Nothing to do here
                 }
                 '=' => {
                     // TODO

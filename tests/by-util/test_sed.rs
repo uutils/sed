@@ -194,6 +194,7 @@ check_output!(
     ["-n", "/1_4/,/10/!p", LINES1]
 );
 check_output!(addr_empty_re_reuse, ["-n", "/_2/,//p", LINES1, LINES2]);
+check_output!(addr_simple_negation, ["-e", r"4,12!s/^/^/", LINES1]);
 
 // Test substitutions
 check_output!(subst_any, ["-e", r"s/./X/g", LINES1]);
@@ -250,17 +251,8 @@ check_output!(
 );
 check_output!(trans_no_new_line, ["-e", r"y/l/L/", NO_NEW_LINE]);
 check_output!(trans_newline, ["-e", r"1N;2y/\n/X/", LINES1]);
-
-// TODO: Enable when "{}" is implemented.
-#[cfg(any())]
 check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
-
-// TODO: Enable when "{}" is implemented.
-#[cfg(any())]
 check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
-
-// TODO: Enable when "{}" is implemented.
-#[cfg(any())]
 check_output!(print_to_newline, ["-n", r"1{;N;P;P;p;}", LINES1]);
 
 check_output!(pattern_next_print, ["-n", r"N;N;P", LINES1]);
@@ -286,3 +278,78 @@ check_output!(pattern_next_print_output, ["-e", r"4n;p", LINES1]);
 check_output!(pattern_next_print_no_output, ["-n", "-e", r"4n;p", LINES1]);
 check_output!(pattern_quit, [r"5q", LINES1]);
 check_output!(pattern_quit_2, [r"5q", LINES1, LINES2]);
+
+check_output!(
+    block_simple_range,
+    [
+        "-e",
+        r#"
+4,12 {
+	s/^/^/
+	s/$/$/
+	s/_/T/
+}"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    block_negative_range,
+    [
+        "-e",
+        r#"
+4,12 !{
+	s/^/^/
+	s/$/$/
+	s/_/T/
+}"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    block_negative_range_2,
+    [
+        "-e",
+        r#"
+4,12 !{
+	s/^/^/
+	s/$/$/
+	s/_/T/
+}"#,
+        LINES1,
+        LINES2
+    ]
+);
+
+check_output!(
+    block_nested_selection,
+    [
+        "-e",
+        r#"
+4,12 {
+	s/^/^/
+	/6/,/10/ {
+		s/$/$/
+		/8/ s/_/T/
+	}
+}"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    block_nested_negative_selection,
+    [
+        "-e",
+        r#"
+4,12 !{
+	s/^/^/
+	/6/,/10/ !{
+		s/$/$/
+		/8/ !s/_/T/
+	}
+}"#,
+        LINES1
+    ]
+);

@@ -204,6 +204,8 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         saved_regex: const { RefCell::new(None) },
         input_action: None,
         hold: StringSpace::default(),
+        parsed_block_nesting: 0,
+        processing_block_stack: Vec::new(),
     }
 }
 

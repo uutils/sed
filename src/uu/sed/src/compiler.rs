@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use uucore::error::UResult;
+use uucore::error::{UResult, USimpleError};
 
 // A global, immutable map of command properties, initialized on first access
 static CMD_MAP: Lazy<HashMap<char, CommandSpec>> = Lazy::new(build_command_map);
@@ -35,7 +35,7 @@ enum CommandArgs {
     Empty,         // d D g G h H l n N p P q x = \0
     Text,          // a c i
     NonSelect,     // !
-    Group,         // {
+    BeginGroup,    // {
     EndGroup,      // }
     Comment,       // #
     Branch,        // b t
@@ -60,7 +60,7 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
         CommandSpec {
             code: '{',
             n_addr: 2,
-            args: CommandArgs::Group,
+            args: CommandArgs::BeginGroup,
         },
         CommandSpec {
             code: '}',
@@ -204,12 +204,21 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
 
 pub fn compile(
     scripts: Vec<ScriptValue>,
-    processing_context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<Option<Rc<RefCell<Command>>>> {
     let mut make_providers = ScriptLineProvider::new(scripts);
 
     let mut empty_line = ScriptCharProvider::new("");
-    let result = compile_thread(&mut make_providers, &mut empty_line, processing_context)?;
+    let result = compile_thread(&mut make_providers, &mut empty_line, context)?;
+
+    if context.parsed_block_nesting > 0 {
+        return Err(USimpleError::new(1, "unmatched `{'"));
+    }
+
+    // Comment-out the following to show the compiled script.
+    #[cfg(any())]
+    dbg!(&result);
+
     // TODO: fix-up labels, check used labels, setup append & match structures
     Ok(result)
 }
@@ -218,7 +227,7 @@ pub fn compile(
 fn compile_thread(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
-    context: &ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<Option<Rc<RefCell<Command>>>> {
     let mut head: Option<Rc<RefCell<Command>>> = None;
     let mut tail: Option<Rc<RefCell<Command>>> = None;
@@ -226,7 +235,7 @@ fn compile_thread(
     loop {
         line.eat_spaces();
         if line.eol() || line.current() == '#' {
-            // TODO: set processing_context.quiet for StringVal starting with #n
+            // TODO: set context.quiet for StringVal starting with #n
             match lines.next_line()? {
                 None => {
                     return Ok(head);
@@ -243,14 +252,29 @@ fn compile_thread(
 
         let mut cmd = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(lines, line, &mut cmd, context)?;
+        line.eat_spaces();
         let mut cmd_spec = get_cmd_spec(lines, line, n_addr)?;
 
         // The ! command shall be followed by another one
-        if cmd_spec.args == CommandArgs::NonSelect {
-            line.advance();
-            line.eat_spaces();
-            cmd.borrow_mut().non_select = true;
-            cmd_spec = get_cmd_spec(lines, line, n_addr)?;
+        match cmd_spec.args {
+            CommandArgs::NonSelect => {
+                line.advance();
+                line.eat_spaces();
+                cmd.borrow_mut().non_select = true;
+                cmd_spec = get_cmd_spec(lines, line, n_addr)?;
+            }
+            CommandArgs::EndGroup => {
+                if context.parsed_block_nesting == 0 {
+                    return compilation_error(lines, line, "unexpected `}'");
+                }
+                context.parsed_block_nesting -= 1;
+                line.advance();
+                line.eat_spaces();
+                let mut cmd_ref = cmd.borrow_mut();
+                parse_command_ending(lines, line, &mut cmd_ref)?;
+                return Ok(head);
+            }
+            _ => (),
         }
 
         compile_command(lines, line, &mut cmd, cmd_spec, context)?;
@@ -693,8 +717,11 @@ pub fn compile_subst_flags(
     subst.ignore_case = false;
     subst.write_file = None;
 
-    while !line.eol() {
+    loop {
         line.eat_spaces();
+        if line.eol() {
+            break;
+        }
 
         match line.current() {
             'g' => {
@@ -801,7 +828,7 @@ fn compile_command(
     line: &mut ScriptCharProvider,
     cmd: &mut Rc<RefCell<Command>>,
     cmd_spec: &'static CommandSpec,
-    context: &ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<()> {
     let mut cmd = cmd.borrow_mut();
     cmd.code = line.current();
@@ -825,7 +852,12 @@ fn compile_command(
         // TODO
         CommandArgs::Text => { // a c i
         }
-        CommandArgs::Group => { // {
+        CommandArgs::BeginGroup => {
+            // {
+            line.advance(); // move past '{'
+            context.parsed_block_nesting += 1;
+            let block_body = compile_thread(lines, line, context)?;
+            cmd.data = CommandData::Subcommand(block_body);
         }
         CommandArgs::EndGroup => { // }
         }
@@ -859,7 +891,7 @@ fn get_cmd_spec(
     let opt_cmd_spec = lookup_command(ch);
 
     if opt_cmd_spec.is_none() {
-        return compilation_error(lines, line, format!("invalid command code {}", ch));
+        return compilation_error(lines, line, format!("invalid command code `{}'", ch));
     }
 
     let cmd_spec = opt_cmd_spec.unwrap();
@@ -923,7 +955,7 @@ mod tests {
     fn test_lookup_group_command() {
         let cmd = lookup_command('{').unwrap();
         assert_eq!(cmd.n_addr, 2);
-        assert_eq!(cmd.args, CommandArgs::Group);
+        assert_eq!(cmd.args, CommandArgs::BeginGroup);
     }
 
     #[test]
@@ -1051,7 +1083,7 @@ mod tests {
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("script.sed:2:0: error: invalid command code @"));
+        assert!(msg.contains("script.sed:2:0: error: invalid command code `@'"));
     }
 
     #[test]
@@ -1409,7 +1441,7 @@ mod tests {
     #[test]
     fn test_compile_thread_empty_input() {
         let mut provider = make_provider(&[]);
-        let mut opts = &ctx();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         assert!(result.is_none());
@@ -1418,7 +1450,7 @@ mod tests {
     #[test]
     fn test_compile_thread_comment_only() {
         let mut provider = make_provider(&["# comment", "   ", ";;"]);
-        let mut opts = &ctx();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         assert!(result.is_none());
@@ -1427,7 +1459,7 @@ mod tests {
     #[test]
     fn test_compile_thread_single_command() {
         let mut provider = make_provider(&["42q"]);
-        let mut opts = &ctx();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1451,7 +1483,7 @@ mod tests {
     #[test]
     fn test_compile_thread_non_selected_single_command() {
         let mut provider = make_provider(&["42!p"]);
-        let mut opts = &ctx();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1475,7 +1507,7 @@ mod tests {
     #[test]
     fn test_compile_thread_multiple_lines() {
         let mut provider = make_provider(&["1q", "2d"]);
-        let mut opts = &ctx();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
@@ -1491,7 +1523,7 @@ mod tests {
     #[test]
     fn test_compile_thread_single_line_multiple_commands() {
         let mut provider = make_provider(&["1q;2d"]);
-        let mut opts = &ctx();
+        let mut opts = ctx();
 
         let result = compile_thread(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
