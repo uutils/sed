@@ -11,14 +11,19 @@
 pub mod command;
 pub mod compiler;
 pub mod delimited_parser;
+pub mod fast_io;
+pub mod in_place;
+pub mod named_writer;
 pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;
 
-use crate::command::{CliOptions, ScriptValue};
+use crate::command::{ProcessingContext, ScriptValue, StringSpace};
 use crate::compiler::compile;
-use crate::processor::process;
+use crate::processor::process_all_files;
 use clap::{Arg, ArgMatches, Command, arg};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
 use uucore::format_usage;
@@ -30,10 +35,10 @@ const USAGE: &str = "sed [OPTION]... [script] [file]...";
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
     let (scripts, files) = get_scripts_files(&matches)?;
-    let mut cli_options = build_context(&matches);
+    let mut processing_context = build_context(&matches);
 
-    let executable = compile(scripts, &mut cli_options)?;
-    process(executable, files, &mut cli_options)?;
+    let executable = compile(scripts, &mut processing_context)?;
+    process_all_files(executable, files, processing_context)?;
     Ok(())
 }
 
@@ -169,12 +174,12 @@ fn get_scripts_files(matches: &ArgMatches) -> UResult<(Vec<ScriptValue>, Vec<Pat
     Ok((scripts, files))
 }
 
-// Parse CLI flag arguments and return a CliOptions struct based on them
-fn build_context(matches: &ArgMatches) -> CliOptions {
-    CliOptions {
+// Parse CLI flag arguments and return a ProcessingContext struct based on them
+fn build_context(matches: &ArgMatches) -> ProcessingContext {
+    ProcessingContext {
         all_output_files: matches.get_flag("all-output-files"),
         debug: matches.get_flag("debug"),
-        regexp_extended: matches.get_flag("regexp-extended"),
+        regex_extended: matches.get_flag("regexp-extended"),
         follow_symlinks: matches.get_flag("follow-symlinks"),
         in_place: matches.contains_id("in-place"),
         in_place_suffix: matches
@@ -190,6 +195,19 @@ fn build_context(matches: &ArgMatches) -> CliOptions {
         sandbox: matches.get_flag("sandbox"),
         unbuffered: matches.get_flag("unbuffered"),
         null_data: matches.get_flag("null-data"),
+
+        // Other context
+        line_number: 0,
+        last_address: false,
+        last_line: false,
+        last_file: false,
+        stop_processing: false,
+        saved_regex: const { RefCell::new(None) },
+        input_action: None,
+        hold: StringSpace::default(),
+        parsed_block_nesting: 0,
+        label_to_command_map: HashMap::new(),
+        substitution_made: false,
     }
 }
 
@@ -303,7 +321,7 @@ mod tests {
 
         assert!(!ctx.all_output_files);
         assert!(!ctx.debug);
-        assert!(!ctx.regexp_extended);
+        assert!(!ctx.regex_extended);
         assert!(!ctx.follow_symlinks);
         assert!(!ctx.in_place);
         assert_eq!(ctx.in_place_suffix, None);
@@ -338,7 +356,7 @@ mod tests {
 
         assert!(ctx.all_output_files);
         assert!(ctx.debug);
-        assert!(ctx.regexp_extended);
+        assert!(ctx.regex_extended);
         assert!(ctx.follow_symlinks);
         assert!(ctx.in_place);
         assert!(ctx.in_place_suffix.is_none());

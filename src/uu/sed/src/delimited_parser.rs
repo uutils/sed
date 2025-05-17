@@ -101,7 +101,7 @@ fn create_control_char(x: char) -> Option<char> {
 /// At entry line.current() must have advanced after the `\\`.
 /// Advance line to the first character not part of the escape.
 /// Return `None` if an invalid escape has been specified.
-fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
+pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
     match line.current() {
         'a' => {
             line.advance();
@@ -780,6 +780,14 @@ mod tests {
         let (lines, mut line) = make_providers("/ab\\/c/");
         let parsed = parse_regex(&lines, &mut line).unwrap();
         assert_eq!(parsed, "ab/c");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_regex_with_capture() {
+        let (lines, mut line) = make_providers(r"/\(.\)/c/");
+        let parsed = parse_regex(&lines, &mut line).unwrap();
+        assert_eq!(parsed, r"\(.\)");
         assert_eq!(line.current(), '/');
     }
 
