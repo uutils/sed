@@ -61,8 +61,6 @@ pub struct ProcessingContext {
     pub hold: StringSpace,
     /// Nesting of { } at compile time
     pub parsed_block_nesting: usize,
-    /// Nested blocks at run time
-    pub processing_block_stack: Vec<Option<Rc<RefCell<Command>>>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -283,10 +281,11 @@ impl Default for Command {
 /// Command-specific data
 pub enum CommandData {
     None,
-    Subcommand(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't', '{'
-    Substitution(Box<Substitution>),          // Substitute command 's'
-    Transliteration(Box<Transliteration>),    // Transliteration command 'y'
-    NamedWriter(Box<NamedWriter>),            // File descriptor for 'w'
+    Block(Option<Rc<RefCell<Command>>>), // Commands for '{'
+    BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't'
+    Substitution(Box<Substitution>),     // Substitute command 's'
+    Transliteration(Box<Transliteration>), // Transliteration command 'y'
+    NamedWriter(Box<NamedWriter>),       // File descriptor for 'w'
 }
 
 #[derive(Debug)]

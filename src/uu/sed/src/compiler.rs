@@ -214,6 +214,7 @@ pub fn compile(
     if context.parsed_block_nesting > 0 {
         return Err(USimpleError::new(1, "unmatched `{'"));
     }
+    patch_block_endings(result.clone());
 
     // Comment-out the following to show the compiled script.
     #[cfg(any())]
@@ -221,6 +222,57 @@ pub fn compile(
 
     // TODO: fix-up labels, check used labels, setup append & match structures
     Ok(result)
+}
+
+/// For every Command in the top-level `head` chain, look for
+/// `CommandData::Block(Some(sub_head))`.  Recursively patch
+/// the sub-chain, then splice its tail back to the original
+/// “next” pointer of the *parent* (falling back to its own
+/// parent_next if its own next was `None`).
+fn patch_block_endings(head: Option<Rc<RefCell<Command>>>) {
+    fn patch_block_endings_to_parent(
+        mut cur: Option<Rc<RefCell<Command>>>,
+        parent_next: Option<Rc<RefCell<Command>>>,
+    ) {
+        while let Some(rc_cmd) = cur {
+            // Borrow mutably just long enough to inspect/rewire this node
+            let cmd = rc_cmd.borrow_mut();
+            // Save this node’s own next pointer
+            let own_next = cmd.next.clone();
+            // Decide what “splice target” to use:
+            //   - if this node has its own_next, use that
+            //   - otherwise, fall back to parent_next
+            let splice_target = own_next.clone().or(parent_next.clone());
+
+            // If it has a sub-block, recurse and then patch its tail
+            if let CommandData::Block(Some(ref sub_head)) = cmd.data {
+                // 1) recurse into the sub-chain, passing along splice_target
+                patch_block_endings_to_parent(Some(sub_head.clone()), splice_target.clone());
+
+                // 2) find the tail of that sub-chain
+                let mut tail = sub_head.clone();
+                loop {
+                    let next_in_sub = tail.borrow().next.clone();
+                    match next_in_sub {
+                        Some(n) => tail = n,
+                        None => break,
+                    }
+                }
+
+                // 3) splice the tail’s `.next` to splice_target
+                tail.borrow_mut().next = splice_target.clone();
+            }
+
+            // drop the borrow before moving on
+            drop(cmd);
+
+            // advance to the next sibling in this level
+            cur = own_next;
+        }
+    }
+
+    // top-level has no parent, so pass None
+    patch_block_endings_to_parent(head, None);
 }
 
 // Compile provided scripts into a thread of commands
@@ -857,7 +909,7 @@ fn compile_command(
             line.advance(); // move past '{'
             context.parsed_block_nesting += 1;
             let block_body = compile_thread(lines, line, context)?;
-            cmd.data = CommandData::Subcommand(block_body);
+            cmd.data = CommandData::Block(block_body);
         }
         CommandArgs::EndGroup => { // }
         }
@@ -1841,5 +1893,138 @@ mod tests {
     #[test]
     fn test_trailing_backslash_is_preserved() {
         assert_eq!(bre_to_ere(r"abc\"), r"abc\");
+    }
+
+    // patch_block_endings
+
+    // Create a command with the specified code.
+    fn cmd(code: char) -> Rc<RefCell<Command>> {
+        Rc::new(RefCell::new(Command {
+            code,
+            ..Default::default()
+        }))
+    }
+
+    // Link the vector of passed commands into a list, returning head.
+    fn link(cmds: Vec<Rc<RefCell<Command>>>) -> Option<Rc<RefCell<Command>>> {
+        for i in 0..cmds.len().saturating_sub(1) {
+            cmds[i].borrow_mut().next = Some(cmds[i + 1].clone());
+        }
+        cmds.first().cloned()
+    }
+
+    // Return the command codes along the passed linked list.
+    fn collect_codes(mut head: Option<Rc<RefCell<Command>>>) -> Vec<char> {
+        let mut result = Vec::new();
+        while let Some(cmd) = head {
+            let cmd_ref = cmd.borrow();
+            result.push(cmd_ref.code);
+            head = cmd_ref.next.clone();
+        }
+        result
+    }
+
+    #[test]
+    fn test_flat_chain() {
+        let a = cmd('a');
+        let b = cmd('b');
+        let head = link(vec![a.clone(), b.clone()]);
+
+        patch_block_endings(head.clone());
+
+        assert_eq!(collect_codes(head), vec!['a', 'b']);
+    }
+
+    #[test]
+    fn test_simple_block_relinks_tail() {
+        // a ; { x ; y ; } b
+        let a = cmd('a');
+        let block = cmd('{');
+        let x = cmd('x');
+        let y = cmd('y');
+        let b = cmd('b');
+
+        let head = link(vec![a.clone(), block.clone(), b.clone()]);
+        let sub_head = link(vec![x.clone(), y.clone()]);
+        block.borrow_mut().data = CommandData::Block(sub_head.clone());
+
+        patch_block_endings(head.clone());
+
+        // Expect x -> y -> b
+        assert_eq!(collect_codes(sub_head), vec!['x', 'y', 'b']);
+        // Expect a -> { -> b still valid
+        assert_eq!(collect_codes(Some(a)), vec!['a', '{', 'b']);
+    }
+
+    #[test]
+    fn test_empty_block_no_panic() {
+        let a = cmd('a');
+        a.borrow_mut().data = CommandData::Block(None);
+
+        patch_block_endings(Some(a.clone()));
+
+        assert_eq!(collect_codes(Some(a)), vec!['a']);
+    }
+
+    #[test]
+    fn test_nested_blocks() {
+        // a
+        // {
+        //   m
+        //   {
+        //     x
+        //     y
+        //   }
+        //   n
+        // }
+        // b
+        let a = cmd('a');
+        let b = cmd('b');
+        let x = cmd('x');
+        let y = cmd('y');
+        let m = cmd('m');
+        let n = cmd('n');
+        let outer_block = cmd('{');
+        let inner_block = cmd('{');
+
+        let head = link(vec![a.clone(), outer_block.clone(), b.clone()]);
+        let outer = link(vec![m.clone(), inner_block.clone(), n.clone()]);
+        let inner = link(vec![x.clone(), y.clone()]);
+        outer_block.borrow_mut().data = CommandData::Block(outer.clone());
+        inner_block.borrow_mut().data = CommandData::Block(inner.clone());
+
+        patch_block_endings(head.clone());
+
+        assert_eq!(collect_codes(head), vec!['a', '{', 'b']);
+        assert_eq!(collect_codes(inner), vec!['x', 'y', 'n', 'b']);
+        assert_eq!(collect_codes(outer), vec!['m', '{', 'n', 'b']);
+    }
+
+    #[test]
+    fn test_empty_nested_blocks() {
+        // a
+        // {
+        //   {
+        //     x
+        //   }
+        // }
+        // b
+        let a = cmd('a');
+        let b = cmd('b');
+        let x = cmd('x');
+        let outer_block = cmd('{');
+        let inner_block = cmd('{');
+
+        let head = link(vec![a.clone(), outer_block.clone(), b.clone()]);
+        let outer = link(vec![inner_block.clone()]);
+        let inner = link(vec![x.clone()]);
+        outer_block.borrow_mut().data = CommandData::Block(outer.clone());
+        inner_block.borrow_mut().data = CommandData::Block(inner.clone());
+
+        patch_block_endings(head.clone());
+
+        assert_eq!(collect_codes(head), vec!['a', '{', 'b']);
+        assert_eq!(collect_codes(outer), vec!['{', 'b']);
+        assert_eq!(collect_codes(inner), vec!['x', 'b']);
     }
 }

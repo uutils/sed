@@ -277,23 +277,14 @@ fn process_file(
             match command.code {
                 '{' => {
                     // Block begin; start processing the enclosed ones.
-                    let block_body = {
-                        match &mut command.data {
-                            CommandData::Subcommand(block) => block.clone(),
-                            _ => panic!("Expected Subcommand command data"),
-                        }
+                    let CommandData::Block(body) = &command.data else {
+                        panic!("Expected Block command data");
                     };
-                    context.processing_block_stack.push(command.next.clone());
-                    current = block_body;
+                    current = body.clone();
                     continue;
                 }
                 '}' => {
-                    // Block end: continue with the block's next command.
-                    current = context
-                        .processing_block_stack
-                        .pop()
-                        .expect("empty block command stack");
-                    continue;
+                    // Block end: continue with the block's patched next.
                 }
                 'a' => {
                     // TODO

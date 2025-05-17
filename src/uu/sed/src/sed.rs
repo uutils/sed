@@ -205,7 +205,6 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         input_action: None,
         hold: StringSpace::default(),
         parsed_block_nesting: 0,
-        processing_block_stack: Vec::new(),
     }
 }
 
