@@ -212,7 +212,7 @@ pub fn compile(
     patch_block_endings(result.clone());
 
     // Link branch commands to the target label commands.
-    populate_label_map(result.clone(), context);
+    populate_label_map(result.clone(), context)?;
     resolve_branch_targets(result.clone(), context)?;
 
     // Comment-out the following to show the compiled script.
@@ -275,7 +275,10 @@ fn patch_block_endings(head: Option<Rc<RefCell<Command>>>) {
 }
 
 /// Populate the context's label map with references to associated commands.
-fn populate_label_map(mut cur: Option<Rc<RefCell<Command>>>, context: &mut ProcessingContext) {
+fn populate_label_map(
+    mut cur: Option<Rc<RefCell<Command>>>,
+    context: &mut ProcessingContext,
+) -> UResult<()> {
     while let Some(rc_cmd) = cur {
         // Borrow mutably just long enough to inspect/rewire this node
         let cmd = rc_cmd.borrow_mut();
@@ -283,7 +286,7 @@ fn populate_label_map(mut cur: Option<Rc<RefCell<Command>>>, context: &mut Proce
         // Extract any label to insert after borrow ends
         let maybe_label = match &cmd.data {
             CommandData::Block(Some(sub_head)) => {
-                populate_label_map(Some(sub_head.clone()), context);
+                populate_label_map(Some(sub_head.clone()), context)?;
                 None
             }
             CommandData::Label(Some(label)) => Some(label.clone()),
@@ -291,11 +294,17 @@ fn populate_label_map(mut cur: Option<Rc<RefCell<Command>>>, context: &mut Proce
         };
 
         if let Some(label) = maybe_label {
-            context.label_to_command_map.insert(label, rc_cmd.clone());
+            if cmd.code == ':' {
+                if context.label_to_command_map.contains_key(&label) {
+                    return Err(USimpleError::new(2, format!("duplicate label `{}'", label)));
+                }
+                context.label_to_command_map.insert(label, rc_cmd.clone());
+            }
         }
 
         cur = cmd.next.clone();
     }
+    Ok(())
 }
 
 /// Replace branch labels with references to the corresponding commands.
@@ -2160,9 +2169,10 @@ mod tests {
     #[test]
     fn test_single_label() {
         let cmd = command_with_data(CommandData::Label(Some("start".to_string())));
+        cmd.borrow_mut().code = ':';
         let mut context = ProcessingContext::default();
 
-        populate_label_map(Some(cmd.clone()), &mut context);
+        populate_label_map(Some(cmd.clone()), &mut context).unwrap();
 
         assert_eq!(context.label_to_command_map.len(), 1);
         assert!(context.label_to_command_map.contains_key("start"));
@@ -2172,10 +2182,11 @@ mod tests {
     #[test]
     fn test_label_inside_block() {
         let nested = command_with_data(CommandData::Label(Some("inside".to_string())));
+        nested.borrow_mut().code = ':';
         let block = command_with_data(CommandData::Block(Some(nested.clone())));
         let mut context = ProcessingContext::default();
 
-        populate_label_map(Some(block.clone()), &mut context);
+        populate_label_map(Some(block.clone()), &mut context).unwrap();
 
         assert_eq!(context.label_to_command_map.len(), 1);
         assert!(context.label_to_command_map.contains_key("inside"));
@@ -2185,11 +2196,13 @@ mod tests {
     #[test]
     fn test_multiple_labels() {
         let a = command_with_data(CommandData::Label(Some("a".to_string())));
+        a.borrow_mut().code = ':';
         let b = command_with_data(CommandData::Label(Some("b".to_string())));
+        b.borrow_mut().code = ':';
         let head = link_commands(vec![a.clone(), b.clone()]);
 
         let mut context = ProcessingContext::default();
-        populate_label_map(head, &mut context);
+        populate_label_map(head, &mut context).unwrap();
 
         assert_eq!(context.label_to_command_map.len(), 2);
         assert!(context.label_to_command_map.contains_key("a"));
@@ -2203,7 +2216,7 @@ mod tests {
         let head = link_commands(vec![a.clone(), b.clone()]);
 
         let mut context = ProcessingContext::default();
-        populate_label_map(head, &mut context);
+        populate_label_map(head, &mut context).unwrap();
 
         assert_eq!(context.label_to_command_map.len(), 0);
     }
@@ -2213,12 +2226,31 @@ mod tests {
         let cmd = command_with_data(CommandData::Label(None));
         let mut context = ProcessingContext::default();
 
-        populate_label_map(Some(cmd.clone()), &mut context);
+        populate_label_map(Some(cmd.clone()), &mut context).unwrap();
 
         // The map should remain empty since the label is None
         assert_eq!(context.label_to_command_map.len(), 0);
     }
 
+    #[test]
+    fn test_duplicate_label_gives_error() {
+        let a1 = command_with_data(CommandData::Label(Some("dup".to_string())));
+        a1.borrow_mut().code = ':';
+
+        let a2 = command_with_data(CommandData::Label(Some("dup".to_string())));
+        a2.borrow_mut().code = ':';
+
+        let head = link_commands(vec![a1.clone(), a2.clone()]);
+        let mut context = ProcessingContext::default();
+
+        let result = populate_label_map(head, &mut context);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("duplicate label `dup'"));
+    }
+
+    // resolve_branch_targets
     #[test]
     fn test_branch_target_resolved() {
         let target = command_with_data(CommandData::Label(Some("end".to_string())));
@@ -2230,7 +2262,7 @@ mod tests {
         let head = link_commands(vec![branch.clone(), target.clone()]);
         let mut context = ProcessingContext::default();
 
-        populate_label_map(head.clone(), &mut context);
+        populate_label_map(head.clone(), &mut context).unwrap();
         let result = resolve_branch_targets(head.clone(), &mut context);
         assert!(result.is_ok());
 
@@ -2242,7 +2274,6 @@ mod tests {
         }
     }
 
-    // resolve_branch_targets
     #[test]
     fn test_branch_target_missing_label_gives_error() {
         let branch = command_with_data(CommandData::Label(Some("nope".to_string())));
@@ -2298,7 +2329,7 @@ mod tests {
         let head = link_commands(vec![branch.clone(), block]);
 
         let mut context = ProcessingContext::default();
-        populate_label_map(Some(label.clone()), &mut context);
+        populate_label_map(Some(label.clone()), &mut context).unwrap();
         let result = resolve_branch_targets(head.clone(), &mut context);
 
         assert!(result.is_ok());

@@ -52,7 +52,10 @@ cargo run --release
   handling of regular expressions.
   This _sed_ program can also handle arbitrary byte sequences if no part of the
   input is treated as string.
-- The last line (`$`) address is interpreted as the last non-empty line of
+* The command will report an error and fail if duplicate labels are found
+  in the script.
+  This matches the BSD behavior. The GNU version accepts duplicate labels.
+* The last line (`$`) address is interpreted as the last non-empty line of
   the last file.  If files specified in subsequent arguments until the last
   one are empty, then the last line condition will never be triggered.
   This behavior is consistent with the
