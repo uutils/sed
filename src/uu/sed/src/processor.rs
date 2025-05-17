@@ -165,7 +165,7 @@ fn write_chunk(
 fn substitute(
     pattern: &mut IOChunk,
     sub: &mut Substitution,
-    context: &ProcessingContext,
+    context: &mut ProcessingContext,
     output: &mut OutputBuffer,
 ) -> UResult<()> {
     let mut count = 0;
@@ -208,6 +208,7 @@ fn substitute(
         if let Some(ref writer) = sub.write_file {
             writer.borrow_mut().write_line(pattern.as_str()?)?;
         }
+        context.substitution_made = true;
     }
 
     Ok(())
@@ -243,11 +244,11 @@ fn process_file(
     output: &mut OutputBuffer,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
-    // Loop over the input lines
+    // Loop over the input lines as pattern space.
     'lines: while let Some((mut pattern, last_line)) = reader.get_line()? {
         context.last_line = last_line;
         context.line_number += 1;
-
+        context.substitution_made = false;
         // Set the script command from which to start.
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
@@ -265,7 +266,7 @@ fn process_file(
             };
 
         // Loop over script commands.
-        while let Some(command_rc) = current {
+        while let Some(command_rc) = current.clone() {
             let mut command = command_rc.borrow_mut();
 
             if !applies(&mut command, &mut pattern, context)? {
@@ -290,7 +291,18 @@ fn process_file(
                     // TODO
                 }
                 'b' => {
-                    // TODO
+                    // Branch to the specified label or end if none is given.
+                    let CommandData::BranchTarget(target) = &command.data else {
+                        panic!("Expected BranchTarget command data");
+                    };
+                    if target.is_some() {
+                        // New command to execute
+                        current = target.clone();
+                        continue;
+                    } else {
+                        // Branch to the end of the script.
+                        break;
+                    }
                 }
                 'c' => {
                     // TODO
@@ -387,8 +399,22 @@ fn process_file(
 
                     substitute(&mut pattern, &mut *subst, context, output)?;
                 }
+                't' if !context.substitution_made => { /* Do nothing. */ }
                 't' => {
-                    // TODO
+                    // Branch to the specified label or end if none is given
+                    // if a substitution was made since last cycle or t.
+                    let CommandData::BranchTarget(target) = &command.data else {
+                        panic!("Expected BranchTarget command data");
+                    };
+                    context.substitution_made = false;
+                    if target.is_some() {
+                        // New command to execute
+                        current = target.clone();
+                        continue;
+                    } else {
+                        // Branch to the end of the script.
+                        break;
+                    }
                 }
                 'w' => {
                     // TODO
@@ -408,7 +434,7 @@ fn process_file(
                     transliterate(&mut pattern, trans)?;
                 }
                 ':' => {
-                    // TODO
+                    // Branch target; do nothing.
                 }
                 '=' => {
                     // TODO

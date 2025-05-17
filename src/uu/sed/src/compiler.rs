@@ -196,6 +196,7 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
     formats.into_iter().map(|f| (f.code, f)).collect()
 }
 
+/// Compile the scripts into an executable data structure.
 pub fn compile(
     scripts: Vec<ScriptValue>,
     context: &mut ProcessingContext,
@@ -205,7 +206,7 @@ pub fn compile(
     let mut empty_line = ScriptCharProvider::new("");
     let result = compile_sequence(&mut make_providers, &mut empty_line, context)?;
 
-    // Link the ends of
+    // Link the ends of command blocks to their following commands.
     if context.parsed_block_nesting > 0 {
         return Err(USimpleError::new(1, "unmatched `{'"));
     }
@@ -961,7 +962,7 @@ fn compile_label_command(
     line.eat_spaces(); // Skip any leading whitespace
 
     let mut label = String::new();
-    while !line.eol() && line.current().is_ascii_alphabetic() {
+    while !line.eol() && line.current().is_ascii_alphanumeric() {
         label.push(line.current());
         line.advance();
     }

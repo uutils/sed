@@ -207,6 +207,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         hold: StringSpace::default(),
         parsed_block_nesting: 0,
         label_to_command_map: HashMap::new(),
+        substitution_made: false,
     }
 }
 

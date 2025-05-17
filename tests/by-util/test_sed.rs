@@ -353,3 +353,115 @@ check_output!(
         LINES1
     ]
 );
+
+check_output!(
+    branch_plain,
+    [
+        "-n",
+        "-e",
+        r#"
+b label4
+:label3
+s/^/label3_/p
+b end
+:label4
+2,12b label1
+b label2
+:label1
+s/^/label1_/p
+b
+:label2
+s/^/label2_/p
+b label3
+:end
+"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    branch_conditional_simple,
+    [
+        "-n",
+        "-e",
+        r#"
+s/l1_/l2_/
+t ok
+b
+:ok
+s/^/tested /p
+"#,
+        LINES1,
+        LINES2
+    ]
+);
+
+// SunOS and GNU sed behave as follows: lines 9-$ aren"#,t printed at all
+check_output!(
+    branch_to_block,
+    [
+        "-n",
+        "-e",
+        r#"
+5,8b inside
+1,5 {
+	s/^/^/p
+	:inside
+	s/$/$/p
+}
+"#,
+        LINES1
+    ]
+);
+
+// Check that t clears the substitution done flag
+check_output!(
+    branch_test_clears,
+    [
+        "-n",
+        "-e",
+        r#"
+1,8s/^/^/
+t l1
+:l1
+t l2
+s/$/$/p
+b
+:l2
+s/^/ERROR/
+"#,
+        LINES1
+    ]
+);
+
+// Check that reading a line clears the substitution done flag
+check_output!(
+    branch_cycle_clears,
+    [
+        "-n",
+        "-e",
+        r#"
+t l2
+1,8s/^/^/p
+2,7N
+b
+:l2
+s/^/ERROR/p
+"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    branch_conditional_boundary,
+    [
+        "-e",
+        r#"
+{
+:b
+}
+s/l/m/
+tb"#,
+        LINES1
+    ]
+);

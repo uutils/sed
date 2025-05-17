@@ -63,6 +63,8 @@ pub struct ProcessingContext {
     pub parsed_block_nesting: usize,
     /// Command associated with each label
     pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
+    /// True if a substitution was made as specified in the t command
+    pub substitution_made: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

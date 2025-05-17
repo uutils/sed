@@ -60,6 +60,8 @@ cargo run --release
   one are empty, then the last line condition will never be triggered.
   This behavior is consistent with the
   [original implementation](https://github.com/dspinellis/unix-history-repo/blob/Research-V7/usr/src/cmd/sed/sed1.c#L665).
+* Labels are parsed for alphanumeric characters. The BSD version parses them
+  until the end of the line, preventing ; to be used as a separator.
 
 ## License
 
