@@ -568,35 +568,58 @@ fn bre_to_ere(pattern: &str) -> String {
     let mut result = String::with_capacity(pattern.len());
     let mut chars = pattern.chars().peekable();
 
+    let mut at_beginning = true;
+    let mut previous: Option<char> = None;
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.peek() {
                 Some('(') => {
                     chars.next();
-                    result.push('('); // group start
+                    result.push('('); // Group start
                 }
                 Some(')') => {
                     chars.next();
-                    result.push(')'); // group end
+                    result.push(')'); // Group end
                 }
                 Some(&next) => {
+                    // Preserve other escaped characters.
                     chars.next();
                     result.push('\\');
-                    result.push(next); // preserve other escaped characters
+                    result.push(next);
                 }
                 None => {
-                    result.push('\\'); // trailing backslash, keep it
+                    // Trailing backslash; keep it.
+                    result.push('\\');
                 }
             }
         } else {
             match c {
                 '+' | '?' | '{' | '}' | '|' | '(' | ')' => {
-                    result.push('\\'); // escape unsupported ERE metacharacters
+                    // Escape unsupported ERE metacharacters.
+                    result.push('\\');
+                    result.push(c);
+                }
+                '^' if !at_beginning && previous != Some('[') => {
+                    // In BREs ^ has special meaning at the beginning
+                    // and as bracket negation.  This heuristic escapes
+                    // all other uses, which per POSIX are valid in EREs.
+                    // "the ERE "a^b" is valid, but can never match because
+                    // the 'a' prevents the expression "^b" from matching
+                    // starting at the first character."
+                    // POSIX 9.4.9 ERE Expression Anchoring
+                    result.push('\\');
+                    result.push(c);
+                }
+                '$' if chars.peek().is_some() => {
+                    // Similarly for $ appearing not at the end.
+                    result.push('\\');
                     result.push(c);
                 }
                 _ => result.push(c),
             }
         }
+        at_beginning = false;
+        previous = Some(c);
     }
 
     result
@@ -1971,6 +1994,16 @@ mod tests {
     #[test]
     fn test_trailing_backslash_is_preserved() {
         assert_eq!(bre_to_ere(r"abc\"), r"abc\");
+    }
+
+    #[test]
+    fn test_caret_escaped_in_middle() {
+        assert_eq!(bre_to_ere(r"^a^[^x]c"), r"^a\^[^x]c");
+    }
+
+    #[test]
+    fn test_dollar_escaped_in_middle() {
+        assert_eq!(bre_to_ere(r"a$c$"), r"a\$c$");
     }
 
     // patch_block_endings
