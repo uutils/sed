@@ -29,7 +29,6 @@ feat_common_core = [
 ]
 
 [workspace.dependencies]
-atty = "0.2"
 bytesize = "2.0.0"
 chrono = { version = "0.4.37", default-features = false, features = [
   "clock",
@@ -52,7 +51,6 @@ xattr = "1.3.1"
 
 
 [dependencies]
-atty = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 clap_mangen = { workspace = true }

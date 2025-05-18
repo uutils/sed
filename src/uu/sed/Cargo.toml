@@ -13,7 +13,6 @@ categories = ["command-line-utilities"]
 
 
 [dependencies]
-atty = { workspace = true }
 clap = { workspace = true }
 once_cell = { workspace = true }
 regex = { workspace = true }
