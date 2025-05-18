@@ -15,6 +15,7 @@ use crate::named_writer::NamedWriter;
 
 use regex::Captures;
 use regex::Regex;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf; // For file descriptors and equivalent
@@ -65,6 +66,15 @@ pub struct ProcessingContext {
     pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
     /// True if a substitution was made as specified in the t command
     pub substitution_made: bool,
+    /// Elements to append at the end of each command processing cycle
+    pub append_elements: Vec<AppendElement>,
+}
+
+#[derive(Clone, Debug)]
+/// Elements that shall be appended at the end of each command processing cycle
+pub enum AppendElement {
+    Text(String),  // The specified text string
+    File(PathBuf), // The contents of the specified file
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -291,7 +301,7 @@ pub enum CommandData {
     Label(Option<String>),               // Label name for 'b', 't', ':'
     NamedWriter(Box<NamedWriter>),       // File descriptor for 'w'
     Substitution(Box<Substitution>),     // Substitute command 's'
-    Text(String),                        // Text for 'a', 'c', 'i'
+    Text(Cow<'static, str>),             // Text for 'a', 'c', 'i'
     Transliteration(Box<Transliteration>), // Transliteration command 'y'
 }
 

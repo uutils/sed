@@ -19,6 +19,7 @@ use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
 use regex::Regex;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem;
@@ -1027,7 +1028,7 @@ fn compile_text_command(
             break;
         }
     }
-    cmd.data = CommandData::Text(text);
+    cmd.data = CommandData::Text(Cow::Owned(text));
     Ok(())
 }
 

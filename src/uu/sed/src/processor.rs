@@ -9,8 +9,8 @@
 // file that was distributed with this source code.
 
 use crate::command::{
-    Address, AddressType, AddressValue, Command, CommandData, InputAction, ProcessingContext,
-    Substitution, Transliteration,
+    Address, AddressType, AddressValue, AppendElement, Command, CommandData, InputAction,
+    ProcessingContext, Substitution, Transliteration,
 };
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::in_place::InPlace;
@@ -237,6 +237,22 @@ fn transliterate(pattern: &mut IOChunk, trans: &Transliteration) -> UResult<()> 
     Ok(())
 }
 
+/// Output any data queued for output at the end of the cycle.
+fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> UResult<()> {
+    for elem in &context.append_elements {
+        match elem {
+            AppendElement::Text(text) => {
+                output.write_str(text.clone())?;
+            }
+            AppendElement::File(path) => {
+                output.copy_file(path)?;
+            }
+        }
+    }
+    context.append_elements.clear();
+    Ok(())
+}
+
 /// Process a single input file
 fn process_file(
     commands: &Option<Rc<RefCell<Command>>>,
@@ -288,7 +304,14 @@ fn process_file(
                     // Block end: continue with the block's patched next.
                 }
                 'a' => {
-                    // TODO
+                    // Write the text to standard output at a later point.
+                    let text = match &command.data {
+                        CommandData::Text(text) => text,
+                        _ => panic!("Expected Text command data"),
+                    };
+                    context
+                        .append_elements
+                        .push(AppendElement::Text(text.clone().into_owned()));
                 }
                 'b' => {
                     // Branch to the specified label or end if none is given.
@@ -305,7 +328,17 @@ fn process_file(
                     }
                 }
                 'c' => {
-                    // TODO
+                    // At range end replace pattern space with text and
+                    // start the next cycle.
+                    pattern.clear();
+                    if command.addr2.is_none() || context.last_address || context.last_line {
+                        let text = match &command.data {
+                            CommandData::Text(text) => text,
+                            _ => panic!("Expected Text command data"),
+                        };
+                        output.write_str(text.as_ref())?;
+                    }
+                    break;
                 }
                 'd' => {
                     // Delete the pattern space and start the next cycle.
@@ -353,7 +386,7 @@ fn process_file(
                         CommandData::Text(text) => text,
                         _ => panic!("Expected Text command data"),
                     };
-                    output.write_str(text)?;
+                    output.write_str(text.as_ref())?;
                 }
                 'l' => {
                     // TODO
@@ -362,6 +395,7 @@ fn process_file(
                     break;
                 }
                 'N' => {
+                    flush_appends(output, context)?;
                     // Append to pattern `\n` and the next line
                     // Rather than reading input here, which would result
                     // in a double borrow on reader, modify the action
@@ -454,6 +488,8 @@ fn process_file(
         if !context.quiet {
             write_chunk(output, context, &pattern)?;
         }
+
+        flush_appends(output, context)?;
 
         if context.stop_processing {
             break;

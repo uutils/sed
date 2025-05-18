@@ -478,3 +478,123 @@ hello
         LINES1
     ]
 );
+
+check_output!(
+    text_insert_between_subst,
+    [
+        "-n",
+        "-e",
+        r#"
+s/^/before_i/p
+20i\
+inserted
+s/^/after_i/p
+"#,
+        LINES1,
+        LINES2
+    ]
+);
+
+check_output!(
+    text_append_between_subst,
+    [
+        "-n",
+        "-e",
+        r#"
+5,12s/^/5-12/
+s/^/before_a/p
+/5-12/a\
+appended
+s/^/after_a/p
+"#,
+        LINES1,
+        LINES2
+    ]
+);
+
+check_output!(
+    text_append_before_next,
+    [
+        "-n",
+        "-e",
+        r#"
+s/^/^/p
+/l1_/a\
+appended
+8,10N
+s/$/$/p
+"#,
+        LINES1,
+        LINES2
+    ]
+);
+
+check_output!(
+    text_change_global,
+    [
+        "-n",
+        "-e",
+        r#"
+c\
+hello
+"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    text_change_line,
+    [
+        "-n",
+        "-e",
+        r#"
+8c\
+hello
+"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    text_change_range,
+    [
+        "-n",
+        "-e",
+        r#"
+3,14c\
+hello
+"#,
+        LINES1
+    ]
+);
+
+// SunOS and GNU sed behave differently.   We follow POSIX.
+check_output!(
+    text_change_reverse_range,
+    [
+        "-n",
+        "-e",
+        r#"
+8,3c\
+hello
+"#,
+        LINES1
+    ]
+);
+
+check_output!(text_delete, ["d", LINES1]);
+
+// Check that the pattern space is deleted.
+check_output!(
+    text_change_print,
+    [
+        "-n",
+        "-e",
+        r#"
+c\
+changed
+p
+"#,
+        LINES1
+    ]
+);
