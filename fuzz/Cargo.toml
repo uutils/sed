@@ -1,0 +1,30 @@
+[package]
+name = "uucore-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+console = "0.15.0"
+libfuzzer-sys = "0.4.7"
+libc = "0.2.153"
+tempfile = "3.15.0"
+rand = { version = "0.9.0", features = ["small_rng"] }
+similar = "2.5.0"
+uucore = { version = "0.0.30", features = ["libc"] }
+
+uu_sed = { path = "../src/uu/sed/" }
+
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_sed"
+path = "fuzz_targets/fuzz_sed.rs"
+test = false
+doc = false
