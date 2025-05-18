@@ -958,11 +958,17 @@ fn compile_label_command(
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
 ) -> UResult<()> {
+    /// Return true if `c` is in the POSIX portable filename character set.
+    fn is_portable_filename_char(c: char) -> bool {
+        c.is_ascii_alphanumeric()  // A–Z, a–z, 0–9
+        || matches!(c, '.' | '_' | '-')
+    }
+
     line.advance(); // Skip the command character
     line.eat_spaces(); // Skip any leading whitespace
 
     let mut label = String::new();
-    while !line.eol() && line.current().is_ascii_alphanumeric() {
+    while !line.eol() && is_portable_filename_char(line.current()) {
         label.push(line.current());
         line.advance();
     }
