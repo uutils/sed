@@ -29,7 +29,7 @@ cargo build --release
 cargo run --release
 ```
 ## Extensions and incompatibilities
-### Spported GNU extensions
+### Supported GNU extensions
 * Command-line arguments can be specified in long (`--`) form.
 * Spaces can precede a regular expression modifier.
 * `I` can be used in as a synonym for the `i` (case insensitive) substitution
