@@ -601,3 +601,5 @@ p
         LINES1
     ]
 );
+
+check_output!(math1, ["-f", "script/math.sed", "input/expression1"]);
