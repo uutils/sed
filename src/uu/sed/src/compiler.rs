@@ -601,48 +601,40 @@ fn bre_to_ere(pattern: &str) -> String {
 }
 
 /// Compile the provided regular expression string into a corresponding engine.
+/// An empty pattern results in None, which means that the last RE employed
+/// at runtime will be used.
 fn compile_regex(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
     pattern: &str,
     context: &ProcessingContext,
     icase: bool,
-) -> UResult<Regex> {
+) -> UResult<Option<Regex>> {
     if pattern.is_empty() {
-        let maybe_existing = context.saved_regex.borrow();
-        if let Some(existing) = &*maybe_existing {
-            Ok(existing.clone())
-        } else {
-            compilation_error(lines, line, "no previously compiled regex available")
-        }
-    } else {
-        // Convert basic to extended regular expression if needed.
-        let ere_pattern = if context.regex_extended {
-            pattern
-        } else {
-            &bre_to_ere(pattern)
-        };
-
-        // Add case-insensitive modifier if needed.
-        let full_pattern = if icase {
-            if ere_pattern.is_empty() {
-                return compilation_error(lines, line, "cannot specify a modifier on an empty RE");
-            }
-            format!("(?i){}", ere_pattern)
-        } else {
-            ere_pattern.to_string()
-        };
-
-        // Compile into engine.
-        let compiled = Regex::new(&full_pattern).map_err(|e| {
-            compilation_error::<Regex>(lines, line, format!("invalid regex '{}': {}", pattern, e))
-                .unwrap_err()
-        })?;
-
-        *context.saved_regex.borrow_mut() = Some(compiled.clone());
-
-        Ok(compiled)
+        return Ok(None);
     }
+
+    // Convert basic to extended regular expression if needed.
+    let ere_pattern = if context.regex_extended {
+        pattern
+    } else {
+        &bre_to_ere(pattern)
+    };
+
+    // Add case-insensitive modifier if needed.
+    let full_pattern = if icase {
+        format!("(?i){}", ere_pattern)
+    } else {
+        ere_pattern.to_string()
+    };
+
+    // Compile into engine.
+    let compiled = Regex::new(&full_pattern).map_err(|e| {
+        compilation_error::<Regex>(lines, line, format!("invalid regex '{}': {}", pattern, e))
+            .unwrap_err()
+    })?;
+
+    Ok(Some(compiled))
 }
 
 /// Compile a regular expression replacement string.
@@ -765,9 +757,6 @@ fn compile_subst_command(
     }
 
     let pattern = parse_regex(lines, line)?;
-    if pattern.is_empty() {
-        return compilation_error(lines, line, "unterminated substitute pattern");
-    }
 
     let mut subst = Box::new(Substitution {
         line_number: lines.get_line_number(),
@@ -777,25 +766,19 @@ fn compile_subst_command(
     subst.replacement = compile_replacement(lines, line)?;
     compile_subst_flags(lines, line, &mut subst)?;
 
-    // Compile regex with now known ignore_case flag.
-    subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
-
-    let re_captures: u32 = subst
-        .regex
-        .captures_len()
-        .saturating_sub(1)
-        .try_into()
-        .unwrap();
-    let max_group_number = subst.replacement.max_group_number();
-    if max_group_number > re_captures {
+    if pattern.is_empty() && subst.ignore_case {
         return compilation_error(
             lines,
             line,
-            format!(
-                "group number \\{} is larger than the {} available RE groups",
-                max_group_number, re_captures
-            ),
+            "cannot specify modifiers on an empty regular expression",
         );
+    }
+
+    if pattern.is_empty() {
+        subst.regex = None; // Will be reuse saved RE at runtime.
+    } else {
+        // Compile regex with now known ignore_case flag.
+        subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
     }
 
     cmd.data = CommandData::Substitution(subst);
@@ -1342,7 +1325,9 @@ mod tests {
     #[test]
     fn test_compile_re_basic() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", &ctx(), false).unwrap();
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), false)
+            .unwrap()
+            .expect("regex should be present");
         assert!(regex.is_match("abc"));
         assert!(!regex.is_match("ABC"));
     }
@@ -1350,31 +1335,12 @@ mod tests {
     #[test]
     fn test_compile_re_case_insensitive() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", &ctx(), true).unwrap();
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), true)
+            .unwrap()
+            .expect("regex should be present");
         assert!(regex.is_match("abc"));
         assert!(regex.is_match("ABC"));
         assert!(regex.is_match("AbC"));
-    }
-
-    #[test]
-    fn test_compile_re_saved_and_reuse() {
-        let context = ctx();
-        // Save a regex
-        let (lines1, chars1) = dummy_providers();
-        let _ = compile_regex(&lines1, &chars1, "abc", &context, false).unwrap();
-
-        // Now try to reuse it
-        let (lines2, chars2) = dummy_providers();
-        let reused = compile_regex(&lines2, &chars2, "", &context, false).unwrap();
-
-        assert!(reused.is_match("abc"));
-    }
-
-    #[test]
-    fn test_compile_re_empty_and_not_saved() {
-        let (lines, chars) = dummy_providers();
-        let result = compile_regex(&lines, &chars, "", &ctx(), false);
-        assert!(result.is_err()); // Should fail because nothing was saved
     }
 
     #[test]
@@ -1421,7 +1387,7 @@ mod tests {
         let (lines, mut chars) = make_providers("/hello/");
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
-        if let AddressValue::Regex(re) = addr.value {
+        if let AddressValue::Regex(Some(re)) = addr.value {
             assert!(re.is_match("hello"));
         } else {
             panic!("expected Regex address value");
@@ -1433,7 +1399,7 @@ mod tests {
         let (lines, mut chars) = make_providers("\\#hello#");
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
-        if let AddressValue::Regex(re) = addr.value {
+        if let AddressValue::Regex(Some(re)) = addr.value {
             assert!(re.is_match("hello"));
         } else {
             panic!("expected Regex address value");
@@ -1445,26 +1411,8 @@ mod tests {
         let (lines, mut chars) = make_providers("/hello/I");
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
-        if let AddressValue::Regex(re) = addr.value {
+        if let AddressValue::Regex(Some(re)) = addr.value {
             assert!(re.is_match("HELLO")); // case-insensitive
-        } else {
-            panic!("expected Regex address value");
-        }
-    }
-
-    #[test]
-    fn test_compile_addr_empty_regex_saved() {
-        let context = ctx();
-        // First save a regex
-        let (lines1, mut chars1) = make_providers("/saved/");
-        let _ = compile_address(&lines1, &mut chars1, &context).unwrap();
-
-        // Then reuse it with empty regex
-        let (lines2, mut chars2) = make_providers("//");
-        let addr = compile_address(&lines2, &mut chars2, &context).unwrap();
-        assert!(matches!(addr.atype, AddressType::Re));
-        if let AddressValue::Regex(re) = addr.value {
-            assert!(re.is_match("saved"));
         } else {
             panic!("expected Regex address value");
         }
@@ -1554,7 +1502,7 @@ mod tests {
             cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd.borrow().addr1.as_ref().unwrap().value {
+        if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
             assert!(re.is_match("foo"));
             assert!(!re.is_match("bar"));
         } else {
@@ -1574,7 +1522,7 @@ mod tests {
             cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd.borrow().addr1.as_ref().unwrap().value {
+        if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
             assert!(re.is_match("foo"));
             assert!(!re.is_match("bar"));
         } else {
@@ -1585,7 +1533,7 @@ mod tests {
             cmd.borrow().addr2.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd.borrow().addr2.as_ref().unwrap().value {
+        if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr2.as_ref().unwrap().value {
             assert!(re.is_match("bar"));
             assert!(!re.is_match("foo"));
         } else {
@@ -1604,7 +1552,7 @@ mod tests {
             cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd.borrow().addr1.as_ref().unwrap().value {
+        if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
             assert!(re.is_match("FOO"));
             assert!(re.is_match("foo"));
         } else {
@@ -1630,7 +1578,7 @@ mod tests {
             cmd2.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd2.borrow().addr1.as_ref().unwrap().value {
+        if let AddressValue::Regex(Some(re)) = &cmd2.borrow().addr1.as_ref().unwrap().value {
             assert!(re.is_match("abc"));
         };
     }
@@ -1950,15 +1898,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_subst_empty_pattern() {
-        let (mut lines, mut chars) = make_providers("s//bar/");
-        let mut cmd = Command::default();
-
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
-        assert!(err.to_string().contains("unterminated substitute pattern"));
-    }
-
-    #[test]
     fn test_compile_subst_extra_characters_at_end() {
         let (mut lines, mut chars) = make_providers("s/foo/bar/x");
         let mut cmd = Command::default();
@@ -1996,18 +1935,6 @@ mod tests {
             }
             _ => panic!("Expected CommandData::Substitution"),
         }
-    }
-
-    #[test]
-    fn test_compile_subst_invalid_group_number() {
-        let (mut lines, mut chars) = make_providers(r"s/\(.\)\(.\)/\3\2\1/");
-        let mut cmd = Command::default();
-
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("group number \\3 is larger than the 2 available RE groups")
-        );
     }
 
     // bre_to_ere

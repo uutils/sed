@@ -110,7 +110,7 @@ pub struct Address {
 #[derive(Debug)]
 pub enum AddressValue {
     LineNumber(usize),
-    Regex(Regex),
+    Regex(Option<Regex>),
 }
 
 #[derive(Debug)]
@@ -180,30 +180,16 @@ impl ReplacementTemplate {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 /// Substitution command
 pub struct Substitution {
     pub occurrence: usize, // Which occurrence to substitute
     pub print_flag: bool,  // True if 'p' flag
     pub ignore_case: bool, // True if 'I' flag
     pub write_file: Option<Rc<RefCell<NamedWriter>>>, // Writer to file if 'w' flag is used
-    pub regex: Regex,      // Regular expression
+    pub regex: Option<Regex>, // Regular expression
     pub line_number: usize, // Line number
     pub replacement: ReplacementTemplate, // Specified broken-down replacement
-}
-
-impl Default for Substitution {
-    fn default() -> Self {
-        Substitution {
-            occurrence: 0,
-            print_flag: false,
-            ignore_case: false,
-            write_file: None,
-            regex: Regex::new("").unwrap(), // safe dummy regex
-            line_number: 0,
-            replacement: ReplacementTemplate::default(),
-        }
-    }
 }
 
 /// The block of the first and most common Unicode characters:
@@ -337,7 +323,6 @@ pub struct InputAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regex::Regex;
 
     // Return the captures for the RE applied to the specified string
     fn caps_for<'a>(re: &str, input: &'a str) -> regex::Captures<'a> {

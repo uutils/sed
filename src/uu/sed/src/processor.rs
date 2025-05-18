@@ -15,6 +15,7 @@ use crate::command::{
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::in_place::InPlace;
 use crate::named_writer;
+use regex::Regex;
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
@@ -25,12 +26,13 @@ use uucore::error::{UResult, USimpleError};
 fn match_address(
     addr: &Address,
     pattern: &mut IOChunk,
-    context: &ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<bool> {
     match addr.atype {
         AddressType::Re => {
             if let AddressValue::Regex(ref re) = addr.value {
-                Ok(re.is_match(pattern.as_str()?))
+                let regex = re_or_saved_re(re, context)?;
+                Ok(regex.is_match(pattern.as_str()?))
             } else {
                 Ok(false)
             }
@@ -161,6 +163,21 @@ fn write_chunk(
     Ok(())
 }
 
+/// Return the RE or the saved RE if the RE is None.
+/// Update the saved RE to RE.
+fn re_or_saved_re(regex: &Option<Regex>, context: &mut ProcessingContext) -> UResult<Regex> {
+    match regex {
+        Some(re) => {
+            *context.saved_regex.borrow_mut() = Some(re.clone());
+            Ok(re.clone())
+        }
+        None => match &*context.saved_regex.borrow() {
+            Some(saved_re) => Ok(saved_re.clone()),
+            None => Err(USimpleError::new(2, "no previous regular expression")),
+        },
+    }
+}
+
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
@@ -175,7 +192,9 @@ fn substitute(
 
     let text = pattern.as_str()?;
 
-    for caps in sub.regex.captures_iter(text) {
+    let regex = re_or_saved_re(&sub.regex, context)?;
+
+    for caps in regex.captures_iter(text) {
         count += 1;
         let m = caps.get(0).unwrap();
 

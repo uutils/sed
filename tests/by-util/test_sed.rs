@@ -226,6 +226,7 @@ check_output!(subst_numbered_replacement, ["-e", r"s/./X/4", LINES1]);
 check_output!(subst_brace, ["-e", r"s/[123]/X/g", LINES1]);
 check_output!(subst_case_insensitive, ["-e", r"s/L/Line/", LINES1]);
 check_output!(subst_no_new_line, ["-e", r"s/l/L/g", NO_NEW_LINE]);
+check_output!(subst_re_reuse, ["-e", r"2s//M/;1s/l/L/", LINES1]);
 
 #[test]
 fn subst_write_file() -> std::io::Result<()> {
@@ -278,6 +279,8 @@ check_output!(pattern_next_print_output, ["-e", r"4n;p", LINES1]);
 check_output!(pattern_next_print_no_output, ["-n", "-e", r"4n;p", LINES1]);
 check_output!(pattern_quit, [r"5q", LINES1]);
 check_output!(pattern_quit_2, [r"5q", LINES1, LINES2]);
+check_output!(pattern_re_reuse, ["-n", r"/_1/p;//p", LINES1]);
+check_output!(pattern_subst_re_reuse, ["-n", r"/_1/p;s//-N/p", LINES1]);
 
 check_output!(
     block_simple_range,
