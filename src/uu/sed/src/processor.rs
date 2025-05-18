@@ -15,8 +15,8 @@ use crate::command::{
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::in_place::InPlace;
 use crate::named_writer;
-use atty::Stream;
 use std::cell::RefCell;
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::error::{UResult, USimpleError};
@@ -476,7 +476,7 @@ pub fn process_all_files(
     files: Vec<PathBuf>,
     mut context: ProcessingContext,
 ) -> UResult<()> {
-    context.unbuffered = context.unbuffered || atty::is(Stream::Stdout);
+    context.unbuffered = context.unbuffered || io::stdout().is_terminal();
 
     let mut in_place = InPlace::new(context.clone())?;
     let last_file_index = files.len() - 1;
