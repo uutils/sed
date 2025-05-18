@@ -207,15 +207,17 @@ pub fn compile(
     let mut empty_line = ScriptCharProvider::new("");
     let result = compile_sequence(&mut make_providers, &mut empty_line, context)?;
 
+    // Link branch commands to the target label commands.
+    populate_label_map(result.clone(), context)?;
+    resolve_branch_targets(result.clone(), context)?;
+
     // Link the ends of command blocks to their following commands.
+    // This converts the tree into a graph, so it must be the last
+    // conversion than traverses the structure as a tree.
     if context.parsed_block_nesting > 0 {
         return Err(USimpleError::new(1, "unmatched `{'"));
     }
     patch_block_endings(result.clone());
-
-    // Link branch commands to the target label commands.
-    populate_label_map(result.clone(), context)?;
-    resolve_branch_targets(result.clone(), context)?;
 
     // Comment-out the following to show the compiled script.
     #[cfg(any())]
