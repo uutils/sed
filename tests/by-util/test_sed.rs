@@ -465,3 +465,16 @@ tb"#,
         LINES1
     ]
 );
+
+check_output!(
+    text_insert_quit,
+    [
+        "-e",
+        r#"
+5i\
+hello
+5q
+"#,
+        LINES1
+    ]
+);

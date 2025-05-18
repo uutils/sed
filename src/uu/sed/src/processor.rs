@@ -348,7 +348,12 @@ fn process_file(
                     context.hold.has_newline = pattern.is_newline_terminated();
                 }
                 'i' => {
-                    // TODO
+                    // Write text to standard output.
+                    let text = match &command.data {
+                        CommandData::Text(text) => text,
+                        _ => panic!("Expected Text command data"),
+                    };
+                    output.write_str(text)?;
                 }
                 'l' => {
                     // TODO
