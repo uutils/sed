@@ -706,8 +706,14 @@ pub fn compile_replacement(
                             line.advance();
                         }
 
-                        // literal \ and &
+                        // Literal \ and &
                         '\\' | '&' => {
+                            literal.push(line.current());
+                            line.advance();
+                        }
+
+                        // Literal delimiter
+                        v @ _ if v == delimiter => {
                             literal.push(line.current());
                             line.advance();
                         }
@@ -1743,6 +1749,15 @@ mod tests {
 
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_compile_replacement_escaped_delimiter() {
+        let (mut lines, mut chars) = make_providers(r"/hell\/o/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "hell/o"));
     }
 
     #[test]
