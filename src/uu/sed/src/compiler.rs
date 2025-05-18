@@ -18,17 +18,17 @@ use crate::delimited_parser::{
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::LazyLock;
 use uucore::error::{UResult, USimpleError};
 
 // A global, immutable map of command properties, initialized on first access
-static CMD_MAP: Lazy<HashMap<char, CommandSpec>> = Lazy::new(build_command_map);
+static CMD_MAP: LazyLock<HashMap<char, CommandSpec>> = LazyLock::new(build_command_map);
 
 // Types of command arguments recognized by the parser
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
