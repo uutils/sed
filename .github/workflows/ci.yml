@@ -24,6 +24,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macOS-latest, windows-latest]
     steps:
+      - name: Set Git to use LF, even on Windows
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --all
@@ -39,6 +43,10 @@ jobs:
           - { os: macos-latest   , features: macos }
           - { os: windows-latest , features: windows }
     steps:
+    - name: Set Git to use LF, even on Windows
+      run: |
+        git config --global core.autocrlf false
+        git config --global core.eol lf
     - uses: actions/checkout@v4
     - name: Initialize workflow variables
       id: vars

@@ -9,9 +9,12 @@
 // file that was distributed with this source code.
 
 use crate::command::ScriptValue;
+use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
+use uucore::error::{UResult, USimpleError};
 
+#[derive(Debug)]
 /// The provider of script lines across all specified scripts
 /// Scripts can be specified to sed as files or as strings.
 pub struct ScriptLineProvider {
@@ -19,7 +22,7 @@ pub struct ScriptLineProvider {
     state: State,
 }
 
-// Encapsulation of the script line provider's state
+/// Encapsulation of the script line provider's state
 enum State {
     NotStarted, // Processing has not yet started
     Active {
@@ -57,7 +60,7 @@ impl ScriptLineProvider {
     }
 
     /// Return the next script line to process across all scripts.
-    pub fn next_line(&mut self) -> io::Result<Option<String>> {
+    pub fn next_line(&mut self) -> UResult<Option<String>> {
         let mut line = String::new();
 
         loop {
@@ -75,6 +78,10 @@ impl ScriptLineProvider {
                         Some(*index + 1) // finished reading this source
                     } else {
                         *line_number += 1;
+                        // Remove trailing newline
+                        if line.ends_with('\n') {
+                            line.pop();
+                        }
                         return Ok(Some(line));
                     }
                 }
@@ -90,7 +97,7 @@ impl ScriptLineProvider {
     }
 
     // Move to the next available script source.
-    fn advance_source(&mut self, next_index: usize) -> io::Result<()> {
+    fn advance_source(&mut self, next_index: usize) -> UResult<()> {
         if next_index >= self.sources.len() {
             self.state = State::Done;
             return Ok(());
@@ -124,7 +131,12 @@ impl ScriptLineProvider {
                         line_number: 0,
                     };
                 } else {
-                    let file = File::open(p)?;
+                    let file = File::open(p).map_err(|e| {
+                        USimpleError::new(
+                            2,
+                            format!("Error opening script file {}: {}", p.display(), e),
+                        )
+                    })?;
                     self.state = State::Active {
                         index: next_index,
                         reader: Box::new(BufReader::new(file)),
@@ -136,6 +148,27 @@ impl ScriptLineProvider {
         }
 
         Ok(())
+    }
+}
+
+impl fmt::Debug for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            State::NotStarted => f.debug_struct("NotStarted").finish(),
+            State::Done => f.debug_struct("Done").finish(),
+            State::Active {
+                index,
+                input_name,
+                line_number,
+                ..
+            } => f
+                .debug_struct("Active")
+                .field("index", index)
+                .field("input_name", input_name)
+                .field("line_number", line_number)
+                .field("reader", &"<BufRead>")
+                .finish(),
+        }
     }
 }
 

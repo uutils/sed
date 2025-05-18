@@ -13,10 +13,12 @@ categories = ["command-line-utilities"]
 
 
 [dependencies]
+atty = { workspace = true }
 clap = { workspace = true }
 once_cell = { workspace = true }
 regex = { workspace = true }
 tempfile = { workspace = true }
+memmap2 = { workspace = true }
 uucore = { workspace = true }
 
 [lib]
