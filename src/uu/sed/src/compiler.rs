@@ -986,6 +986,51 @@ fn compile_label_command(
     parse_command_ending(lines, line, cmd)
 }
 
+fn compile_text_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<()> {
+    line.advance(); // Skip the command character.
+
+    line.eat_spaces(); // Skip any leading whitespace.
+    if line.eol() || line.current() != '\\' {
+        return compilation_error(
+            lines,
+            line,
+            format!("command `{}' expects \\ followed by text", cmd.code),
+        );
+    }
+
+    line.advance(); // Skip \.
+    line.eat_spaces(); // Skip any whitespace at the end of \.
+    if !line.eol() {
+        return compilation_error(
+            lines,
+            line,
+            format!(
+                "extra characters after \\ at the end of `{}' command",
+                cmd.code
+            ),
+        );
+    }
+
+    let mut text = String::new();
+    while let Some(line) = lines.next_line()? {
+        if line.ends_with('\\') {
+            // Line ends with \ to escape \n; remove the trailing \.
+            text.push_str(&line[..line.len() - 1]);
+            text.push('\n');
+        } else {
+            text.push_str(&line);
+            text.push('\n');
+            break;
+        }
+    }
+    cmd.data = CommandData::Text(text);
+    Ok(())
+}
+
 // Compile the specified command
 fn compile_command(
     lines: &mut ScriptLineProvider,
@@ -1027,9 +1072,11 @@ fn compile_command(
             // y
             return compile_trans_command(lines, line, &mut cmd);
         }
-        // TODO
-        CommandArgs::Text => { // a c i
+        CommandArgs::Text => {
+            // a c i
+            compile_text_command(lines, line, &mut cmd)?;
         }
+        // TODO
         CommandArgs::ReadFile => { // r
         }
         CommandArgs::WriteFile => { // w
@@ -1081,10 +1128,23 @@ fn lookup_command(cmd: char) -> Option<&'static CommandSpec> {
 mod tests {
     use super::*;
 
+    // Return an empty line provider and a char provider for the specified str.
     fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
         let lines = ScriptLineProvider::new(vec![]); // Empty for tests
         let line = ScriptCharProvider::new(input);
         (lines, line)
+    }
+
+    fn make_line_provider(lines: &[&str]) -> ScriptLineProvider {
+        let input = lines
+            .iter()
+            .map(|s| ScriptValue::StringVal(s.to_string()))
+            .collect();
+        ScriptLineProvider::new(input)
+    }
+
+    fn make_char_provider(input: &str) -> ScriptCharProvider {
+        ScriptCharProvider::new(input)
     }
 
     /// Return a default ProcessingContext for use in tests.
@@ -1575,21 +1635,13 @@ mod tests {
     }
 
     // compile_sequence
-    fn make_provider(lines: &[&str]) -> ScriptLineProvider {
-        let input = lines
-            .iter()
-            .map(|s| ScriptValue::StringVal(s.to_string()))
-            .collect();
-        ScriptLineProvider::new(input)
-    }
-
     fn empty_line() -> ScriptCharProvider {
         ScriptCharProvider::new("")
     }
 
     #[test]
     fn test_compile_sequence_empty_input() {
-        let mut provider = make_provider(&[]);
+        let mut provider = make_line_provider(&[]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1598,7 +1650,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_comment_only() {
-        let mut provider = make_provider(&["# comment", "   ", ";;"]);
+        let mut provider = make_line_provider(&["# comment", "   ", ";;"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1607,7 +1659,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_single_command() {
-        let mut provider = make_provider(&["42q"]);
+        let mut provider = make_line_provider(&["42q"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1631,7 +1683,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_non_selected_single_command() {
-        let mut provider = make_provider(&["42!p"]);
+        let mut provider = make_line_provider(&["42!p"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1655,7 +1707,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_multiple_lines() {
-        let mut provider = make_provider(&["1q", "2d"]);
+        let mut provider = make_line_provider(&["1q", "2d"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1671,7 +1723,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_single_line_multiple_commands() {
-        let mut provider = make_provider(&["1q;2d"]);
+        let mut provider = make_line_provider(&["1q;2d"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -2344,5 +2396,75 @@ mod tests {
             CommandData::BranchTarget(Some(ptr)) => assert!(Rc::ptr_eq(ptr, &label)),
             _ => panic!("Expected BranchTarget(Some(...))"),
         }
+    }
+
+    // compile_text_command
+    #[test]
+    fn test_compile_single_line_text_command() {
+        let mut chars = make_char_provider("a\\");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "line1\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_spaces_single_line_text_command() {
+        let mut chars = make_char_provider("a \\ ");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "line1\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_two_line_text_command() {
+        let mut chars = make_char_provider("a\\");
+        let mut lines = make_line_provider(&["line1\\", "line2"]);
+        let mut cmd = Command::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "line1\nline2\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_text_command_without_backslash() {
+        let mut chars = make_char_provider("a");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("expects \\ followed by text"));
+    }
+
+    #[test]
+    fn test_compile_text_command_with_trailing_chars() {
+        let mut chars = make_char_provider("a \\ foo");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("extra characters after \\"));
     }
 }

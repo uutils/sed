@@ -291,6 +291,7 @@ pub enum CommandData {
     Label(Option<String>),               // Label name for 'b', 't', ':'
     NamedWriter(Box<NamedWriter>),       // File descriptor for 'w'
     Substitution(Box<Substitution>),     // Substitute command 's'
+    Text(String),                        // Text for 'a', 'c', 'i'
     Transliteration(Box<Transliteration>), // Transliteration command 'y'
 }
 
