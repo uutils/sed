@@ -203,15 +203,12 @@ fn substitute(
 
     for caps in regex.captures_iter(text) {
         count += 1;
-        let caps = match caps {
-            Ok(c) => c,
-            Err(e) => {
-                return Err(USimpleError::new(
-                    2,
-                    format!("regular expression capture retrieval error: {}", e),
-                ));
-            }
-        };
+        let caps = caps.map_err(|e| {
+            USimpleError::new(
+                2,
+                format!("regular expression capture retrieval error: {}", e),
+            )
+        })?;
 
         let m = caps.get(0).unwrap();
 
