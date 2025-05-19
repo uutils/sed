@@ -140,21 +140,11 @@ check_output!(addr_straddle, ["-n", "-e", "20p", LINES1, LINES2]);
 check_output!(addr_last_one_file, ["-n", "-e", "$p", LINES1]);
 check_output!(addr_last_two_files, ["-n", "-e", "$p", LINES1, LINES2]);
 
-#[cfg(unix)]
-check_output!(addr_append_empty, ["-e", "$a\\\nhello", "/dev/null"]);
-#[cfg(windows)]
-check_output!(addr_append_empty, ["-e", "$a\\\nhello", "NUL"]);
+check_output!(addr_append_empty, ["-e", "$a\\\nhello", "input/empty"]);
 
-#[cfg(unix)]
 check_output!(
     addr_last_empty,
-    ["-n", "-e", "$p", LINES1, "/dev/null", LINES2]
-);
-
-#[cfg(windows)]
-check_output!(
-    addr_last_with_empty,
-    ["-n", "-e", "$p", LINES1, "NUL", LINES2]
+    ["-n", "-e", "$p", LINES1, "input/empty", LINES2]
 );
 
 check_output!(addr_past_last, ["-n", "-e", "20p", LINES1]);
