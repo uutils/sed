@@ -561,9 +561,10 @@ fn parse_command_ending(
 }
 
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
-/// - Replacces `\(` and `\)` with `(` and `)`
-/// - Escapes ERE-only metacharacters: `+ ? { } | ( )`
-/// - Leaves all other characters as-is
+/// - Replaces `\(` and `\)` with `(` and `)`.
+/// - Puts single-digit back-references in non-capturing groups..
+/// - Escapes ERE-only metacharacters: `+ ? { } | ( )`.
+/// - Leaves all other characters as-is.
 fn bre_to_ere(pattern: &str) -> String {
     let mut result = String::with_capacity(pattern.len());
     let mut chars = pattern.chars().peekable();
@@ -580,6 +581,16 @@ fn bre_to_ere(pattern: &str) -> String {
                 Some(')') => {
                     chars.next();
                     result.push(')'); // Group end
+                }
+                Some(v) if v.is_ascii_digit() => {
+                    // Back-reference.  In sed BREs these are single-digit
+                    // (\1-\9) whereas fancy_regex supports multi-digit
+                    // back-references. Put them in a non-capturing group
+                    // to avoid having the number extend beyond the single
+                    // digit. Example: In sed \11 matches group 1 followed
+                    // by '1', not group 11.
+                    result.push_str(&format!(r"(?:\{})", v));
+                    chars.next();
                 }
                 Some(&next) => {
                     // Preserve other escaped characters.
@@ -2020,6 +2031,11 @@ mod tests {
     #[test]
     fn test_dollar_escaped_in_middle() {
         assert_eq!(bre_to_ere(r"a$c$"), r"a\$c$");
+    }
+
+    #[test]
+    fn test_bre_back_reference() {
+        assert_eq!(bre_to_ere(r"\(.\)\1\(.\)\2"), r"(.)(?:\1)(.)(?:\2)");
     }
 
     // patch_block_endings
