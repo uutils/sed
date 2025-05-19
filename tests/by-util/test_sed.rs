@@ -603,4 +603,7 @@ p
 );
 
 check_output!(math1, ["-f", "script/math.sed", "input/expression1"]);
+// Calculate π (scaled) to several decimal places
+check_output!(pi, ["-f", "script/math.sed", "input/pi"]);
+
 check_output!(hanoi, ["-f", "script/hanoi.sed", "input/hanoi"]);
