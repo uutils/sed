@@ -166,18 +166,22 @@ fn write_chunk(
     Ok(())
 }
 
-/// Return the RE or the saved RE if the RE is None.
+/// Return a reference to the current or the saved RE if the RE is None.
 /// Update the saved RE to RE.
-fn re_or_saved_re(regex: &Option<Regex>, context: &mut ProcessingContext) -> UResult<Regex> {
-    match regex {
-        Some(re) => {
-            *context.saved_regex.borrow_mut() = Some(re.clone());
-            Ok(re.clone())
-        }
-        None => match &*context.saved_regex.borrow() {
-            Some(saved_re) => Ok(saved_re.clone()),
-            None => Err(USimpleError::new(2, "no previous regular expression")),
-        },
+fn re_or_saved_re<'a>(
+    regex: &Option<Regex>,
+    context: &'a mut ProcessingContext,
+) -> UResult<&'a Regex> {
+    if let Some(re) = regex {
+        // First time we see this regex: clone it *once* into the context.
+        context.saved_regex = Some(re.clone());
+        // Return a reference into context.saved_regex.
+        Ok(context.saved_regex.as_ref().unwrap())
+    } else if let Some(ref saved_re) = context.saved_regex {
+        // We already have one: just borrow it.
+        Ok(saved_re)
+    } else {
+        Err(USimpleError::new(2, "no previous regular expression"))
     }
 }
 

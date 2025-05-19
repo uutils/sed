@@ -22,7 +22,6 @@ use crate::command::{ProcessingContext, ScriptValue, StringSpace};
 use crate::compiler::compile;
 use crate::processor::process_all_files;
 use clap::{Arg, ArgMatches, Command, arg};
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
@@ -202,7 +201,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         last_line: false,
         last_file: false,
         stop_processing: false,
-        saved_regex: const { RefCell::new(None) },
+        saved_regex: None,
         input_action: None,
         hold: StringSpace::default(),
         parsed_block_nesting: 0,

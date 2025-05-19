@@ -52,7 +52,7 @@ pub struct ProcessingContext {
     /// Stop processing further input.
     pub stop_processing: bool,
     /// Previously compiled RE, saved for reuse when specifying an empty RE
-    pub saved_regex: RefCell<Option<Regex>>,
+    pub saved_regex: Option<Regex>,
     /// Modification of input processing action
     // This is required to avoid doubly borrowing the reader in the 'N'
     // command.
