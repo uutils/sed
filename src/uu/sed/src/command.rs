@@ -13,8 +13,7 @@
 
 use crate::named_writer::NamedWriter;
 
-use regex::Captures;
-use regex::Regex;
+use fancy_regex::{Captures, Regex};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -137,7 +136,7 @@ impl Default for ReplacementTemplate {
 impl ReplacementTemplate {
     /// Apply the template to the given RE captures.
     /// Example:
-    /// let result = regex.replace_all(input, |caps: &regex::Captures| {
+    /// let result = regex.replace_all(input, |caps: &Captures| {
     ///    template.apply(caps) });
     /// Returns an error if a backreference in the template was not matched by the RE.
     pub fn apply(&self, caps: &Captures) -> UResult<String> {
@@ -325,8 +324,12 @@ mod tests {
     use super::*;
 
     // Return the captures for the RE applied to the specified string
-    fn caps_for<'a>(re: &str, input: &'a str) -> regex::Captures<'a> {
-        Regex::new(re).unwrap().captures(input).unwrap()
+    fn caps_for<'a>(re: &str, input: &'a str) -> Captures<'a> {
+        Regex::new(re)
+            .unwrap()
+            .captures(input)
+            .unwrap()
+            .expect("captures")
     }
 
     #[test]

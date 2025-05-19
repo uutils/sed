@@ -15,7 +15,7 @@ use crate::command::{
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::in_place::InPlace;
 use crate::named_writer;
-use regex::Regex;
+use fancy_regex::Regex;
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
@@ -32,7 +32,10 @@ fn match_address(
         AddressType::Re => {
             if let AddressValue::Regex(ref re) = addr.value {
                 let regex = re_or_saved_re(re, context)?;
-                Ok(regex.is_match(pattern.as_str()?))
+                let matched = regex.is_match(pattern.as_str()?).map_err(|e| {
+                    USimpleError::new(2, format!("regular expression match error: {}", e))
+                })?;
+                Ok(matched)
             } else {
                 Ok(false)
             }
@@ -196,6 +199,16 @@ fn substitute(
 
     for caps in regex.captures_iter(text) {
         count += 1;
+        let caps = match caps {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(USimpleError::new(
+                    2,
+                    format!("regular expression capture retrieval error: {}", e),
+                ));
+            }
+        };
+
         let m = caps.get(0).unwrap();
 
         // Always write the unmatched text before this match.
