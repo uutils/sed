@@ -651,21 +651,21 @@ fn compile_regex(
     }
 
     // Convert basic to extended regular expression if needed.
-    let ere_pattern = if context.regex_extended {
+    let pattern = if context.regex_extended {
         pattern
     } else {
         &bre_to_ere(pattern)
     };
 
     // Add case-insensitive modifier if needed.
-    let full_pattern = if icase {
-        format!("(?i){}", ere_pattern)
+    let pattern = if icase {
+        format!("(?i){}", pattern)
     } else {
-        ere_pattern.to_string()
+        pattern.to_string()
     };
 
     // Compile into engine.
-    let compiled = Regex::new(&full_pattern).map_err(|e| {
+    let compiled = Regex::new(&pattern).map_err(|e| {
         compilation_error::<Regex>(lines, line, format!("invalid regex '{}': {}", pattern, e))
             .unwrap_err()
     })?;
