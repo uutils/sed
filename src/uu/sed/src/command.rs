@@ -13,8 +13,8 @@
 
 use crate::named_writer::NamedWriter;
 
-use regex::Captures;
-use regex::Regex;
+use fancy_regex::{Captures, Regex};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf; // For file descriptors and equivalent
@@ -52,7 +52,7 @@ pub struct ProcessingContext {
     /// Stop processing further input.
     pub stop_processing: bool,
     /// Previously compiled RE, saved for reuse when specifying an empty RE
-    pub saved_regex: RefCell<Option<Regex>>,
+    pub saved_regex: Option<Regex>,
     /// Modification of input processing action
     // This is required to avoid doubly borrowing the reader in the 'N'
     // command.
@@ -65,6 +65,15 @@ pub struct ProcessingContext {
     pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
     /// True if a substitution was made as specified in the t command
     pub substitution_made: bool,
+    /// Elements to append at the end of each command processing cycle
+    pub append_elements: Vec<AppendElement>,
+}
+
+#[derive(Clone, Debug)]
+/// Elements that shall be appended at the end of each command processing cycle
+pub enum AppendElement {
+    Text(String),  // The specified text string
+    File(PathBuf), // The contents of the specified file
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -100,7 +109,7 @@ pub struct Address {
 #[derive(Debug)]
 pub enum AddressValue {
     LineNumber(usize),
-    Regex(Regex),
+    Regex(Option<Regex>),
 }
 
 #[derive(Debug)]
@@ -127,7 +136,7 @@ impl Default for ReplacementTemplate {
 impl ReplacementTemplate {
     /// Apply the template to the given RE captures.
     /// Example:
-    /// let result = regex.replace_all(input, |caps: &regex::Captures| {
+    /// let result = regex.replace_all(input, |caps: &Captures| {
     ///    template.apply(caps) });
     /// Returns an error if a backreference in the template was not matched by the RE.
     pub fn apply(&self, caps: &Captures) -> UResult<String> {
@@ -170,30 +179,16 @@ impl ReplacementTemplate {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 /// Substitution command
 pub struct Substitution {
     pub occurrence: usize, // Which occurrence to substitute
     pub print_flag: bool,  // True if 'p' flag
     pub ignore_case: bool, // True if 'I' flag
     pub write_file: Option<Rc<RefCell<NamedWriter>>>, // Writer to file if 'w' flag is used
-    pub regex: Regex,      // Regular expression
+    pub regex: Option<Regex>, // Regular expression
     pub line_number: usize, // Line number
     pub replacement: ReplacementTemplate, // Specified broken-down replacement
-}
-
-impl Default for Substitution {
-    fn default() -> Self {
-        Substitution {
-            occurrence: 0,
-            print_flag: false,
-            ignore_case: false,
-            write_file: None,
-            regex: Regex::new("").unwrap(), // safe dummy regex
-            line_number: 0,
-            replacement: ReplacementTemplate::default(),
-        }
-    }
 }
 
 /// The block of the first and most common Unicode characters:
@@ -291,6 +286,7 @@ pub enum CommandData {
     Label(Option<String>),               // Label name for 'b', 't', ':'
     NamedWriter(Box<NamedWriter>),       // File descriptor for 'w'
     Substitution(Box<Substitution>),     // Substitute command 's'
+    Text(Cow<'static, str>),             // Text for 'a', 'c', 'i'
     Transliteration(Box<Transliteration>), // Transliteration command 'y'
 }
 
@@ -326,11 +322,14 @@ pub struct InputAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regex::Regex;
 
     // Return the captures for the RE applied to the specified string
-    fn caps_for<'a>(re: &str, input: &'a str) -> regex::Captures<'a> {
-        Regex::new(re).unwrap().captures(input).unwrap()
+    fn caps_for<'a>(re: &str, input: &'a str) -> Captures<'a> {
+        Regex::new(re)
+            .unwrap()
+            .captures(input)
+            .unwrap()
+            .expect("captures")
     }
 
     #[test]

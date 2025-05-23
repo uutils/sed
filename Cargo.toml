@@ -36,6 +36,7 @@ chrono = { version = "0.4.37", default-features = false, features = [
 clap = { version = "4.4", features = ["wrap_help", "cargo"] }
 clap_complete = "4.5"
 clap_mangen = "0.2"
+fancy-regex = "0.14.0"
 libc = "0.2.153"
 memmap2 = "0.9"
 phf = "0.11.2"
@@ -54,6 +55,7 @@ clap = { workspace = true }
 clap_complete = { workspace = true }
 clap_mangen = { workspace = true }
 ctor = "0.4.1"
+fancy-regex =  { workspace = true }
 memmap2.workspace = true
 phf = { workspace = true }
 sed = { optional = true, version = "0.0.1", package = "uu_sed", path = "src/uu/sed" }

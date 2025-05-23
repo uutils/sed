@@ -9,12 +9,13 @@
 // file that was distributed with this source code.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use tempfile::NamedTempFile;
 use uutests::new_ucmd;
 use uutests::util::TestScenario;
 use uutests::util_name;
 
+////////////////////////////////////////////////////////////
 // Test application's invocation
 #[test]
 fn test_invalid_arg() {
@@ -56,13 +57,11 @@ fn test_e_script_ok() {
 
 #[test]
 fn test_f_script_ok() {
-    let mut temp = NamedTempFile::new().expect("Failed to create temp file");
-    writeln!(temp, "l").expect("Failed to write to temp file");
-    let path = temp.path();
-
-    new_ucmd!().arg("-f").arg(path).succeeds();
+    new_ucmd!().arg("-f").arg("script/hanoi.sed").succeeds();
 }
 
+////////////////////////////////////////////////////////////
+// Test simple I/O processing
 const INPUT_FILES: &[&str] = &[
     "input/two-lines.txt",
     "input/no-new-line.txt",
@@ -126,31 +125,26 @@ macro_rules! check_output {
     };
 }
 
+////////////////////////////////////////////////////////////
+// Individual command tests
+
 // Input files
 const LINES1: &str = "input/lines1";
 const LINES2: &str = "input/lines2";
 const NO_NEW_LINE: &str = "input/no-new-line.txt";
 
-// Test address ranges
+////////////////////////////////////////////////////////////
+// Address ranges: One and two, numeric and pattern
 check_output!(addr_one_line, ["-n", "-e", "4p", LINES1]);
 check_output!(addr_straddle, ["-n", "-e", "20p", LINES1, LINES2]);
 check_output!(addr_last_one_file, ["-n", "-e", "$p", LINES1]);
 check_output!(addr_last_two_files, ["-n", "-e", "$p", LINES1, LINES2]);
 
-// TODO: Enable and configure for Unix/Windows, when "a" is implemented.
-#[cfg(any())]
-check_output!(addr_append_with_empty, ["-e", "$a\nhello", "/dev/null"]);
+check_output!(addr_append_empty, ["-e", "$a\\\nhello", "input/empty"]);
 
-#[cfg(unix)]
 check_output!(
-    addr_last_with_empty,
-    ["-n", "-e", "$p", LINES1, "/dev/null", LINES2]
-);
-
-#[cfg(windows)]
-check_output!(
-    addr_last_with_empty,
-    ["-n", "-e", "$p", LINES1, "NUL", LINES2]
+    addr_last_empty,
+    ["-n", "-e", "$p", LINES1, "input/empty", LINES2]
 );
 
 check_output!(addr_past_last, ["-n", "-e", "20p", LINES1]);
@@ -196,7 +190,8 @@ check_output!(
 check_output!(addr_empty_re_reuse, ["-n", "/_2/,//p", LINES1, LINES2]);
 check_output!(addr_simple_negation, ["-e", r"4,12!s/^/^/", LINES1]);
 
-// Test substitutions
+////////////////////////////////////////////////////////////
+// Substitution: s
 check_output!(subst_any, ["-e", r"s/./X/g", LINES1]);
 check_output!(subst_any_global, ["-e", r"s,.,X,g", LINES1]);
 check_output!(subst_escaped_magic_separator, ["-e", r"s.\..X.g", LINES1]);
@@ -226,6 +221,9 @@ check_output!(subst_numbered_replacement, ["-e", r"s/./X/4", LINES1]);
 check_output!(subst_brace, ["-e", r"s/[123]/X/g", LINES1]);
 check_output!(subst_case_insensitive, ["-e", r"s/L/Line/", LINES1]);
 check_output!(subst_no_new_line, ["-e", r"s/l/L/g", NO_NEW_LINE]);
+check_output!(subst_re_reuse, ["-e", r"2s//M/;1s/l/L/", LINES1]);
+check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
+check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
 
 #[test]
 fn subst_write_file() -> std::io::Result<()> {
@@ -244,6 +242,8 @@ fn subst_write_file() -> std::io::Result<()> {
     Ok(())
 }
 
+////////////////////////////////////////////////////////////
+// Transliteration: y
 check_output!(trans_simple, ["-e", r"y/0123456789/9876543210/", LINES1]);
 check_output!(
     trans_delimiter,
@@ -251,10 +251,10 @@ check_output!(
 );
 check_output!(trans_no_new_line, ["-e", r"y/l/L/", NO_NEW_LINE]);
 check_output!(trans_newline, ["-e", r"1N;2y/\n/X/", LINES1]);
-check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
-check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
-check_output!(print_to_newline, ["-n", r"1{;N;P;P;p;}", LINES1]);
 
+////////////////////////////////////////////////////////////
+// Pattern space manipulation: D, d, H, h, N, n, P, p, q, x
+check_output!(pattern_print_to_newline, ["-n", r"1{;N;P;P;p;}", LINES1]);
 check_output!(pattern_next_print, ["-n", r"N;N;P", LINES1]);
 check_output!(pattern_delete_to_newline, ["-n", r"2N;3p;3D;3p", LINES1]);
 check_output!(pattern_delete_no_newline, ["-e", r"2D", LINES1]);
@@ -278,7 +278,11 @@ check_output!(pattern_next_print_output, ["-e", r"4n;p", LINES1]);
 check_output!(pattern_next_print_no_output, ["-n", "-e", r"4n;p", LINES1]);
 check_output!(pattern_quit, [r"5q", LINES1]);
 check_output!(pattern_quit_2, [r"5q", LINES1, LINES2]);
+check_output!(pattern_re_reuse, ["-n", r"/_1/p;//p", LINES1]);
+check_output!(pattern_subst_re_reuse, ["-n", r"/_1/p;s//-N/p", LINES1]);
 
+////////////////////////////////////////////////////////////
+// Command blocks: {}
 check_output!(
     block_simple_range,
     [
@@ -379,6 +383,8 @@ b label3
     ]
 );
 
+////////////////////////////////////////////////////////////
+// Branching: :, b, t
 check_output!(
     branch_conditional_simple,
     [
@@ -465,3 +471,150 @@ tb"#,
         LINES1
     ]
 );
+
+////////////////////////////////////////////////////////////
+// Text: a, c, i
+check_output!(
+    text_insert_quit,
+    [
+        "-e",
+        r#"
+5i\
+hello
+5q
+"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    text_insert_between_subst,
+    [
+        "-n",
+        "-e",
+        r#"
+s/^/before_i/p
+20i\
+inserted
+s/^/after_i/p
+"#,
+        LINES1,
+        LINES2
+    ]
+);
+
+check_output!(
+    text_append_between_subst,
+    [
+        "-n",
+        "-e",
+        r#"
+5,12s/^/5-12/
+s/^/before_a/p
+/5-12/a\
+appended
+s/^/after_a/p
+"#,
+        LINES1,
+        LINES2
+    ]
+);
+
+check_output!(
+    text_append_before_next,
+    [
+        "-n",
+        "-e",
+        r#"
+s/^/^/p
+/l1_/a\
+appended
+8,10N
+s/$/$/p
+"#,
+        LINES1,
+        LINES2
+    ]
+);
+
+check_output!(
+    text_change_global,
+    [
+        "-n",
+        "-e",
+        r#"
+c\
+hello
+"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    text_change_line,
+    [
+        "-n",
+        "-e",
+        r#"
+8c\
+hello
+"#,
+        LINES1
+    ]
+);
+
+check_output!(
+    text_change_range,
+    [
+        "-n",
+        "-e",
+        r#"
+3,14c\
+hello
+"#,
+        LINES1
+    ]
+);
+
+// SunOS and GNU sed behave differently.   We follow POSIX.
+check_output!(
+    text_change_reverse_range,
+    [
+        "-n",
+        "-e",
+        r#"
+8,3c\
+hello
+"#,
+        LINES1
+    ]
+);
+
+check_output!(text_delete, ["d", LINES1]);
+
+// Check that the pattern space is deleted.
+check_output!(
+    text_change_print,
+    [
+        "-n",
+        "-e",
+        r#"
+c\
+changed
+p
+"#,
+        LINES1
+    ]
+);
+
+////////////////////////////////////////////////////////////
+// Large complex scripts
+
+// Math expression evaluation
+check_output!(math1, ["-f", "script/math.sed", "input/expression1"]);
+
+// Calculate π (scaled) to several decimal places
+check_output!(pi, ["-f", "script/math.sed", "input/pi"]);
+
+// Solve the Towers of Hanoi puzzle
+check_output!(hanoi, ["-f", "script/hanoi.sed", "input/hanoi"]);

@@ -9,12 +9,13 @@
 // file that was distributed with this source code.
 
 use crate::command::{
-    Address, AddressType, AddressValue, Command, CommandData, InputAction, ProcessingContext,
-    Substitution, Transliteration,
+    Address, AddressType, AddressValue, AppendElement, Command, CommandData, InputAction,
+    ProcessingContext, Substitution, Transliteration,
 };
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::in_place::InPlace;
 use crate::named_writer;
+use fancy_regex::Regex;
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
@@ -25,12 +26,16 @@ use uucore::error::{UResult, USimpleError};
 fn match_address(
     addr: &Address,
     pattern: &mut IOChunk,
-    context: &ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<bool> {
     match addr.atype {
         AddressType::Re => {
             if let AddressValue::Regex(ref re) = addr.value {
-                Ok(re.is_match(pattern.as_str()?))
+                let regex = re_or_saved_re(re, context)?;
+                let matched = regex.is_match(pattern.as_str()?).map_err(|e| {
+                    USimpleError::new(2, format!("regular expression match error: {}", e))
+                })?;
+                Ok(matched)
             } else {
                 Ok(false)
             }
@@ -161,6 +166,25 @@ fn write_chunk(
     Ok(())
 }
 
+/// Return a reference to the current or the saved RE if the RE is None.
+/// Update the saved RE to RE.
+fn re_or_saved_re<'a>(
+    regex: &Option<Regex>,
+    context: &'a mut ProcessingContext,
+) -> UResult<&'a Regex> {
+    if let Some(re) = regex {
+        // First time we see this regex: clone it *once* into the context.
+        context.saved_regex = Some(re.clone());
+        // Return a reference into context.saved_regex.
+        Ok(context.saved_regex.as_ref().unwrap())
+    } else if let Some(ref saved_re) = context.saved_regex {
+        // We already have one: just borrow it.
+        Ok(saved_re)
+    } else {
+        Err(USimpleError::new(2, "no previous regular expression"))
+    }
+}
+
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
@@ -175,8 +199,17 @@ fn substitute(
 
     let text = pattern.as_str()?;
 
-    for caps in sub.regex.captures_iter(text) {
+    let regex = re_or_saved_re(&sub.regex, context)?;
+
+    for caps in regex.captures_iter(text) {
         count += 1;
+        let caps = caps.map_err(|e| {
+            USimpleError::new(
+                2,
+                format!("regular expression capture retrieval error: {}", e),
+            )
+        })?;
+
         let m = caps.get(0).unwrap();
 
         // Always write the unmatched text before this match.
@@ -237,6 +270,22 @@ fn transliterate(pattern: &mut IOChunk, trans: &Transliteration) -> UResult<()> 
     Ok(())
 }
 
+/// Output any data queued for output at the end of the cycle.
+fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> UResult<()> {
+    for elem in &context.append_elements {
+        match elem {
+            AppendElement::Text(text) => {
+                output.write_str(text.clone())?;
+            }
+            AppendElement::File(path) => {
+                output.copy_file(path)?;
+            }
+        }
+    }
+    context.append_elements.clear();
+    Ok(())
+}
+
 /// Process a single input file
 fn process_file(
     commands: &Option<Rc<RefCell<Command>>>,
@@ -288,7 +337,14 @@ fn process_file(
                     // Block end: continue with the block's patched next.
                 }
                 'a' => {
-                    // TODO
+                    // Write the text to standard output at a later point.
+                    let text = match &command.data {
+                        CommandData::Text(text) => text,
+                        _ => panic!("Expected Text command data"),
+                    };
+                    context
+                        .append_elements
+                        .push(AppendElement::Text(text.clone().into_owned()));
                 }
                 'b' => {
                     // Branch to the specified label or end if none is given.
@@ -305,7 +361,17 @@ fn process_file(
                     }
                 }
                 'c' => {
-                    // TODO
+                    // At range end replace pattern space with text and
+                    // start the next cycle.
+                    pattern.clear();
+                    if command.addr2.is_none() || context.last_address || context.last_line {
+                        let text = match &command.data {
+                            CommandData::Text(text) => text,
+                            _ => panic!("Expected Text command data"),
+                        };
+                        output.write_str(text.as_ref())?;
+                    }
+                    break;
                 }
                 'd' => {
                     // Delete the pattern space and start the next cycle.
@@ -348,7 +414,12 @@ fn process_file(
                     context.hold.has_newline = pattern.is_newline_terminated();
                 }
                 'i' => {
-                    // TODO
+                    // Write text to standard output.
+                    let text = match &command.data {
+                        CommandData::Text(text) => text,
+                        _ => panic!("Expected Text command data"),
+                    };
+                    output.write_str(text.as_ref())?;
                 }
                 'l' => {
                     // TODO
@@ -357,6 +428,7 @@ fn process_file(
                     break;
                 }
                 'N' => {
+                    flush_appends(output, context)?;
                     // Append to pattern `\n` and the next line
                     // Rather than reading input here, which would result
                     // in a double borrow on reader, modify the action
@@ -449,6 +521,8 @@ fn process_file(
         if !context.quiet {
             write_chunk(output, context, &pattern)?;
         }
+
+        flush_appends(output, context)?;
 
         if context.stop_processing {
             break;
