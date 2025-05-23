@@ -14,7 +14,12 @@ and other extensions.
 
 ## Status
 
-It is currently work in progress!
+This is still work in progress, but the current version can
+already execute complex scripts,
+such as solving the Towers of Hanoi puzzle and performing
+arbitrary precision integer arithmetic.
+The commands `=`, `l`, `r`, and `w`, as well as in-place replacement
+are still missing.
 
 ## Installation
 
