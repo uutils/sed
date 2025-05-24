@@ -13,7 +13,7 @@
 
 use crate::named_writer::NamedWriter;
 
-use fancy_regex::{Captures, Match, Regex};
+use fancy_regex::{Captures, Regex};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -155,9 +155,9 @@ impl ReplacementTemplate {
     /// Apply the template to the given RE captures.
     /// Example:
     /// let result = regex.replace_all(input, |caps: &Captures| {
-    ///    template.apply_captures(caps) });
+    ///    template.apply(caps) });
     /// Returns an error if a backreference in the template was not matched by the RE.
-    pub fn apply_captures(&self, caps: &Captures) -> UResult<String> {
+    pub fn apply(&self, caps: &Captures) -> UResult<String> {
         let mut result = String::new();
 
         // Invalid group numbers may end here through (unkown at compile time)
@@ -190,24 +190,6 @@ impl ReplacementTemplate {
         }
 
         Ok(result)
-    }
-
-    /// Apply the template to the given RE single match.
-    pub fn apply_match(&self, m: &Match) -> String {
-        let mut result = String::new();
-
-        for part in &self.parts {
-            match part {
-                ReplacementPart::Literal(s) => result.push_str(s),
-
-                ReplacementPart::WholeMatch => result.push_str(m.as_str()),
-
-                ReplacementPart::Group(_) => {
-                    panic!("unexpected Regex group replacement")
-                }
-            }
-        }
-        result
     }
 }
 
@@ -370,7 +352,7 @@ mod tests {
         let template = ReplacementTemplate::default();
         let caps = caps_for("foo", "foo");
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply(&caps).unwrap();
         assert_eq!(result, "");
     }
 
@@ -380,7 +362,7 @@ mod tests {
         let template = ReplacementTemplate::new(vec![ReplacementPart::Literal("hello".into())]);
         let caps = caps_for("abc", "abc");
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply(&caps).unwrap();
         assert_eq!(result, "hello");
     }
 
@@ -393,7 +375,7 @@ mod tests {
         ]);
         let caps = caps_for(r"foo\d+", "foo42");
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply(&caps).unwrap();
         assert_eq!(result, "got: foo42");
     }
 
@@ -406,7 +388,7 @@ mod tests {
         ]);
         let caps = caps_for(r"foo(\d+)", "foo42");
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply(&caps).unwrap();
         assert_eq!(result, "number: 42");
     }
 
@@ -421,7 +403,7 @@ mod tests {
         ]);
         let caps = caps_for(r"(\w+):(\d+)", "x:123");
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply(&caps).unwrap();
         assert_eq!(result, "key: x, value: 123");
     }
 
@@ -436,7 +418,7 @@ mod tests {
         ]);
         let caps = caps_for(r"(\w+):(\d+)", "x:123");
 
-        let result = template.apply_captures(&caps);
+        let result = template.apply(&caps);
         assert!(result.is_err());
 
         let msg = result.unwrap_err().to_string();
