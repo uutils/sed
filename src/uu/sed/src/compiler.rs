@@ -762,7 +762,7 @@ pub fn compile_replacement(
                     if !literal.is_empty() {
                         parts.push(ReplacementPart::Literal(literal));
                     }
-                    return Ok(ReplacementTemplate { parts });
+                    return Ok(ReplacementTemplate::new(parts));
                 }
 
                 c => {
