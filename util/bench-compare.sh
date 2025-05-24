@@ -17,7 +17,11 @@ paste -d , "$1" "$2" |
 
   awk -F, 'FNR != 1 {
     printf("%22s ", $3);
-    if ($4 / $12 > 1.1)
+    if (!$4)
+      printf("%12s encountered an error\n", $1);
+    else if (!$12)
+      printf("%12s encountered an error\n", $2);
+    else if ($4 / $12 > 1.1)
       printf("%12s is %5.1f times faster than %s\n", $2, $4 / $12, $1);
     else if ($12 / $4 > 1.1)
       printf("%12s is %5.1f times faster than %s\n", $1, $12 / $4, $2);

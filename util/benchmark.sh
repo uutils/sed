@@ -22,14 +22,18 @@ SCRIPTS=tests/fixtures/sed/script
 # Run hyperfine with the specified name and command and collect the results.
 bench_run()
 {
-  hyperfine --command-name "$1" --warmup 2 --export-csv out.csv "$2"
-
-  # Append the results sans-heading
-  sed 1d out.csv >>"$OUT"
+  if hyperfine --command-name "$1" --warmup 2 --export-csv out.csv "$2" ; then
+    # Output the results sans-heading.
+    sed 1d out.csv >>"$OUT"
+  else
+    # Unable to run; output a named empty record.
+    echo "$1,,,,,,," >>"$OUT"
+  fi
 
   rm out.csv
 }
 
+# Shared heading
 echo 'command,mean,stddev,median,user,system,min,max' >"$OUT"
 
 # Short line processing
