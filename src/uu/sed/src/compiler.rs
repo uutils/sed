@@ -706,14 +706,18 @@ pub fn compile_replacement(
                     }
 
                     match line.current() {
-                        // \1 - \9
-                        c @ '1'..='9' => {
+                        // \0 - \9
+                        c @ '0'..='9' => {
                             let ref_num = c.to_digit(10).unwrap();
 
                             if !literal.is_empty() {
                                 parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
                             }
-                            parts.push(ReplacementPart::Group(ref_num));
+                            if ref_num == 0 {
+                                parts.push(ReplacementPart::WholeMatch);
+                            } else {
+                                parts.push(ReplacementPart::Group(ref_num));
+                            }
                             line.advance();
                         }
 
@@ -1797,6 +1801,18 @@ mod tests {
     #[test]
     fn test_compile_replacement_whole_match() {
         let (mut lines, mut chars) = make_providers("/The match was: &/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 2);
+        assert!(
+            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "The match was: ")
+        );
+        assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
+    }
+
+    #[test]
+    fn test_compile_replacement_whole_match_synonym() {
+        let (mut lines, mut chars) = make_providers(r"/The match was: \0/");
         let template = compile_replacement(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 2);
