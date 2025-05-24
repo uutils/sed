@@ -199,33 +199,49 @@ fn substitute(
 
     let regex = re_or_saved_re(&sub.regex, context)?;
 
-    // Iterate over multiple captures of the RE in the pattern.
-    for caps in regex.captures_iter(pattern)? {
-        count += 1;
-        let caps = caps?;
+    match (sub.occurrence, sub.replacement.max_group_number) {
+        (1, 0) => {
+            let m = regex.find(pattern)?;
+            if let Some(m) = m {
+                text = Some(pattern.as_str()?);
+                result.push_str(&text.unwrap()[last_end..m.start()]);
 
-        let m = caps.get(0)?.unwrap();
-
-        // Always write the unmatched text before this match.
-        if text.is_none() {
-            text = Some(pattern.as_str()?);
+                let replacement = sub.replacement.apply_match(&m);
+                result.push_str(&replacement);
+                replaced = true;
+                last_end = m.end();
+            }
         }
-        result.push_str(&text.unwrap()[last_end..m.start()]);
+        (_, _) => {
+            // Iterate over multiple captures of the RE in the pattern.
+            for caps in regex.captures_iter(pattern)? {
+                count += 1;
+                let caps = caps?;
 
-        if sub.occurrence == 0 || count == sub.occurrence {
-            let replacement = sub.replacement.apply(&caps)?;
-            result.push_str(&replacement);
-            replaced = true;
-        } else {
-            // Not the target match — leave the match unchanged.
-            result.push_str(m.as_str());
-        }
+                let m = caps.get(0)?.unwrap();
 
-        last_end = m.end();
+                // Always write the unmatched text before this match.
+                if text.is_none() {
+                    text = Some(pattern.as_str()?);
+                }
+                result.push_str(&text.unwrap()[last_end..m.start()]);
 
-        // Early exit if only a specific occurrence (likely 1) needed replacing.
-        if count == sub.occurrence {
-            break;
+                if sub.occurrence == 0 || count == sub.occurrence {
+                    let replacement = sub.replacement.apply_captures(&caps)?;
+                    result.push_str(&replacement);
+                    replaced = true;
+                } else {
+                    // Not the target match — leave the match unchanged.
+                    result.push_str(m.as_str());
+                }
+
+                last_end = m.end();
+
+                // Early exit if only a specific occurrence (likely 1) needed replacing.
+                if count == sub.occurrence {
+                    break;
+                }
+            }
         }
     }
 

@@ -114,6 +114,39 @@ impl Regex {
             }
         }
     }
+
+    /// Return a non-capturing result for a single match.
+    pub fn find<'t>(&self, chunk: &'t IOChunk) -> UResult<Option<Match<'t>>> {
+        match self {
+            Regex::Byte(re) => {
+                let haystack = chunk.as_bytes();
+                if let Some(m) = re.find(haystack) {
+                    // Attempt UTF-8 decode for the match region only
+                    let text = std::str::from_utf8(&haystack[m.start()..m.end()])
+                        .map_err(|e| USimpleError::new(2, e.to_string()))?;
+                    Ok(Some(Match {
+                        start: m.start(),
+                        end: m.end(),
+                        text,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            Regex::Fancy(re) => {
+                let text = chunk.as_str()?;
+                match re.find(text) {
+                    Ok(Some(m)) => Ok(Some(Match {
+                        start: m.start(),
+                        end: m.end(),
+                        text: m.as_str(),
+                    })),
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(USimpleError::new(2, e.to_string())),
+                }
+            }
+        }
+    }
 }
 
 /// Unified enum for holding either byte or fancy capture iterators.
