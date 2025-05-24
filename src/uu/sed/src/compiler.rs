@@ -816,11 +816,21 @@ fn compile_subst_command(
         );
     }
 
-    if pattern.is_empty() {
-        subst.regex = None; // Will be reuse saved RE at runtime.
-    } else {
-        // Compile regex with now known ignore_case flag.
-        subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
+    // Compile regex with now known ignore_case flag.
+    subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
+
+    // Catch invalid group references at compile time, if possible.
+    if let Some(regex) = &subst.regex {
+        if subst.replacement.max_group_number > regex.captures_len() - 1 {
+            return compilation_error(
+                lines,
+                line,
+                format!(
+                    "invalid reference \\{} on `s' command's RHS",
+                    subst.replacement.max_group_number
+                ),
+            );
+        }
     }
 
     cmd.data = CommandData::Substitution(subst);
@@ -1987,6 +1997,15 @@ mod tests {
             }
             _ => panic!("Expected CommandData::Substitution"),
         }
+    }
+
+    #[test]
+    fn test_compile_subst_invalid_group_reference() {
+        let (mut lines, mut chars) = make_providers(r"s/f(o)o/\2/");
+        let mut cmd = Command::default();
+
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
+        assert!(err.to_string().contains("invalid reference \\2"));
     }
 
     // bre_to_ere

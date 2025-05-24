@@ -124,7 +124,7 @@ pub enum ReplacementPart {
 /// All specified replacements for an RE
 pub struct ReplacementTemplate {
     pub parts: Vec<ReplacementPart>,
-    max_group_number: usize, // Maximum referenced group number (e.g. 8 for \8)
+    pub max_group_number: usize, // Highest used group number (e.g. 8 for \8)
 }
 
 impl Default for ReplacementTemplate {
