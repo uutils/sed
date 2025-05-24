@@ -14,6 +14,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+use memchr::memchr;
 #[cfg(unix)]
 use memmap2::Mmap;
 
@@ -69,10 +70,12 @@ impl<'a> MmapLineCursor<'a> {
         }
 
         let start = self.pos;
-        let mut end = start;
-        while end < self.data.len() && self.data[end] != b'\n' {
-            end += 1;
-        }
+
+        let mut end = if let Some(pos) = memchr(b'\n', &self.data[start..]) {
+            pos + start
+        } else {
+            self.data.len()
+        };
 
         if end < self.data.len() {
             end += 1; // include \n in full span

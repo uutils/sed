@@ -703,6 +703,7 @@ dependencies = [
  "ctor",
  "fancy-regex",
  "libc",
+ "memchr",
  "memmap2",
  "phf",
  "phf_codegen",
@@ -896,6 +897,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "fancy-regex",
+ "memchr",
  "memmap2",
  "regex",
  "tempfile",
