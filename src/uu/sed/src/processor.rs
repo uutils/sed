@@ -225,6 +225,11 @@ fn substitute(
         }
 
         last_end = m.end();
+
+        // Early exit if only a specific occurrence (likely 1) needed replacing.
+        if count == sub.occurrence {
+            break;
+        }
     }
 
     // Handle substitution success.
