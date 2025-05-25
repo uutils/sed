@@ -201,6 +201,7 @@ fn substitute(
 
     match (sub.occurrence, sub.replacement.max_group_number) {
         (1, 0) => {
+            // Example: s/foo/bar/: find() is enough.
             let m = regex.find(pattern)?;
             if let Some(m) = m {
                 text = Some(pattern.as_str()?);
@@ -212,7 +213,24 @@ fn substitute(
                 last_end = m.end();
             }
         }
+
+        (1, _) => {
+            // Example: s/\(.\)\(.\)/\2\1/: captures() is enough.
+            let caps = regex.captures(pattern)?;
+            if let Some(caps) = caps {
+                let m = caps.get(0)?.unwrap();
+                text = Some(pattern.as_str()?);
+                result.push_str(&text.unwrap()[last_end..m.start()]);
+
+                let replacement = sub.replacement.apply_captures(&caps)?;
+                result.push_str(&replacement);
+                replaced = true;
+                last_end = m.end();
+            }
+        }
+
         (_, _) => {
+            // Example: s/(.)(.)/\2\1/3: captures_iter() is needed.
             // Iterate over multiple captures of the RE in the pattern.
             for caps in regex.captures_iter(pattern)? {
                 count += 1;
@@ -237,7 +255,8 @@ fn substitute(
 
                 last_end = m.end();
 
-                // Early exit if only a specific occurrence (likely 1) needed replacing.
+                // Early exit if only a specific occurrence,
+                // (likely 1) needed replacing.
                 if count == sub.occurrence {
                     break;
                 }
