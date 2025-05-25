@@ -11,9 +11,9 @@
 // TODO: remove when compile is implemented
 #![allow(dead_code)]
 
+use crate::fast_regex::{Captures, Regex};
 use crate::named_writer::NamedWriter;
 
-use fancy_regex::{Captures, Regex};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -177,14 +177,12 @@ impl ReplacementTemplate {
                 ReplacementPart::Literal(s) => result.push_str(s),
 
                 ReplacementPart::WholeMatch => {
-                    result.push_str(caps.get(0).map_or("", |m| m.as_str()));
+                    result.push_str(caps.get(0)?.map(|m| m.as_str()).unwrap_or(""));
                 }
 
                 ReplacementPart::Group(n) => {
-                    result.push_str(
-                        caps.get((*n).try_into().unwrap())
-                            .map_or("", |m| m.as_str()),
-                    );
+                    let i: usize = (*n).try_into().unwrap();
+                    result.push_str(caps.get(i)?.map(|m| m.as_str()).unwrap_or(""));
                 }
             }
         }
@@ -336,12 +334,13 @@ pub struct InputAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fast_io::IOChunk;
 
     // Return the captures for the RE applied to the specified string
-    fn caps_for<'a>(re: &str, input: &'a str) -> Captures<'a> {
+    fn caps_for<'a>(re: &str, chunk: &'a mut IOChunk) -> Captures<'a> {
         Regex::new(re)
             .unwrap()
-            .captures(input)
+            .captures(chunk)
             .unwrap()
             .expect("captures")
     }
@@ -350,7 +349,8 @@ mod tests {
     // s/foo//
     fn test_empty_template() {
         let template = ReplacementTemplate::default();
-        let caps = caps_for("foo", "foo");
+        let input = &mut IOChunk::from_str("foo");
+        let caps = caps_for("foo", input);
 
         let result = template.apply(&caps).unwrap();
         assert_eq!(result, "");
@@ -360,7 +360,8 @@ mod tests {
     // s/abc/hello/
     fn test_literal_only() {
         let template = ReplacementTemplate::new(vec![ReplacementPart::Literal("hello".into())]);
-        let caps = caps_for("abc", "abc");
+        let input = &mut IOChunk::from_str("abc");
+        let caps = caps_for("abc", input);
 
         let result = template.apply(&caps).unwrap();
         assert_eq!(result, "hello");
@@ -373,7 +374,8 @@ mod tests {
             ReplacementPart::Literal("got: ".into()),
             ReplacementPart::WholeMatch,
         ]);
-        let caps = caps_for(r"foo\d+", "foo42");
+        let input = &mut IOChunk::from_str("foo42");
+        let caps = caps_for(r"foo\d+", input);
 
         let result = template.apply(&caps).unwrap();
         assert_eq!(result, "got: foo42");
@@ -386,7 +388,8 @@ mod tests {
             ReplacementPart::Literal("number: ".into()),
             ReplacementPart::Group(1),
         ]);
-        let caps = caps_for(r"foo(\d+)", "foo42");
+        let input = &mut IOChunk::from_str("foo42");
+        let caps = caps_for(r"foo(\d+)", input);
 
         let result = template.apply(&caps).unwrap();
         assert_eq!(result, "number: 42");
@@ -401,7 +404,8 @@ mod tests {
             ReplacementPart::Literal(", value: ".into()),
             ReplacementPart::Group(2),
         ]);
-        let caps = caps_for(r"(\w+):(\d+)", "x:123");
+        let input = &mut IOChunk::from_str("x:123");
+        let caps = caps_for(r"(\w+):(\d+)", input);
 
         let result = template.apply(&caps).unwrap();
         assert_eq!(result, "key: x, value: 123");
@@ -416,7 +420,8 @@ mod tests {
             ReplacementPart::Literal(", value: ".into()),
             ReplacementPart::Group(3),
         ]);
-        let caps = caps_for(r"(\w+):(\d+)", "x:123");
+        let input = &mut IOChunk::from_str("x:123");
+        let caps = caps_for(r"(\w+):(\d+)", input);
 
         let result = template.apply(&caps);
         assert!(result.is_err());
