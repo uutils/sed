@@ -60,7 +60,7 @@ sed = { optional = true, version = "0.0.1", package = "uu_sed", path = "src/uu/s
 sysinfo = { workspace = true }
 textwrap = { workspace = true }
 uucore = { workspace = true }
-uutests = "0.0.30"
+uutests = "0.1.0"
 
 [dev-dependencies]
 chrono = { workspace = true }
