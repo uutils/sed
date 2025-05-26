@@ -34,20 +34,42 @@ pub enum Regex {
 impl Regex {
     /// Construct the most efficient engine possible
     pub fn new(pattern: &str) -> Result<Self, Box<dyn Error>> {
+        // REs requiring the fancy_regex capabilities rather than the
+        // regex::bytes engine
+        // Consider . as one character that requires fancy_regex,
+        // because it can match more than one byte when matching a
+        // two or more byte Unicode UTF-8 representation.
+        // It is an RE . rather than a literal one in the following
+        // example sitations.
+        // .        First character of the line
+        // [^\\].   Second character after non \
+        //
+        //   \*.    A consumed backslash anywhere on the line
+        //   \\.    An escaped backslash anywhere on the line
+        //   xx.    A non-escaped sequence anywhere on the line
+        // But the following are literal dots and can be captured by bytes:
+        // \.       escaped at the beginning of the line
+        //   x\.    escaped after a non escaped \ anywhere on the line
+        //
+        // The following RE captures these situations.
         static NEEDS_FANCY_RE: Lazy<regex::Regex> = Lazy::new(|| {
             regex::Regex::new(
                 r"(?x) # Turn on verbose mode
                   (                       # An ASCII-incompatible RE
-                    ( ^ | [^\\] )         # Non-escaped, so BOL or not \
+                    ( ^                   # Non-escaped: i.e. at BOL
+                      | ^[^\\]            # or after a BOL non \
+                      | [^\\] {2}         # or after two non \ characters
+                      | \\.               # or after a consumed or escaped \
+                    )
                     (                     # A potentially incompatible match
                       \.                  # . matches any Unicode character
-                      | \[\^              # Bracketed negative character class
-                      | \(\?i             # Case insensitive is done on Unicode
+                      | \[\^              # Bracketed -ve character class
+                      | \(\?i             # (Unicode) case insensitive 
                       | \\[WwDdSsBbPp]    # Unicode classes
-                      | \\[0-9]           # Only fancy supports back-references
+                      | \\[0-9]           # Back-references need fancy
                     )
                   )
-                  | [^\x01-\x7f]          # Or any non-ASCII character in the RE
+                  | [^\x01-\x7f]          # Any non-ASCII character
                 ",
             )
             .unwrap()
@@ -265,15 +287,35 @@ mod tests {
     }
 
     #[test]
+    fn selects_byte_regex_for_escpaped_dot_bol() {
+        assert_byte(r"\.");
+    }
+
+    #[test]
+    fn selects_byte_regex_for_escpaped_dot_non_bol() {
+        assert_byte(r"x\.");
+    }
+
+    #[test]
+    fn selects_byte_regex_for_escaped_class() {
+        assert_byte(r"\[^x]");
+    }
+
+    #[test]
+    fn selects_byte_regex_for_escaped_case_insensitive_flag() {
+        assert_byte(r"\(?i\)");
+    }
+
+    #[test]
+    fn selects_byte_regex_for_escaped_unicode_class() {
+        assert_byte(r"\\w");
+    }
+
+    #[test]
     fn selects_byte_regex_for_simple_ascii() {
         assert_byte(r"foo");
         assert_byte(r"foo|bar");
         assert_byte(r"^foo[0-9]+bar$");
-        // Escaped Unicode triggers shouldn't trigger RE.
-        assert_byte(r"\.");
-        assert_byte(r"\[^x]");
-        assert_byte(r"\\(?i)");
-        assert_byte(r"\\w");
     }
 
     #[test]
@@ -294,12 +336,27 @@ mod tests {
 
     #[test]
     fn selects_fancy_for_dot() {
-        assert_fancy(r"."); // Dot matches any Unicode char.
+        assert_fancy(r".");
+        assert_fancy(r"x.");
+        assert_fancy(r"xx.");
+    }
+
+    #[test]
+    fn selects_fancy_for_consumed_backslash() {
+        assert_fancy(r"\*.");
+        assert_fancy(r"x\*.");
+    }
+
+    #[test]
+    fn selects_fancy_for_escaped_backslash() {
+        assert_fancy(r"\\.");
+        assert_fancy(r"x\\.");
     }
 
     #[test]
     fn selects_fancy_for_inline_flags() {
         assert_fancy(r"(?i)abc"); // Unicode case-insensitive
+        assert_fancy(r"x(?i)abc"); // Unicode case-insensitive
     }
 
     #[test]
