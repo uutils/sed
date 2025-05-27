@@ -15,6 +15,7 @@ use fancy_regex::{
     CaptureMatches as FancyCaptureMatches, Captures as FancyCaptures, Regex as FancyRegex,
 };
 use once_cell::sync::Lazy;
+use regex::Regex as RustRegex;
 use regex::bytes::{
     CaptureMatches as ByteCaptureMatches, Captures as ByteCaptures, Regex as ByteRegex,
 };
@@ -22,6 +23,76 @@ use std::error::Error;
 use uucore::error::{UResult, USimpleError};
 
 use crate::fast_io::IOChunk;
+
+/// REs requiring the fancy_regex capabilities rather than the
+/// faster regex::bytes engine
+// Consider . as one character that requires fancy_regex,
+// because it can match more than one byte when matching a
+// two or more byte Unicode UTF-8 representation.
+// It is an RE . rather than a literal one in the following
+// example sitations.
+// .        First character of the line
+// [^\\].   Second character after non \
+//
+//   \*.    A consumed backslash anywhere on the line
+//   \\.    An escaped backslash anywhere on the line
+//   xx.    A non-escaped sequence anywhere on the line
+// But the following are literal dots and can be captured by bytes:
+// \.       escaped at the beginning of the line
+//   x\.    escaped after a non escaped \ anywhere on the line
+//
+// The following RE captures these situations.
+static NEEDS_FANCY_RE: Lazy<RustRegex> = Lazy::new(|| {
+    regex::Regex::new(
+        r"(?x) # Turn on verbose mode
+          (                       # An ASCII-incompatible RE
+            ( ^                   # Non-escaped: i.e. at BOL
+              | ^[^\\]            # or after a BOL non \
+              | [^\\] {2}         # or after two non \ characters
+              | \\.               # or after a consumed or escaped \
+            )
+            (                     # A potentially incompatible match
+              \.                  # . matches any Unicode character
+              | \[\^              # Bracketed -ve character class
+              | \(\?i             # (Unicode) case insensitive
+              | \\[WwDdSsBbPp]    # Unicode classes
+              | \\[0-9]           # Back-references need fancy
+            )
+          )
+          | [^\x01-\x7f]          # Any non-ASCII character
+        ",
+    )
+    .unwrap()
+});
+
+/// All characters signifying that the match must be handled by an RE
+/// rather than by plain string pattern matching.
+// These do not include the ^$ metacharacters, which we can easily handle.
+// Plain string fixed-string matching is currently faster than Regex
+// matching, because Regex always constructs an automaton and needs
+// to handle state transitions, whereas plain string matching can
+// use tailored CPU string or vectored instructions.
+static NEEDS_RE: Lazy<RustRegex> = Lazy::new(|| {
+    regex::Regex::new(
+        r"(?x) # Turn on verbose mode
+          ( ^                   # Non-escaped: i.e. at BOL
+             | ^[^\\]            # or after a BOL non \
+             | [^\\] {2}         # or after two non \ characters
+             | \\.               # or after a consumed or escaped \
+           )
+           (                     # A potentially incompatible match
+              [.?|+(\[{*]        # Any magic RE character
+                                 # Some are operators so illegal at
+                                 # BOL but they should error there,
+                                 # not use them as literals.
+             | \\[WwDdSsPp]      # Unicode classes
+             | \\[AzBb]          # Empty matches
+             | \\[0-9]           # Back-references
+           )
+        ",
+    )
+    .unwrap()
+});
 
 #[derive(Clone, Debug)]
 /// A regular expression that can be implemented through Byte or Fancy-Regex
@@ -34,47 +105,6 @@ pub enum Regex {
 impl Regex {
     /// Construct the most efficient engine possible
     pub fn new(pattern: &str) -> Result<Self, Box<dyn Error>> {
-        // REs requiring the fancy_regex capabilities rather than the
-        // regex::bytes engine
-        // Consider . as one character that requires fancy_regex,
-        // because it can match more than one byte when matching a
-        // two or more byte Unicode UTF-8 representation.
-        // It is an RE . rather than a literal one in the following
-        // example sitations.
-        // .        First character of the line
-        // [^\\].   Second character after non \
-        //
-        //   \*.    A consumed backslash anywhere on the line
-        //   \\.    An escaped backslash anywhere on the line
-        //   xx.    A non-escaped sequence anywhere on the line
-        // But the following are literal dots and can be captured by bytes:
-        // \.       escaped at the beginning of the line
-        //   x\.    escaped after a non escaped \ anywhere on the line
-        //
-        // The following RE captures these situations.
-        static NEEDS_FANCY_RE: Lazy<regex::Regex> = Lazy::new(|| {
-            regex::Regex::new(
-                r"(?x) # Turn on verbose mode
-                  (                       # An ASCII-incompatible RE
-                    ( ^                   # Non-escaped: i.e. at BOL
-                      | ^[^\\]            # or after a BOL non \
-                      | [^\\] {2}         # or after two non \ characters
-                      | \\.               # or after a consumed or escaped \
-                    )
-                    (                     # A potentially incompatible match
-                      \.                  # . matches any Unicode character
-                      | \[\^              # Bracketed -ve character class
-                      | \(\?i             # (Unicode) case insensitive 
-                      | \\[WwDdSsBbPp]    # Unicode classes
-                      | \\[0-9]           # Back-references need fancy
-                    )
-                  )
-                  | [^\x01-\x7f]          # Any non-ASCII character
-                ",
-            )
-            .unwrap()
-        });
-
         if NEEDS_FANCY_RE.is_match(pattern) {
             Ok(Self::Fancy(FancyRegex::new(pattern)?))
         } else {
@@ -272,102 +302,130 @@ impl<'t> Captures<'t> {
 mod tests {
     use super::*;
 
-    fn assert_byte(pattern: &str) {
-        let re = Regex::new(pattern).unwrap();
-        assert!(re.is_byte(), "Pattern {:?} should use Byte engine", pattern);
-    }
+    // FANCY_RE
+    #[test]
+    fn test_needs_fancy_re_matches() {
+        let should_match = [
+            // Unicode classes BOL
+            r"\p{L}+", // Unicode letter class
+            r"\W",     // \W is Unicode-aware.
+            r"\S+",    // \S is Unicode-aware.
+            r"\d",     // \d includes all Unicode digits.
+            // Unicode classes non-BOL
+            r"x\p{L}+", // Unicode letter class
+            r"x\W",     // \W is Unicode-aware.
+            r"x\S+",    // \S is Unicode-aware.
+            r"x\d",     // \d includes all Unicode digits.
+            // .
+            r".",
+            r"x.",
+            r"xx.",
+            // Consumed \
+            r"\*.",
+            r"x\*.",
+            // Escaped \
+            r"\\.",
+            r"x\\.",
+            // Inline flags
+            r"(?i)abc",  // Unicode case-insensitive
+            r"x(?i)abc", // Unicode case-insensitive
+            r"(\w+):\1", // back-reference \1
+            // Non-ASCII literals
+            "naïve", // Contains literal non-ASCII.
+            "café",  // Contains literal non-ASCII.
+        ];
 
-    fn assert_fancy(pattern: &str) {
-        let re = Regex::new(pattern).unwrap();
-        assert!(
-            !re.is_byte(),
-            "Pattern {:?} should use Fancy engine",
-            pattern
-        );
+        for pat in &should_match {
+            assert!(
+                NEEDS_FANCY_RE.is_match(pat),
+                "Expected NEEDS_FANCY_RE to match: {:?}",
+                pat
+            );
+        }
     }
 
     #[test]
-    fn selects_byte_regex_for_escpaped_dot_bol() {
-        assert_byte(r"\.");
+    fn test_needs_fancy_re_does_not_match() {
+        let should_not_match = [
+            r"\.",     // Escaped . at BOL
+            r"x\.",    // Escaped . at non BOL
+            r"\[^x]",  // Escaped character class
+            r"\(?i\)", // Escaped case insesitive flag
+            r"\\w",    // Escaped Unicode class
+            // Simple ASCII
+            r"foo",
+            r"foo|bar",
+            r"^foo[0-9]+bar$",
+        ];
+
+        for pat in &should_not_match {
+            assert!(
+                !NEEDS_FANCY_RE.is_match(pat),
+                "Expected NEEDS_FANCY_RE to NOT match: {:?}",
+                pat
+            );
+        }
+    }
+
+    // NEEDS_RE
+    #[test]
+    fn test_needs_re_matches() {
+        let should_match = [
+            r".",       // Single regex wildcard
+            r"a+b",     // Regex +
+            r"foo|bar", // Regex alternation
+            r"abc?",    // Regex optional
+            r"a*b",     // Regex star
+            r"[abc]",   // Character class
+            r"(abc)",   // Group
+            r"{1,2}",   // Repetition
+            r"\d",      // Class shorthand
+            r"\S",      // Class shorthand
+            r"\1",      // Backreference
+            r"a\Pb",    // Unicode property
+        ];
+
+        for pat in &should_match {
+            assert!(
+                NEEDS_RE.is_match(pat),
+                "Expected NEEDS_RE to match: {:?}",
+                pat
+            );
+        }
     }
 
     #[test]
-    fn selects_byte_regex_for_escpaped_dot_non_bol() {
-        assert_byte(r"x\.");
+    fn test_needs_re_does_not_match() {
+        let should_not_match = [
+            r"abc",
+            r"a\.b", // Escaped dot
+            r"hello world",
+            r"^abc$",  // Anchors alone
+            r"file\.", // Escaped dot
+            r"literal123",
+            r"\\", // Escaped backslash
+        ];
+
+        for pat in &should_not_match {
+            assert!(
+                !NEEDS_RE.is_match(pat),
+                "Expected NEEDS_RE to NOT match: {:?}",
+                pat
+            );
+        }
+    }
+
+    // Regex::new
+    #[test]
+    fn assert_byte_selection() {
+        let re = Regex::new(r"x\.").unwrap();
+        assert!(re.is_byte());
     }
 
     #[test]
-    fn selects_byte_regex_for_escaped_class() {
-        assert_byte(r"\[^x]");
-    }
-
-    #[test]
-    fn selects_byte_regex_for_escaped_case_insensitive_flag() {
-        assert_byte(r"\(?i\)");
-    }
-
-    #[test]
-    fn selects_byte_regex_for_escaped_unicode_class() {
-        assert_byte(r"\\w");
-    }
-
-    #[test]
-    fn selects_byte_regex_for_simple_ascii() {
-        assert_byte(r"foo");
-        assert_byte(r"foo|bar");
-        assert_byte(r"^foo[0-9]+bar$");
-    }
-
-    #[test]
-    fn selects_fancy_for_unicode_class_bol() {
-        assert_fancy(r"\p{L}+"); // Unicode letter class
-        assert_fancy(r"\W"); // \W is Unicode-aware.
-        assert_fancy(r"\S+"); // \S is Unicode-aware.
-        assert_fancy(r"\d"); // \d includes all Unicode digits.
-    }
-
-    #[test]
-    fn selects_fancy_for_unicode_class_non_bol() {
-        assert_fancy(r"x\p{L}+"); // Unicode letter class
-        assert_fancy(r"x\W"); // \W is Unicode-aware.
-        assert_fancy(r"x\S+"); // \S is Unicode-aware.
-        assert_fancy(r"x\d"); // \d includes all Unicode digits.
-    }
-
-    #[test]
-    fn selects_fancy_for_dot() {
-        assert_fancy(r".");
-        assert_fancy(r"x.");
-        assert_fancy(r"xx.");
-    }
-
-    #[test]
-    fn selects_fancy_for_consumed_backslash() {
-        assert_fancy(r"\*.");
-        assert_fancy(r"x\*.");
-    }
-
-    #[test]
-    fn selects_fancy_for_escaped_backslash() {
-        assert_fancy(r"\\.");
-        assert_fancy(r"x\\.");
-    }
-
-    #[test]
-    fn selects_fancy_for_inline_flags() {
-        assert_fancy(r"(?i)abc"); // Unicode case-insensitive
-        assert_fancy(r"x(?i)abc"); // Unicode case-insensitive
-    }
-
-    #[test]
-    fn selects_fancy_for_backrefs() {
-        assert_fancy(r"(\w+):\1"); // back-reference \1
-    }
-
-    #[test]
-    fn selects_fancy_for_non_ascii_literals() {
-        assert_fancy("naïve"); // Contains literal non-ASCII.
-        assert_fancy("café"); // Contains literal non-ASCII.
+    fn assert_fancy() {
+        let re = Regex::new(r"\d").unwrap();
+        assert!(!re.is_byte());
     }
 
     #[test]
