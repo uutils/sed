@@ -14,6 +14,7 @@
 use fancy_regex::{
     CaptureMatches as FancyCaptureMatches, Captures as FancyCaptures, Regex as FancyRegex,
 };
+use memchr::memmem;
 use once_cell::sync::Lazy;
 use regex::Regex as RustRegex;
 use regex::bytes::{
@@ -95,31 +96,166 @@ static NEEDS_RE: Lazy<RustRegex> = Lazy::new(|| {
 });
 
 #[derive(Clone, Debug)]
-/// A regular expression that can be implemented through Byte or Fancy-Regex
-// This enables a fast bytes path where possible.
-pub enum Regex {
-    Byte(ByteRegex),
-    Fancy(FancyRegex),
+/// Types of literal string anchored matches
+enum AnchoredMatch {
+    Begin, // ^...
+    End,   // ...$
+    Both,  // ^...$
+    Free,  // ...
 }
 
-impl Regex {
-    /// Construct the most efficient engine possible
-    pub fn new(pattern: &str) -> Result<Self, Box<dyn Error>> {
-        if NEEDS_FANCY_RE.is_match(pattern) {
-            Ok(Self::Fancy(FancyRegex::new(pattern)?))
+#[derive(Clone, Debug)]
+/// A fast Regex-like matcher for literal strings using memchr:memmem
+pub struct LiteralMatcher {
+    needle: Vec<u8>,           // Bytes without any anchors
+    match_type: AnchoredMatch, // Type of anchoring specified
+}
+
+impl LiteralMatcher {
+    /// Construct a new matcher based on a needle possible with anchors.
+    pub fn new(needle: &str) -> Self {
+        let needle_bytes = needle.as_bytes();
+        if needle_bytes[0] == b'^' && needle_bytes[needle_bytes.len() - 1] == b'$' {
+            LiteralMatcher {
+                match_type: AnchoredMatch::Both,
+                needle: needle_bytes[1..needle_bytes.len() - 1].to_vec(),
+            }
+        } else if needle_bytes[0] == b'^' {
+            LiteralMatcher {
+                match_type: AnchoredMatch::Begin,
+                needle: needle_bytes[1..needle_bytes.len()].to_vec(),
+            }
+        } else if needle_bytes[needle_bytes.len() - 1] == b'$' {
+            LiteralMatcher {
+                match_type: AnchoredMatch::End,
+                needle: needle_bytes[0..needle_bytes.len() - 1].to_vec(),
+            }
         } else {
-            Ok(Self::Byte(ByteRegex::new(pattern)?))
+            LiteralMatcher {
+                match_type: AnchoredMatch::Free,
+                needle: needle_bytes.to_vec(),
+            }
         }
     }
 
-    /// Return true if this is a byte-based regex.
-    pub fn is_byte(&self) -> bool {
-        matches!(self, Regex::Byte(_))
+    /// Returns the start index of a match, if any
+    fn anchored_find(&self, haystack: &[u8]) -> Option<usize> {
+        let nlen = self.needle.len();
+        let hlen = haystack.len();
+
+        match self.match_type {
+            AnchoredMatch::Both => {
+                if hlen == nlen && haystack == self.needle.as_slice() {
+                    Some(0)
+                } else {
+                    None
+                }
+            }
+            AnchoredMatch::Begin => {
+                if hlen >= nlen && &haystack[..nlen] == self.needle.as_slice() {
+                    Some(0)
+                } else {
+                    None
+                }
+            }
+            AnchoredMatch::End => {
+                if hlen >= nlen && &haystack[hlen - nlen..] == self.needle.as_slice() {
+                    Some(hlen - nlen)
+                } else {
+                    None
+                }
+            }
+            AnchoredMatch::Free => memmem::find(haystack, &self.needle),
+        }
+    }
+
+    /// Return true if the needle occurs in the haystack.
+    pub fn is_match(&self, haystack: &[u8]) -> bool {
+        self.anchored_find(haystack).is_some()
+    }
+
+    /// Return the position and contents of the matched needle.
+    pub fn find<'t>(&self, haystack: &'t [u8]) -> Option<(usize, usize, &'t str)> {
+        self.anchored_find(haystack).and_then(|start| {
+            let end = start + self.needle.len();
+            std::str::from_utf8(&haystack[start..end])
+                .ok()
+                .map(|s| (start, end, s))
+        })
+    }
+
+    /// Return all positions and contents of the matched needle.
+    pub fn iter<'t>(
+        &'t self,
+        haystack: &'t [u8],
+    ) -> Box<dyn Iterator<Item = (usize, usize, &'t str)> + 't> {
+        let needle = &self.needle;
+        let nlen = needle.len();
+
+        match self.match_type {
+            AnchoredMatch::Both | AnchoredMatch::Begin | AnchoredMatch::End => {
+                // At most one match; yield it if present
+                Box::new(self.find(haystack).into_iter())
+            }
+            AnchoredMatch::Free => {
+                // Multiple potential matches
+                Box::new(
+                    memmem::find_iter(haystack, needle).filter_map(move |start| {
+                        let end = start + nlen;
+                        std::str::from_utf8(&haystack[start..end])
+                            .ok()
+                            .map(|s| (start, end, s))
+                    }),
+                )
+            }
+        }
+    }
+}
+
+/// Return the passed pattern without any backslash escapes.
+pub fn remove_escapes(pattern: &str) -> String {
+    let mut chars = pattern.chars().peekable();
+    let mut result = String::with_capacity(pattern.len());
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // Look ahead and consume the next character if present
+            if let Some(&next) = chars.peek() {
+                result.push(next);
+                chars.next(); // consume the peeked char
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
+}
+
+#[derive(Clone, Debug)]
+/// A regular expression that can be implemented in diverse efficient ways
+pub enum Regex {
+    Literal(LiteralMatcher), // Fastest: literal bytes
+    Byte(ByteRegex),         // Slower: byte-based RE
+    Fancy(FancyRegex),       // Slowest: RE supporting UTF-8 and back-references
+}
+
+impl Regex {
+    /// Construct the most efficient RE-like matching engine possible.
+    pub fn new(pattern: &str) -> Result<Self, Box<dyn Error>> {
+        if NEEDS_FANCY_RE.is_match(pattern) {
+            Ok(Self::Fancy(FancyRegex::new(pattern)?))
+        } else if NEEDS_RE.is_match(pattern) {
+            Ok(Self::Byte(ByteRegex::new(pattern)?))
+        } else {
+            Ok(Self::Literal(LiteralMatcher::new(&remove_escapes(pattern))))
+        }
     }
 
     /// Check if the regex matches the content of the IOChunk.
     pub fn is_match(&self, chunk: &mut IOChunk) -> UResult<bool> {
         match self {
+            Regex::Literal(m) => Ok(m.is_match(chunk.as_bytes())),
             Regex::Byte(re) => Ok(re.is_match(chunk.as_bytes())),
             Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
@@ -132,7 +268,15 @@ impl Regex {
     /// Return an iterator over capture groups.
     pub fn captures_iter<'t>(&'t self, chunk: &'t IOChunk) -> UResult<CaptureMatches<'t>> {
         match self {
+            Regex::Literal(m) => {
+                let haystack = chunk.as_bytes();
+                Ok(CaptureMatches::Literal(Box::new(m.iter(haystack).map(
+                    |(start, end, text)| Ok(Captures::Literal(Match { start, end, text })),
+                ))))
+            }
+
             Regex::Byte(re) => Ok(CaptureMatches::Byte(re.captures_iter(chunk.as_bytes()))),
+
             Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
                 Ok(CaptureMatches::Fancy(re.captures_iter(text)))
@@ -143,6 +287,7 @@ impl Regex {
     /// Return the number of capture groups, including group 0.
     pub fn captures_len(&self) -> usize {
         match self {
+            Regex::Literal(_) => 1, // Only group 0
             Regex::Byte(re) => re.captures_len(),
             Regex::Fancy(re) => re.captures_len(),
         }
@@ -151,6 +296,16 @@ impl Regex {
     /// Return the elements of the first capture.
     pub fn captures<'t>(&self, chunk: &'t IOChunk) -> UResult<Option<Captures<'t>>> {
         match self {
+            Regex::Literal(m) => {
+                let haystack = chunk.as_bytes();
+                match m.find(haystack) {
+                    Some((start, end, text)) => {
+                        Ok(Some(Captures::Literal(Match { start, end, text })))
+                    }
+                    None => Ok(None),
+                }
+            }
+
             Regex::Byte(re) => {
                 let bytes = chunk.as_bytes();
                 Ok(re.captures(bytes).map(Captures::Byte))
@@ -170,6 +325,14 @@ impl Regex {
     /// Return a non-capturing result for a single match.
     pub fn find<'t>(&self, chunk: &'t IOChunk) -> UResult<Option<Match<'t>>> {
         match self {
+            Regex::Literal(m) => {
+                let haystack = chunk.as_bytes();
+                match m.find(haystack) {
+                    Some((start, end, text)) => Ok(Some(Match { start, end, text })),
+                    None => Ok(None),
+                }
+            }
+
             Regex::Byte(re) => {
                 let haystack = chunk.as_bytes();
                 if let Some(m) = re.find(haystack) {
@@ -185,6 +348,7 @@ impl Regex {
                     Ok(None)
                 }
             }
+
             Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
                 match re.find(text) {
@@ -203,6 +367,7 @@ impl Regex {
 
 /// Unified enum for holding either byte or fancy capture iterators.
 pub enum CaptureMatches<'t> {
+    Literal(Box<dyn Iterator<Item = UResult<Captures<'t>>> + 't>),
     Byte(ByteCaptureMatches<'t, 't>),
     Fancy(FancyCaptureMatches<'t, 't>),
 }
@@ -212,6 +377,7 @@ impl<'t> Iterator for CaptureMatches<'t> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
+            CaptureMatches::Literal(iter) => iter.next(),
             CaptureMatches::Byte(iter) => iter.next().map(|caps| Ok(Captures::Byte(caps))),
             CaptureMatches::Fancy(iter) => match iter.next() {
                 Some(Ok(caps)) => Some(Ok(Captures::Fancy(caps))),
@@ -225,7 +391,7 @@ impl<'t> Iterator for CaptureMatches<'t> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 /// Result type for RE capture get(n)
 pub struct Match<'t> {
     start: usize,  // Match start
@@ -250,6 +416,7 @@ impl<'t> Match<'t> {
 
 /// Provide interface compatible with Regex::Captures.
 pub enum Captures<'t> {
+    Literal(Match<'t>), // only group 0
     Byte(ByteCaptures<'t>),
     Fancy(FancyCaptures<'t>),
 }
@@ -260,6 +427,7 @@ impl<'t> Captures<'t> {
     /// Returns Err if UTF-8 conversion fails (in Byte variant).
     pub fn get(&self, i: usize) -> UResult<Option<Match<'t>>> {
         match self {
+            Captures::Literal(m) => Ok(if i == 0 { Some(m.clone()) } else { None }),
             Captures::Byte(caps) => match caps.get(i) {
                 Some(m) => Ok(Some(Match {
                     start: m.start(),
@@ -283,6 +451,7 @@ impl<'t> Captures<'t> {
     /// Return the number of capture groups (including group 0).
     pub fn len(&self) -> usize {
         match self {
+            Captures::Literal(_) => 1,
             Captures::Byte(caps) => caps.len(),
             Captures::Fancy(caps) => caps.len(),
         }
@@ -292,6 +461,7 @@ impl<'t> Captures<'t> {
     // Unused, but provided for completeness.
     pub fn is_empty(&self) -> bool {
         match self {
+            Captures::Literal(_) => false, // A literal match always has group 0
             Captures::Byte(caps) => caps.len() == 0,
             Captures::Fancy(caps) => caps.len() == 0,
         }
@@ -418,14 +588,20 @@ mod tests {
     // Regex::new
     #[test]
     fn assert_byte_selection() {
-        let re = Regex::new(r"x\.").unwrap();
-        assert!(re.is_byte());
+        let re = Regex::new(r"x*").unwrap();
+        assert!(matches!(re, Regex::Byte(_)));
     }
 
     #[test]
     fn assert_fancy() {
         let re = Regex::new(r"\d").unwrap();
-        assert!(!re.is_byte());
+        assert!(matches!(re, Regex::Fancy(_)));
+    }
+
+    #[test]
+    fn assert_literal() {
+        let re = Regex::new(r"x\.").unwrap();
+        assert!(matches!(re, Regex::Literal(_)));
     }
 
     #[test]
@@ -436,5 +612,134 @@ mod tests {
             "Unexpected error: {}",
             err
         );
+    }
+
+    // remove_escapes
+    #[test]
+    fn test_remove_escapes() {
+        use super::remove_escapes;
+
+        assert_eq!(remove_escapes("abc"), "abc");
+        assert_eq!(remove_escapes(r"a\.c"), "a.c");
+        assert_eq!(remove_escapes(r"\\d"), r"\d");
+        assert_eq!(remove_escapes(r"\.\*\+\?"), ".*+?");
+        assert_eq!(remove_escapes(r"escaped\\backslash"), r"escaped\backslash");
+        assert_eq!(remove_escapes(r"trailing\\"), r"trailing\");
+    }
+
+    // LiteralMatcher
+    #[test]
+    fn test_literal_matcher_basic_match() {
+        let matcher = LiteralMatcher::new("needle");
+        assert!(matcher.is_match(b"this is a needle in a haystack"));
+        assert!(!matcher.is_match(b"no match here"));
+    }
+
+    #[test]
+    fn test_literal_matcher_anchor_start_match() {
+        let matcher = LiteralMatcher::new("^needle");
+        assert!(matcher.is_match(b"needle in a haystack"));
+        assert!(!matcher.is_match(b"no needle match here"));
+        assert!(!matcher.is_match(b"no"));
+    }
+
+    #[test]
+    fn test_literal_matcher_anchor_end_match() {
+        let matcher = LiteralMatcher::new("needle$");
+        assert!(matcher.is_match(b"In a haystack there's a needle"));
+        assert!(!matcher.is_match(b"no needle match here"));
+        assert!(!matcher.is_match(b"no"));
+    }
+
+    #[test]
+    fn test_literal_matcher_anchor_begin_end_match() {
+        let matcher = LiteralMatcher::new("^needle$");
+        assert!(matcher.is_match(b"needle"));
+        assert!(!matcher.is_match(b"no needle match"));
+        assert!(!matcher.is_match(b"needle no match"));
+        assert!(!matcher.is_match(b"no match needle"));
+        assert!(!matcher.is_match(b"nada"));
+    }
+
+    #[test]
+    fn test_literal_matcher_utf8_match() {
+        let matcher = LiteralMatcher::new("✓"); // U+2713 CHECK MARK (3 bytes)
+        let haystack = "contains ✓ unicode".as_bytes();
+        assert!(matcher.is_match(haystack));
+        let found = matcher.find(haystack).unwrap();
+        assert_eq!(found.2, "✓");
+    }
+
+    #[test]
+    fn test_literal_matcher_find_location() {
+        let matcher = LiteralMatcher::new("abc");
+        let haystack = b"___abc___";
+        let result = matcher.find(haystack);
+        assert!(result.is_some());
+        let (start, end, text) = result.unwrap();
+        assert_eq!((start, end), (3, 6));
+        assert_eq!(text, "abc");
+    }
+
+    #[test]
+    fn test_literal_matcher_find_location_end() {
+        let matcher = LiteralMatcher::new("abc$");
+        let haystack = b"012abc";
+        let result = matcher.find(haystack);
+        assert!(result.is_some());
+        let (start, end, text) = result.unwrap();
+        assert_eq!((start, end), (3, 6));
+        assert_eq!(text, "abc");
+    }
+
+    #[test]
+    fn test_literal_matcher_iter_multiple() {
+        let matcher = LiteralMatcher::new("test");
+        let haystack = b"this test is a test of test matching";
+        let matches: Vec<_> = matcher.iter(haystack).collect();
+        assert_eq!(matches.len(), 3);
+
+        let strings: Vec<_> = matches.iter().map(|(_, _, s)| *s).collect();
+        assert_eq!(strings, ["test", "test", "test"]);
+    }
+
+    #[test]
+    fn test_literal_matcher_iter_begin() {
+        let matcher = LiteralMatcher::new("^test");
+        let haystack = b"test is a test of test matching";
+        let matches: Vec<_> = matcher.iter(haystack).collect();
+        assert_eq!(matches.len(), 1);
+
+        let strings: Vec<_> = matches.iter().map(|(_, _, s)| *s).collect();
+        assert_eq!(strings, ["test"]);
+    }
+
+    #[test]
+    fn test_literal_matcher_iter_end() {
+        let matcher = LiteralMatcher::new("test$");
+        let haystack = b"this test is a test of test";
+        let matches: Vec<_> = matcher.iter(haystack).collect();
+        assert_eq!(matches.len(), 1);
+
+        let strings: Vec<_> = matches.iter().map(|(_, _, s)| *s).collect();
+        assert_eq!(strings, ["test"]);
+    }
+
+    #[test]
+    fn test_literal_matcher_no_match() {
+        let matcher = LiteralMatcher::new("missing");
+        let haystack = b"nothing to see here";
+        assert!(!matcher.is_match(haystack));
+        assert!(matcher.find(haystack).is_none());
+        assert_eq!(matcher.iter(haystack).count(), 0);
+    }
+
+    #[test]
+    fn test_literal_matcher_anchored_no_match() {
+        let matcher = LiteralMatcher::new("^see$");
+        let haystack = b"nothing to see here";
+        assert!(!matcher.is_match(haystack));
+        assert!(matcher.find(haystack).is_none());
+        assert_eq!(matcher.iter(haystack).count(), 0);
     }
 }
