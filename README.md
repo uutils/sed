@@ -42,6 +42,7 @@ cargo run --release
 * In addition to `\n`, other escape sequences (octal, hex, C) are supported
   in the strings of the `y` command.
   Under POSIX these yield undefined behavior.
+* The substitution command replacement group `\0` is a synonym for &.
 
 ### Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.

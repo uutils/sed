@@ -12,6 +12,7 @@ pub mod command;
 pub mod compiler;
 pub mod delimited_parser;
 pub mod fast_io;
+pub mod fast_regex;
 pub mod in_place;
 pub mod named_writer;
 pub mod processor;

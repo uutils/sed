@@ -13,9 +13,10 @@ use crate::command::{
     ProcessingContext, Substitution, Transliteration,
 };
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
+use crate::fast_regex::Regex;
 use crate::in_place::InPlace;
 use crate::named_writer;
-use fancy_regex::Regex;
+
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
@@ -32,10 +33,7 @@ fn match_address(
         AddressType::Re => {
             if let AddressValue::Regex(ref re) = addr.value {
                 let regex = re_or_saved_re(re, context)?;
-                let matched = regex.is_match(pattern.as_str()?).map_err(|e| {
-                    USimpleError::new(2, format!("regular expression match error: {}", e))
-                })?;
-                Ok(matched)
+                regex.is_match(pattern)
             } else {
                 Ok(false)
             }
@@ -197,39 +195,78 @@ fn substitute(
     let mut result = String::new();
     let mut replaced = false;
 
-    let text = pattern.as_str()?;
+    let mut text: Option<&str> = None;
 
     let regex = re_or_saved_re(&sub.regex, context)?;
 
-    for caps in regex.captures_iter(text) {
-        count += 1;
-        let caps = caps.map_err(|e| {
-            USimpleError::new(
-                2,
-                format!("regular expression capture retrieval error: {}", e),
-            )
-        })?;
+    match (sub.occurrence, sub.replacement.max_group_number) {
+        (1, 0) => {
+            // Example: s/foo/bar/: find() is enough.
+            let m = regex.find(pattern)?;
+            if let Some(m) = m {
+                text = Some(pattern.as_str()?);
+                result.push_str(&text.unwrap()[last_end..m.start()]);
 
-        let m = caps.get(0).unwrap();
-
-        // Always write the unmatched text before this match.
-        result.push_str(&text[last_end..m.start()]);
-
-        if sub.occurrence == 0 || count == sub.occurrence {
-            let replacement = sub.replacement.apply(&caps)?;
-            result.push_str(&replacement);
-            replaced = true;
-        } else {
-            // Not the target match — leave the match unchanged.
-            result.push_str(m.as_str());
+                let replacement = sub.replacement.apply_match(&m);
+                result.push_str(&replacement);
+                replaced = true;
+                last_end = m.end();
+            }
         }
 
-        last_end = m.end();
+        (1, _) => {
+            // Example: s/\(.\)\(.\)/\2\1/: captures() is enough.
+            let caps = regex.captures(pattern)?;
+            if let Some(caps) = caps {
+                let m = caps.get(0)?.unwrap();
+                text = Some(pattern.as_str()?);
+                result.push_str(&text.unwrap()[last_end..m.start()]);
+
+                let replacement = sub.replacement.apply_captures(&caps)?;
+                result.push_str(&replacement);
+                replaced = true;
+                last_end = m.end();
+            }
+        }
+
+        (_, _) => {
+            // Example: s/(.)(.)/\2\1/3: captures_iter() is needed.
+            // Iterate over multiple captures of the RE in the pattern.
+            for caps in regex.captures_iter(pattern)? {
+                count += 1;
+                let caps = caps?;
+
+                let m = caps.get(0)?.unwrap();
+
+                // Always write the unmatched text before this match.
+                if text.is_none() {
+                    text = Some(pattern.as_str()?);
+                }
+                result.push_str(&text.unwrap()[last_end..m.start()]);
+
+                if sub.occurrence == 0 || count == sub.occurrence {
+                    let replacement = sub.replacement.apply_captures(&caps)?;
+                    result.push_str(&replacement);
+                    replaced = true;
+                } else {
+                    // Not the target match — leave the match unchanged.
+                    result.push_str(m.as_str());
+                }
+
+                last_end = m.end();
+
+                // Early exit if only a specific occurrence,
+                // (likely 1) needed replacing.
+                if count == sub.occurrence {
+                    break;
+                }
+            }
+        }
     }
 
     // Handle substitution success.
     if replaced {
-        result.push_str(&text[last_end..]);
+        result.push_str(&text.unwrap()[last_end..]);
 
         pattern.set_to_string(result, pattern.is_newline_terminated());
 

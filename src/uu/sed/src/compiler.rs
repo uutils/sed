@@ -15,10 +15,10 @@ use crate::command::{
 use crate::delimited_parser::{
     compilation_error, parse_char_escape, parse_regex, parse_transliteration,
 };
+use crate::fast_regex::Regex;
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
-use fancy_regex::Regex;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -706,14 +706,18 @@ pub fn compile_replacement(
                     }
 
                     match line.current() {
-                        // \1 - \9
-                        c @ '1'..='9' => {
+                        // \0 - \9
+                        c @ '0'..='9' => {
                             let ref_num = c.to_digit(10).unwrap();
 
                             if !literal.is_empty() {
                                 parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
                             }
-                            parts.push(ReplacementPart::Group(ref_num));
+                            if ref_num == 0 {
+                                parts.push(ReplacementPart::WholeMatch);
+                            } else {
+                                parts.push(ReplacementPart::Group(ref_num));
+                            }
                             line.advance();
                         }
 
@@ -762,7 +766,7 @@ pub fn compile_replacement(
                     if !literal.is_empty() {
                         parts.push(ReplacementPart::Literal(literal));
                     }
-                    return Ok(ReplacementTemplate { parts });
+                    return Ok(ReplacementTemplate::new(parts));
                 }
 
                 c => {
@@ -816,11 +820,21 @@ fn compile_subst_command(
         );
     }
 
-    if pattern.is_empty() {
-        subst.regex = None; // Will be reuse saved RE at runtime.
-    } else {
-        // Compile regex with now known ignore_case flag.
-        subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
+    // Compile regex with now known ignore_case flag.
+    subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
+
+    // Catch invalid group references at compile time, if possible.
+    if let Some(regex) = &subst.regex {
+        if subst.replacement.max_group_number > regex.captures_len() - 1 {
+            return compilation_error(
+                lines,
+                line,
+                format!(
+                    "invalid reference \\{} on `s' command's RHS",
+                    subst.replacement.max_group_number
+                ),
+            );
+        }
     }
 
     cmd.data = CommandData::Substitution(subst);
@@ -1153,6 +1167,7 @@ fn lookup_command(cmd: char) -> Option<&'static CommandSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fast_io::IOChunk;
 
     // Return an empty line provider and a char provider for the specified str.
     fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
@@ -1370,8 +1385,8 @@ mod tests {
         let regex = compile_regex(&lines, &chars, "abc", &ctx(), false)
             .unwrap()
             .expect("regex should be present");
-        assert!(regex.is_match("abc").unwrap());
-        assert!(!regex.is_match("ABC").unwrap());
+        assert!(regex.is_match(&mut IOChunk::from_str("abc")).unwrap());
+        assert!(!regex.is_match(&mut IOChunk::from_str("ABC")).unwrap());
     }
 
     #[test]
@@ -1380,9 +1395,9 @@ mod tests {
         let regex = compile_regex(&lines, &chars, "abc", &ctx(), true)
             .unwrap()
             .expect("regex should be present");
-        assert!(regex.is_match("abc").unwrap());
-        assert!(regex.is_match("ABC").unwrap());
-        assert!(regex.is_match("AbC").unwrap());
+        assert!(regex.is_match(&mut IOChunk::from_str("abc")).unwrap());
+        assert!(regex.is_match(&mut IOChunk::from_str("ABC")).unwrap());
+        assert!(regex.is_match(&mut IOChunk::from_str("AbC")).unwrap());
     }
 
     #[test]
@@ -1430,7 +1445,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(re.is_match("hello").unwrap());
+            assert!(re.is_match(&mut IOChunk::from_str("hello")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1442,7 +1457,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(re.is_match("hello").unwrap());
+            assert!(re.is_match(&mut IOChunk::from_str("hello")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1454,7 +1469,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(!re.is_match("helio").unwrap());
+            assert!(!re.is_match(&mut IOChunk::from_str("helio")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1466,7 +1481,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(re.is_match("hello").unwrap());
+            assert!(re.is_match(&mut IOChunk::from_str("hello")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1478,7 +1493,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(re.is_match("HELLO").unwrap()); // case-insensitive
+            assert!(re.is_match(&mut IOChunk::from_str("HELLO")).unwrap()); // case-insensitive
         } else {
             panic!("expected Regex address value");
         }
@@ -1569,8 +1584,8 @@ mod tests {
             AddressType::Re
         ));
         if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match("foo").unwrap());
-            assert!(!re.is_match("bar").unwrap());
+            assert!(re.is_match(&mut IOChunk::from_str("foo")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::from_str("bar")).unwrap());
         } else {
             panic!("expected a regex address");
         };
@@ -1589,8 +1604,8 @@ mod tests {
             AddressType::Re
         ));
         if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match("foo").unwrap());
-            assert!(!re.is_match("bar").unwrap());
+            assert!(re.is_match(&mut IOChunk::from_str("foo")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::from_str("bar")).unwrap());
         } else {
             panic!("expected a regex address");
         }
@@ -1600,8 +1615,8 @@ mod tests {
             AddressType::Re
         ));
         if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr2.as_ref().unwrap().value {
-            assert!(re.is_match("bar").unwrap());
-            assert!(!re.is_match("foo").unwrap());
+            assert!(re.is_match(&mut IOChunk::from_str("bar")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::from_str("foo")).unwrap());
         } else {
             panic!("expected a regex address");
         };
@@ -1619,8 +1634,8 @@ mod tests {
             AddressType::Re
         ));
         if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match("FOO").unwrap());
-            assert!(re.is_match("foo").unwrap());
+            assert!(re.is_match(&mut IOChunk::from_str("FOO")).unwrap());
+            assert!(re.is_match(&mut IOChunk::from_str("foo")).unwrap());
         } else {
             panic!("expected a regex address with case-insensitive match");
         };
@@ -1787,6 +1802,18 @@ mod tests {
     #[test]
     fn test_compile_replacement_whole_match() {
         let (mut lines, mut chars) = make_providers("/The match was: &/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 2);
+        assert!(
+            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "The match was: ")
+        );
+        assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
+    }
+
+    #[test]
+    fn test_compile_replacement_whole_match_synonym() {
+        let (mut lines, mut chars) = make_providers(r"/The match was: \0/");
         let template = compile_replacement(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 2);
@@ -1987,6 +2014,15 @@ mod tests {
             }
             _ => panic!("Expected CommandData::Substitution"),
         }
+    }
+
+    #[test]
+    fn test_compile_subst_invalid_group_reference() {
+        let (mut lines, mut chars) = make_providers(r"s/f(o)o/\2/");
+        let mut cmd = Command::default();
+
+        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
+        assert!(err.to_string().contains("invalid reference \\2"));
     }
 
     // bre_to_ere
