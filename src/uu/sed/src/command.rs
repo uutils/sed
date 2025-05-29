@@ -286,7 +286,6 @@ pub struct Command {
     pub addr2: Option<Address>,             // End address
     pub non_select: bool,                   // True if '!'
     pub start_line: Option<usize>,          // Start line number (or None)
-    pub text: Option<String>,               // Text for 'a', 'c', 'i'
     pub data: CommandData,                  // Command-specific data
     pub next: Option<Rc<RefCell<Command>>>, // Pointer to next command
 }
@@ -299,7 +298,6 @@ impl Default for Command {
             addr2: None,
             non_select: false,
             start_line: None,
-            text: None,
             data: CommandData::None,
             next: None,
         }
