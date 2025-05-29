@@ -497,7 +497,13 @@ impl OutputBuffer {
     pub fn copy_file(&mut self, path: &PathBuf) -> io::Result<()> {
         #[cfg(unix)]
         self.flush_mmap()?; // Flush mmap writes, if any.
-        let file = File::open(path)?;
+
+        let file = match File::open(path) {
+            Ok(f) => f,
+            // Per POSIX, if the file can't be read treat it as empty.
+            Err(_) => return Ok(()),
+        };
+
         let mut reader = BufReader::new(file);
         io::copy(&mut reader, &mut self.out)?;
         Ok(())

@@ -608,6 +608,58 @@ p
 );
 
 ////////////////////////////////////////////////////////////
+// r, w, 0 commands
+check_output!(read_ok, [format!("4r {}", LINES2), LINES1.to_string()]);
+check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
+check_output!(read_empty, ["6r input/empty", LINES1]);
+
+#[test]
+fn write_single_file() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("3,12w {}", temp.path().display());
+
+    new_ucmd!().args(&["-e", &cmd, LINES1]).succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+
+    let expected = fs::read_to_string("tests/fixtures/sed/output/write_single_file")?;
+    assert_eq!(actual, expected, "Output did not match fixture");
+
+    Ok(())
+}
+
+#[test]
+fn write_two_files() -> std::io::Result<()> {
+    let temp1 = NamedTempFile::new()?;
+    let temp2 = NamedTempFile::new()?;
+    let cmd = format!(
+        "3,12w {}\n1,2w {}",
+        temp1.path().display(),
+        temp2.path().display()
+    );
+
+    new_ucmd!().args(&["-e", &cmd, LINES1]).succeeds();
+
+    let mut actual = String::new();
+
+    temp1.reopen()?.read_to_string(&mut actual)?;
+    let expected = fs::read_to_string("tests/fixtures/sed/output/write_two_files_1")?;
+    assert_eq!(actual, expected, "Output 1 did not match fixture");
+
+    actual.clear();
+
+    temp2.reopen()?.read_to_string(&mut actual)?;
+    let expected = fs::read_to_string("tests/fixtures/sed/output/write_two_files_2")?;
+    assert_eq!(actual, expected, "Output 2 did not match fixture");
+
+    Ok(())
+}
+
+check_output!(number_continuous, ["/l2_/=", LINES1, LINES2]);
+check_output!(number_separate, ["-s", "/l._8/=", LINES1, LINES2]);
+
+////////////////////////////////////////////////////////////
 // Large complex scripts
 
 // Math expression evaluation

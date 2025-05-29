@@ -314,7 +314,7 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
             AppendElement::Text(text) => {
                 output.write_str(text.clone())?;
             }
-            AppendElement::File(path) => {
+            AppendElement::Path(path) => {
                 output.copy_file(path)?;
             }
         }
@@ -498,7 +498,14 @@ fn process_file(
                     break;
                 }
                 'r' => {
-                    // TODO
+                    // Copy the file to standard output at a later point.
+                    let path = match &command.data {
+                        CommandData::Path(path) => path,
+                        _ => panic!("Expected Path command data"),
+                    };
+                    context
+                        .append_elements
+                        .push(AppendElement::Path(path.clone()));
                 }
                 's' => {
                     let subst = match &mut command.data {
@@ -526,7 +533,12 @@ fn process_file(
                     }
                 }
                 'w' => {
-                    // TODO
+                    // Append the pattern space to the specified file.
+                    let writer = match &mut command.data {
+                        CommandData::NamedWriter(writer) => writer,
+                        _ => panic!("Expected NamedWriter command data"),
+                    };
+                    writer.borrow_mut().write_line(pattern.as_str()?)?;
                 }
                 'x' => {
                     // Exchange the contents of the pattern and hold spaces.
@@ -546,7 +558,8 @@ fn process_file(
                     // Branch target; do nothing.
                 }
                 '=' => {
-                    // TODO
+                    // Output current line number.
+                    output.write_str(format!("{}\n", context.line_number))?;
                 }
                 // The compilation should supply only valid codes.
                 _ => panic!("invalid command code"),

@@ -207,6 +207,10 @@ pub fn compile(
     let mut empty_line = ScriptCharProvider::new("");
     let result = compile_sequence(&mut make_providers, &mut empty_line, context)?;
 
+    // Comment-out the following to show the compiled script.
+    #[cfg(any())]
+    dbg!(&result);
+
     // Link branch commands to the target label commands.
     populate_label_map(result.clone(), context)?;
     resolve_branch_targets(result.clone(), context)?;
@@ -218,10 +222,6 @@ pub fn compile(
         return Err(USimpleError::new(1, "unmatched `{'"));
     }
     patch_block_endings(result.clone());
-
-    // Comment-out the following to show the compiled script.
-    #[cfg(any())]
-    dbg!(&result);
 
     // TODO: setup append & match structures
     Ok(result)
@@ -460,6 +460,24 @@ fn compile_address_range(
     }
 
     Ok(n_addr)
+}
+
+/// Read the line's remaining characters as a file path and return it.
+fn read_file_path(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<PathBuf> {
+    line.advance(); // Skip the command/w character
+    line.eat_spaces(); // Skip any leading whitespace
+
+    let mut path = String::new();
+    while !line.eol() {
+        path.push(line.current());
+        line.advance();
+    }
+
+    if path.is_empty() {
+        compilation_error(lines, line, "missing file path")
+    } else {
+        Ok(PathBuf::from(path))
+    }
 }
 
 /// Compile and return a single range address specification.
@@ -948,20 +966,8 @@ pub fn compile_subst_flags(
             }
 
             'w' => {
-                line.advance();
-                line.eat_spaces();
-
-                let mut path = String::new();
-                while !line.eol() && line.current() != ';' {
-                    path.push(line.current());
-                    line.advance();
-                }
-
-                if path.is_empty() {
-                    return compilation_error(lines, line, "missing filename after 'w' flag");
-                }
-
-                subst.write_file = Some(NamedWriter::new(PathBuf::from(path))?);
+                let path = read_file_path(lines, line)?;
+                subst.write_file = Some(NamedWriter::new(path)?);
                 return Ok(()); // 'w' is the last flag allowed
             }
 
@@ -1116,10 +1122,15 @@ fn compile_command(
             // a c i
             compile_text_command(lines, line, &mut cmd)?;
         }
-        // TODO
-        CommandArgs::ReadFile => { // r
+        CommandArgs::ReadFile => {
+            // r
+            let path = read_file_path(lines, line)?;
+            cmd.data = CommandData::Path(path);
         }
-        CommandArgs::WriteFile => { // w
+        CommandArgs::WriteFile => {
+            // w
+            let path = read_file_path(lines, line)?;
+            cmd.data = CommandData::NamedWriter(NamedWriter::new(path)?);
         }
     }
 
@@ -1940,7 +1951,7 @@ mod tests {
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
-        assert!(err.to_string().contains("missing filename"));
+        assert!(err.to_string().contains("missing file path"));
     }
 
     #[test]
@@ -1963,6 +1974,7 @@ mod tests {
         let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
+
     // compile_subst_command
     #[test]
     fn test_compile_subst_invalid_delimiter_backslash() {
@@ -2497,5 +2509,22 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("extra characters after \\"));
+    }
+
+    // read_file_path
+    #[test]
+    fn test_read_existing_file_path() {
+        let (lines, mut chars) = make_providers("r /etc/motd");
+
+        let path = read_file_path(&lines, &mut chars).unwrap();
+        assert_eq!(path.to_str().unwrap(), "/etc/motd");
+    }
+
+    #[test]
+    fn test_read_missing_file_path() {
+        let (lines, mut chars) = make_providers("w ");
+
+        let err = read_file_path(&lines, &mut chars).unwrap_err();
+        assert!(err.to_string().contains("missing file path"));
     }
 }

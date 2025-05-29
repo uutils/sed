@@ -73,7 +73,7 @@ pub struct ProcessingContext {
 /// Elements that shall be appended at the end of each command processing cycle
 pub enum AppendElement {
     Text(String),  // The specified text string
-    File(PathBuf), // The contents of the specified file
+    Path(PathBuf), // The contents of the specified file path
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -286,7 +286,7 @@ pub struct Command {
     pub addr2: Option<Address>,             // End address
     pub non_select: bool,                   // True if '!'
     pub start_line: Option<usize>,          // Start line number (or None)
-    pub text: Option<String>,               // Text for ':', 'a', 'c', 'i', 'r', 'w'
+    pub text: Option<String>,               // Text for 'a', 'c', 'i'
     pub data: CommandData,                  // Command-specific data
     pub next: Option<Rc<RefCell<Command>>>, // Pointer to next command
 }
@@ -314,7 +314,8 @@ pub enum CommandData {
     Block(Option<Rc<RefCell<Command>>>), // Commands for '{'
     BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't'
     Label(Option<String>),               // Label name for 'b', 't', ':'
-    NamedWriter(Box<NamedWriter>),       // File descriptor for 'w'
+    Path(PathBuf),                       // File path for 'r'
+    NamedWriter(Rc<RefCell<NamedWriter>>), // File output for 'w'
     Substitution(Box<Substitution>),     // Substitute command 's'
     Text(Cow<'static, str>),             // Text for 'a', 'c', 'i'
     Transliteration(Box<Transliteration>), // Transliteration command 'y'
