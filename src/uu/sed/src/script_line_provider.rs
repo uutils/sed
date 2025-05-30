@@ -12,7 +12,8 @@ use crate::command::ScriptValue;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use uucore::error::{UResult, USimpleError};
+use uucore::display::Quotable;
+use uucore::error::{FromIo, UResult};
 
 #[derive(Debug)]
 /// The provider of script lines across all specified scripts
@@ -131,12 +132,8 @@ impl ScriptLineProvider {
                         line_number: 0,
                     };
                 } else {
-                    let file = File::open(p).map_err(|e| {
-                        USimpleError::new(
-                            2,
-                            format!("Error opening script file {}: {}", p.display(), e),
-                        )
-                    })?;
+                    let file = File::open(p)
+                        .map_err_context(|| format!("error opening script file {}", p.quote()))?;
                     self.state = State::Active {
                         index: next_index,
                         reader: Box::new(BufReader::new(file)),

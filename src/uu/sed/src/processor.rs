@@ -22,7 +22,8 @@ use std::cell::RefCell;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::rc::Rc;
-use uucore::error::{UResult, USimpleError, set_exit_code};
+use uucore::display::Quotable;
+use uucore::error::{FromIo, UResult, USimpleError, set_exit_code};
 
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
@@ -335,7 +336,7 @@ macro_rules! extract_variant {
     };
 }
 
-/// List the passed line in unambguous form.
+/// List the passed pattern space in unambiguous form.
 fn list(output: &mut OutputBuffer, line: &IOChunk, max_width: usize) -> UResult<()> {
     // Special case for an empty pattern space
     if line.is_empty() {
@@ -660,12 +661,8 @@ pub fn process_all_files(
 
     for (index, path) in files.iter().enumerate() {
         context.last_file = index == last_file_index;
-        let mut reader = LineReader::open(path).map_err(|e| {
-            USimpleError::new(
-                2,
-                format!("Error opening input file {}: {}", path.display(), e),
-            )
-        })?;
+        let mut reader = LineReader::open(path)
+            .map_err_context(|| format!("error opening input file {}", path.quote()))?;
         let output = in_place.begin(path)?;
 
         if context.separate {

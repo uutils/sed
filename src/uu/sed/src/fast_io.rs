@@ -232,7 +232,7 @@ impl<'a> IOChunk<'a> {
                 } else {
                     let result = str::from_utf8(content);
                     self.utf8_verified.set(true);
-                    result.map_err(|e| USimpleError::new(1, e.to_string()))
+                    result.map_err(|e| USimpleError::new(2, e.to_string()))
                 }
             }
             IOChunkContent::Owned { content, .. } => Ok(content),
