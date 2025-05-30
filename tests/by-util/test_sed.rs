@@ -281,6 +281,24 @@ check_output!(pattern_quit_2, [r"5q", LINES1, LINES2]);
 check_output!(pattern_re_reuse, ["-n", r"/_1/p;//p", LINES1]);
 check_output!(pattern_subst_re_reuse, ["-n", r"/_1/p;s//-N/p", LINES1]);
 
+#[test]
+fn test_quit_exit_code() {
+    new_ucmd!()
+        .args(&["5q 42", LINES1])
+        .fails()
+        .code_is(42)
+        .stdout_is_fixture("output/pattern_quit");
+}
+
+#[test]
+fn test_quit_now_exit_code() {
+    new_ucmd!()
+        .args(&["6Q 12", LINES1])
+        .fails()
+        .code_is(12)
+        .stdout_is_fixture("output/pattern_quit");
+}
+
 ////////////////////////////////////////////////////////////
 // Command blocks: {}
 check_output!(
@@ -608,7 +626,7 @@ p
 );
 
 ////////////////////////////////////////////////////////////
-// r, w, 0 commands
+// r, w commands
 check_output!(read_ok, [format!("4r {}", LINES2), LINES1.to_string()]);
 check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
 check_output!(read_empty, ["6r input/empty", LINES1]);
@@ -656,8 +674,14 @@ fn write_two_files() -> std::io::Result<()> {
     Ok(())
 }
 
+////////////////////////////////////////////////////////////
+// =, l commands
 check_output!(number_continuous, ["/l2_/=", LINES1, LINES2]);
 check_output!(number_separate, ["-s", "/l._8/=", LINES1, LINES2]);
+
+check_output!(list_ascii, ["-n", "l 60", "input/ascii"]);
+check_output!(list_empty, ["-n", "l 60", "input/empty"]);
+check_output!(list_unicode, ["l 60", "input/unicode"]);
 
 ////////////////////////////////////////////////////////////
 // Large complex scripts

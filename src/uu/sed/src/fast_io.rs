@@ -172,6 +172,11 @@ impl<'a> IOChunk<'a> {
         }
     }
 
+    /// Return true if the content is empty.
+    pub fn is_empty(&self) -> bool {
+        self.content.len() == 0
+    }
+
     /// Return true if the content ends with a newline.
     pub fn is_newline_terminated(&self) -> bool {
         match &self.content {
@@ -324,6 +329,16 @@ impl IOChunkContent<'_> {
                 std::str::from_utf8_unchecked(content)
             },
             IOChunkContent::Owned { content, .. } => content,
+        }
+    }
+
+    /// Return the content's length (in bytes or characters).
+    pub fn len(&self) -> usize {
+        match self {
+            #[cfg(unix)]
+            IOChunkContent::MmapInput { content, .. } => content.len(),
+
+            IOChunkContent::Owned { content, .. } => content.len(),
         }
     }
 }
@@ -962,6 +977,7 @@ mod tests {
         )) = reader.get_line()?
         {
             assert_eq!(content, "first line");
+            assert_eq!(content.len(), 10);
             assert!(has_newline);
             assert!(!utf8_verified.get());
             assert!(!last_line);
@@ -1026,6 +1042,7 @@ mod tests {
         )) = reader.get_line()?
         {
             assert_eq!(content, b"first line");
+            assert_eq!(content.len(), 10);
             assert_eq!(full_span, b"first line\n");
             assert!(!utf8_verified.get());
             assert!(!last_line);
@@ -1069,11 +1086,19 @@ mod tests {
         Ok(())
     }
 
-    // is_newline_terminated
+    // is_newline_terminated, is_empty
     #[test]
-    fn test_owned_newline_terminated() {
+    fn test_owned_newline_terminated_non_empty() {
         let chunk = IOChunk::from_content(IOChunkContent::new_owned("line".to_string(), true));
         assert!(chunk.is_newline_terminated());
+        assert!(!chunk.is_empty());
+    }
+
+    #[test]
+    fn test_owned_newline_terminated_empty() {
+        let chunk = IOChunk::from_content(IOChunkContent::new_owned("".to_string(), true));
+        assert!(chunk.is_newline_terminated());
+        assert!(chunk.is_empty());
     }
 
     #[test]

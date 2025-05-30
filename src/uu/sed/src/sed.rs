@@ -35,10 +35,10 @@ const USAGE: &str = "sed [OPTION]... [script] [file]...";
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
     let (scripts, files) = get_scripts_files(&matches)?;
-    let mut processing_context = build_context(&matches);
+    let mut context = build_context(&matches);
 
-    let executable = compile(scripts, &mut processing_context)?;
-    process_all_files(executable, files, processing_context)?;
+    let executable = compile(scripts, &mut context)?;
+    process_all_files(executable, files, &mut context)?;
     Ok(())
 }
 

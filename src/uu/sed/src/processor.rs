@@ -17,11 +17,12 @@ use crate::fast_regex::Regex;
 use crate::in_place::InPlace;
 use crate::named_writer;
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::rc::Rc;
-use uucore::error::{UResult, USimpleError};
+use uucore::error::{UResult, USimpleError, set_exit_code};
 
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
@@ -323,6 +324,74 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
     Ok(())
 }
 
+/// Return the specified command variant or panic.
+// Example: let path = extract_variant!(command, Path);
+macro_rules! extract_variant {
+    ($cmd:expr, $variant:ident) => {
+        match &$cmd.data {
+            CommandData::$variant(inner) => inner,
+            _ => panic!(concat!("Expected ", stringify!($variant), " command data")),
+        }
+    };
+}
+
+/// List the passed line in unambguous form.
+fn list(output: &mut OutputBuffer, line: &IOChunk, max_width: usize) -> UResult<()> {
+    // Special case for an empty pattern space
+    if line.is_empty() {
+        if line.is_newline_terminated() {
+            output.write_str("$\n")?;
+        }
+        return Ok(());
+    }
+
+    let line = line.as_str()?;
+    let mut buff = String::new();
+    let mut line_width = 0;
+
+    for ch in line.chars() {
+        if ch == '\n' {
+            buff.push_str("$\n");
+            output.write_str(&buff)?;
+            line_width = 0;
+            continue;
+        }
+
+        let mut char_buff = [0u8; 1];
+        let out_str: Cow<str> = match ch {
+            '\x07' => Cow::Borrowed(r"\a"),
+            '\x08' => Cow::Borrowed(r"\b"),
+            '\x0b' => Cow::Borrowed(r"\v"),
+            '\x0c' => Cow::Borrowed(r"\f"),
+            '\\' => Cow::Borrowed(r"\\"),
+            '\r' => Cow::Borrowed(r"\r"),
+            '\t' => Cow::Borrowed(r"\t"),
+            c if c.is_ascii_control() => Cow::Owned(format!("\\{:03o}", ch as u8)),
+            c if c == ' ' || c.is_ascii_graphic() => Cow::Borrowed(ch.encode_utf8(&mut char_buff)),
+            c if (c as u32) <= 0xFFFF => Cow::Owned(format!("\\u{:04X}", c as u32)),
+            _ => Cow::Owned(format!("\\U{:08X}", ch as u32)),
+        };
+
+        // See if folding is required before adding out_str and terminator.
+        let out_len = out_str.len();
+        if line_width + out_len + 1 > max_width {
+            buff.push_str("\\\n");
+            output.write_str(&buff)?;
+            line_width = 0;
+            buff.clear();
+        }
+        buff.push_str(out_str.as_ref());
+        line_width += out_len;
+    }
+
+    if !buff.is_empty() {
+        buff.push_str("$\n");
+        output.write_str(buff)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::cognitive_complexity)]
 /// Process a single input file
 fn process_file(
     commands: &Option<Rc<RefCell<Command>>>,
@@ -364,9 +433,7 @@ fn process_file(
             match command.code {
                 '{' => {
                     // Block begin; start processing the enclosed ones.
-                    let CommandData::Block(body) = &command.data else {
-                        panic!("Expected Block command data");
-                    };
+                    let body = extract_variant!(command, Block);
                     current = body.clone();
                     continue;
                 }
@@ -375,19 +442,14 @@ fn process_file(
                 }
                 'a' => {
                     // Write the text to standard output at a later point.
-                    let text = match &command.data {
-                        CommandData::Text(text) => text,
-                        _ => panic!("Expected Text command data"),
-                    };
+                    let text = extract_variant!(command, Text);
                     context
                         .append_elements
                         .push(AppendElement::Text(text.clone().into_owned()));
                 }
                 'b' => {
                     // Branch to the specified label or end if none is given.
-                    let CommandData::BranchTarget(target) = &command.data else {
-                        panic!("Expected BranchTarget command data");
-                    };
+                    let target = extract_variant!(command, BranchTarget);
                     if target.is_some() {
                         // New command to execute
                         current = target.clone();
@@ -402,10 +464,7 @@ fn process_file(
                     // start the next cycle.
                     pattern.clear();
                     if command.addr2.is_none() || context.last_address || context.last_line {
-                        let text = match &command.data {
-                            CommandData::Text(text) => text,
-                            _ => panic!("Expected Text command data"),
-                        };
+                        let text = extract_variant!(command, Text);
                         output.write_str(text.as_ref())?;
                     }
                     break;
@@ -452,14 +511,12 @@ fn process_file(
                 }
                 'i' => {
                     // Write text to standard output.
-                    let text = match &command.data {
-                        CommandData::Text(text) => text,
-                        _ => panic!("Expected Text command data"),
-                    };
+                    let text = extract_variant!(command, Text);
                     output.write_str(text.as_ref())?;
                 }
                 'l' => {
-                    // TODO
+                    let width = *extract_variant!(command, Number);
+                    list(output, &pattern, width)?;
                 }
                 'n' => {
                     break;
@@ -494,15 +551,21 @@ fn process_file(
                     }
                 }
                 'q' => {
+                    // Quit after printing the pattern space.
+                    set_exit_code(*extract_variant!(command, Number) as i32);
                     context.stop_processing = true;
+                    break;
+                }
+                'Q' => {
+                    // Quit immediatelly.
+                    set_exit_code(*extract_variant!(command, Number) as i32);
+                    context.stop_processing = true;
+                    context.quiet = true;
                     break;
                 }
                 'r' => {
                     // Copy the file to standard output at a later point.
-                    let path = match &command.data {
-                        CommandData::Path(path) => path,
-                        _ => panic!("Expected Path command data"),
-                    };
+                    let path = extract_variant!(command, Path);
                     context
                         .append_elements
                         .push(AppendElement::Path(path.clone()));
@@ -512,16 +575,13 @@ fn process_file(
                         CommandData::Substitution(subst) => subst,
                         _ => panic!("Expected Substitution command data"),
                     };
-
                     substitute(&mut pattern, &mut *subst, context, output)?;
                 }
                 't' if !context.substitution_made => { /* Do nothing. */ }
                 't' => {
                     // Branch to the specified label or end if none is given
                     // if a substitution was made since last cycle or t.
-                    let CommandData::BranchTarget(target) = &command.data else {
-                        panic!("Expected BranchTarget command data");
-                    };
+                    let target = extract_variant!(command, BranchTarget);
                     context.substitution_made = false;
                     if target.is_some() {
                         // New command to execute
@@ -534,10 +594,7 @@ fn process_file(
                 }
                 'w' => {
                     // Append the pattern space to the specified file.
-                    let writer = match &mut command.data {
-                        CommandData::NamedWriter(writer) => writer,
-                        _ => panic!("Expected NamedWriter command data"),
-                    };
+                    let writer = extract_variant!(command, NamedWriter);
                     writer.borrow_mut().write_line(pattern.as_str()?)?;
                 }
                 'x' => {
@@ -547,11 +604,7 @@ fn process_file(
                     std::mem::swap(pat_has_newline, &mut context.hold.has_newline);
                 }
                 'y' => {
-                    let trans = match &mut command.data {
-                        CommandData::Transliteration(trans) => trans,
-                        _ => panic!("Expected Transliteration command data"),
-                    };
-
+                    let trans = extract_variant!(command, Transliteration);
                     transliterate(&mut pattern, trans)?;
                 }
                 ':' => {
@@ -598,7 +651,7 @@ fn process_file(
 pub fn process_all_files(
     commands: Option<Rc<RefCell<Command>>>,
     files: Vec<PathBuf>,
-    mut context: ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<()> {
     context.unbuffered = context.unbuffered || io::stdout().is_terminal();
 
@@ -618,7 +671,7 @@ pub fn process_all_files(
         if context.separate {
             context.line_number = 0;
         }
-        process_file(&commands, &mut reader, output, &mut context)?;
+        process_file(&commands, &mut reader, output, context)?;
 
         // Handle any N command remains.
         if context.last_file && !context.separate && !context.quiet {

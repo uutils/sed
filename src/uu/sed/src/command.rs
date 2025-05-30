@@ -314,6 +314,7 @@ pub enum CommandData {
     Label(Option<String>),               // Label name for 'b', 't', ':'
     Path(PathBuf),                       // File path for 'r'
     NamedWriter(Rc<RefCell<NamedWriter>>), // File output for 'w'
+    Number(usize),                       // Number for 'l', 'q', 'Q' (GNU)
     Substitution(Box<Substitution>),     // Substitute command 's'
     Text(Cow<'static, str>),             // Text for 'a', 'c', 'i'
     Transliteration(Box<Transliteration>), // Transliteration command 'y'

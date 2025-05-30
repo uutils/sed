@@ -43,6 +43,9 @@ cargo run --release
   in the strings of the `y` command.
   Under POSIX these yield undefined behavior.
 * The substitution command replacement group `\0` is a synonym for &.
+* A `Q` command (optionally followed by an exit code) quits immediately.
+* The `q` command can be optionally followed by an exit code.
+* The `l` command can be optionally followed by the output width.
 
 ### Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.
@@ -50,6 +53,8 @@ cargo run --release
 ### New extensions
 * Unicode characters can be specified in regular expression pattern, replacement
   and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
+* The `l` command lists Unicode characters using the `\uXXXX` and `\UXXXXXXXX`
+  sequences.
 
 ### Incompatibilities
 * The input is assumed to be valid UTF-8 (this includes 7-bit ASCII).

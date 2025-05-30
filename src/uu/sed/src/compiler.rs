@@ -19,6 +19,7 @@ use crate::fast_regex::Regex;
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
+
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -26,7 +27,10 @@ use std::mem;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::LazyLock;
+use terminal_size::{Width, terminal_size};
 use uucore::error::{UResult, USimpleError};
+
+const DEFAULT_OUTPUT_WIDTH: usize = 60;
 
 // A global, immutable map of command properties, initialized on first access
 static CMD_MAP: LazyLock<HashMap<char, CommandSpec>> = LazyLock::new(build_command_map);
@@ -34,12 +38,13 @@ static CMD_MAP: LazyLock<HashMap<char, CommandSpec>> = LazyLock::new(build_comma
 // Types of command arguments recognized by the parser
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandArgs {
-    Empty,         // d D g G h H l n N p P q x = \0
+    Empty,         // d D g G h H n N p P x = \0
     Text,          // a c i
     NonSelect,     // !
     BeginGroup,    // {
     EndGroup,      // }
     Label,         // b t :
+    Number,        // l q Q (GNU extension)
     ReadFile,      // r
     WriteFile,     // w
     Substitute,    // s
@@ -120,7 +125,7 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
         CommandSpec {
             code: 'l',
             n_addr: 2,
-            args: CommandArgs::Empty,
+            args: CommandArgs::Number,
         },
         CommandSpec {
             code: 'n',
@@ -145,7 +150,12 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
         CommandSpec {
             code: 'q',
             n_addr: 1,
-            args: CommandArgs::Empty,
+            args: CommandArgs::Number,
+        },
+        CommandSpec {
+            code: 'Q', // GNU extension
+            n_addr: 1,
+            args: CommandArgs::Number,
         },
         CommandSpec {
             code: 'r',
@@ -523,14 +533,14 @@ fn compile_address(
         }
         '+' => {
             line.advance();
-            let number = parse_number(lines, line)?;
+            let number = parse_number(lines, line, true)?.unwrap();
             Ok(Address {
                 atype: AddressType::RelLine,
                 value: AddressValue::LineNumber(number),
             })
         }
         c if c.is_ascii_digit() => {
-            let number = parse_number(lines, line)?;
+            let number = parse_number(lines, line, true)?.unwrap();
             Ok(Address {
                 atype: AddressType::Line,
                 value: AddressValue::LineNumber(number),
@@ -542,7 +552,12 @@ fn compile_address(
 
 /// Parse and return the decimal number at the current line position.
 /// Advance the line to first non-digit or EOL.
-fn parse_number(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<usize> {
+/// Issue an error if the number is required.
+fn parse_number(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    required: bool,
+) -> UResult<Option<usize>> {
     let mut num_str = String::new();
 
     while !line.eol() && line.current().is_ascii_digit() {
@@ -550,10 +565,19 @@ fn parse_number(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UR
         line.advance();
     }
 
+    if num_str.is_empty() {
+        if required {
+            return compilation_error(lines, line, "number expected");
+        } else {
+            return Ok(None);
+        }
+    }
+
     num_str
         .parse::<usize>()
         .map_err(|_| format!("invalid number '{}'", num_str))
         .map_err(|msg| compilation_error::<usize>(lines, line, msg).unwrap_err())
+        .map(Some)
 }
 
 /// Parse the end of a command, failing with an error on extra characters.
@@ -1032,6 +1056,42 @@ fn compile_label_command(
     parse_command_ending(lines, line, cmd)
 }
 
+/// Return the width of the command's terminal or a default.
+fn output_width() -> usize {
+    if let Some((Width(w), _)) = terminal_size() {
+        w as usize
+    } else {
+        DEFAULT_OUTPUT_WIDTH
+    }
+}
+
+fn compile_number_command(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<()> {
+    line.advance(); // Skip the command character
+    line.eat_spaces(); // Skip any leading whitespace
+
+    match parse_number(lines, line, false)? {
+        Some(n) => {
+            cmd.data = CommandData::Number(n);
+        }
+        None => match cmd.code {
+            'q' | 'Q' => {
+                cmd.data = CommandData::Number(0);
+            }
+            'l' => {
+                cmd.data = CommandData::Number(output_width());
+            }
+            _ => panic!("invalid number-expecting command"),
+        },
+    }
+
+    line.eat_spaces(); // Skip any trailing whitespace
+    parse_command_ending(lines, line, cmd)
+}
+
 fn compile_text_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
@@ -1109,6 +1169,10 @@ fn compile_command(
         }
         CommandArgs::NonSelect => { // !
             // Implemented at a higher level.
+        }
+        CommandArgs::Number => {
+            // l q Q
+            compile_number_command(lines, line, &mut cmd)?;
         }
         CommandArgs::Substitute => {
             // s
@@ -1375,14 +1439,28 @@ mod tests {
     #[test]
     fn test_parse_number_basic() {
         let (lines, mut chars) = make_providers("123abc");
-        assert_eq!(parse_number(&lines, &mut chars).unwrap(), 123);
+        assert_eq!(parse_number(&lines, &mut chars, true).unwrap(), Some(123));
         assert_eq!(chars.current(), 'a'); // Should stop at first non-digit
     }
 
     #[test]
+    fn test_parse_optional_number_missing() {
+        let (lines, mut chars) = make_providers(" ;");
+        assert_eq!(parse_number(&lines, &mut chars, false).unwrap(), None);
+    }
+
+    #[test]
     fn test_parse_number_invalid() {
-        let (lines, mut chars) = make_providers("abc");
-        assert!(parse_number(&lines, &mut chars).is_err());
+        let (lines, mut chars) = make_providers("537654897563495734653453434534534534545");
+        let err = parse_number(&lines, &mut chars, true).unwrap_err();
+        assert!(err.to_string().contains("invalid number"));
+    }
+
+    #[test]
+    fn test_parse_required_number_missing() {
+        let (lines, mut chars) = make_providers("");
+        let err = parse_number(&lines, &mut chars, true).unwrap_err();
+        assert!(err.to_string().contains("number expected"));
     }
 
     // compile_re

@@ -714,6 +714,7 @@ dependencies = [
  "rlimit",
  "sysinfo",
  "tempfile",
+ "terminal_size",
  "textwrap",
  "uu_sed",
  "uucore",
@@ -903,6 +904,7 @@ dependencies = [
  "once_cell",
  "regex",
  "tempfile",
+ "terminal_size",
  "uucore",
 ]
 
