@@ -656,7 +656,7 @@ pub fn process_all_files(
 ) -> UResult<()> {
     context.unbuffered = context.unbuffered || io::stdout().is_terminal();
 
-    let mut in_place = InPlace::new(context.clone())?;
+    let mut in_place = InPlace::new(context.clone());
     let last_file_index = files.len() - 1;
 
     for (index, path) in files.iter().enumerate() {

@@ -46,9 +46,11 @@ cargo run --release
 * A `Q` command (optionally followed by an exit code) quits immediately.
 * The `q` command can be optionally followed by an exit code.
 * The `l` command can be optionally followed by the output width.
+* The `--follow-symlinks` flag for in-place editing.
 
 ### Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.
+* In-place editing of file with the `-i` flag.
 
 ### New extensions
 * Unicode characters can be specified in regular expression pattern, replacement

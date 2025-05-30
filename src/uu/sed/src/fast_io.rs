@@ -525,6 +525,20 @@ impl OutputBuffer {
     }
 }
 
+/// Implementation of the std::io::Write trait
+impl Write for OutputBuffer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let s =
+            std::str::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        self.write_str(s)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush()
+    }
+}
+
 #[cfg(unix)]
 impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output

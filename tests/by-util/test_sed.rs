@@ -9,7 +9,11 @@
 // file that was distributed with this source code.
 
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
+
+#[cfg(unix)]
+use assert_fs::fixture::{FileWriteStr, PathChild};
+
 use tempfile::NamedTempFile;
 use uutests::new_ucmd;
 use uutests::util::TestScenario;
@@ -682,6 +686,205 @@ check_output!(number_separate, ["-s", "/l._8/=", LINES1, LINES2]);
 check_output!(list_ascii, ["-n", "l 60", "input/ascii"]);
 check_output!(list_empty, ["-n", "l 60", "input/empty"]);
 check_output!(list_unicode, ["l 60", "input/unicode"]);
+
+////////////////////////////////////////////////////////////
+// In-place editing
+#[test]
+fn in_place_edit_replace() -> std::io::Result<()> {
+    let mut temp = NamedTempFile::new()?;
+    writeln!(temp.as_file_mut(), "hello, world")?;
+
+    // Get the file path before converting to TempPath
+    let path = temp.path().to_path_buf();
+
+    // Close temp file and preserve path
+    let temp_path = temp.into_temp_path();
+
+    // Call your tool on the path
+    new_ucmd!()
+        .args(&["-i", "-e", "s/world/universe/", path.to_str().unwrap()])
+        .succeeds();
+
+    // Read the file using standard fs
+    let actual = std::fs::read_to_string(&path)?;
+    temp_path.close()?; // Clean up
+
+    assert_eq!(actual, "hello, universe\n");
+    Ok(())
+}
+
+#[test]
+fn in_place_edit_backup() -> std::io::Result<()> {
+    let mut temp = NamedTempFile::new()?;
+    writeln!(temp.as_file_mut(), "hello, world")?;
+
+    let path = temp.path().to_path_buf();
+    let temp_path = temp.into_temp_path();
+
+    // Run the sed-like command with -i (in-place edit)
+    new_ucmd!()
+        .args(&[
+            "-i",
+            ".bak",
+            "-e",
+            "s/world/universe/",
+            path.to_str().unwrap(),
+        ])
+        .succeeds();
+
+    // Read edited file
+    let actual = std::fs::read_to_string(&path)?;
+    assert_eq!(actual, "hello, universe\n");
+
+    // Read backup file
+    let backup_path = path.with_file_name(format!(
+        "{}.bak",
+        path.file_name().unwrap().to_string_lossy()
+    ));
+    let backup = std::fs::read_to_string(&backup_path)?;
+    assert_eq!(backup, "hello, world\n");
+
+    temp_path.close()?; // Cleanup
+    std::fs::remove_file(backup_path)?; // Cleanup backup
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn in_place_edit_follow_symlink_edits_target() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = assert_fs::TempDir::new()?;
+    let target = temp_dir.child("target.txt");
+    let link = temp_dir.child("link.txt");
+
+    target.write_str("hello, world\n")?;
+
+    std::os::unix::fs::symlink(target.path(), link.path())?;
+
+    new_ucmd!()
+        .args(&[
+            "--follow-symlinks",
+            "-i",
+            "-e",
+            "s/world/universe/",
+            link.path().to_str().unwrap(),
+        ])
+        .succeeds();
+
+    let actual = std::fs::read_to_string(target.path())?;
+    assert_eq!(actual, "hello, universe\n");
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn in_place_edit_symlink_replaced_when_not_following() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = assert_fs::TempDir::new()?;
+    let target = temp_dir.child("target.txt");
+    let link = temp_dir.child("link.txt");
+
+    target.write_str("hello, world\n")?;
+
+    std::os::unix::fs::symlink(target.path(), link.path())?;
+
+    // Run command without --follow-symlinks
+    new_ucmd!()
+        .args(&[
+            "-i",
+            "-e",
+            "s/world/universe/",
+            link.path().to_str().unwrap(),
+        ])
+        .succeeds();
+
+    // The original target should be untouched
+    let original = std::fs::read_to_string(target.path())?;
+    assert_eq!(original, "hello, world\n");
+
+    // The symlink path should now contain the edited content
+    let edited = std::fs::read_to_string(link.path())?;
+    assert_eq!(edited, "hello, universe\n");
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn in_place_edit_follow_symlink_with_backup() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = assert_fs::TempDir::new()?;
+    let target = temp_dir.child("target.txt");
+    let link = temp_dir.child("link.txt");
+
+    target.write_str("hello, world\n")?;
+
+    std::os::unix::fs::symlink(target.path(), link.path())?;
+
+    new_ucmd!()
+        .args(&[
+            "--follow-symlinks",
+            "-i",
+            ".bak",
+            "-e",
+            "s/world/universe/",
+            link.path().to_str().unwrap(),
+        ])
+        .succeeds();
+
+    // Verify target was modified
+    let edited = std::fs::read_to_string(target.path())?;
+    assert_eq!(edited, "hello, universe\n");
+
+    // Backup file is created alongside the target
+    let backup_path = target.path().with_file_name(format!(
+        "{}.bak",
+        target.file_name().unwrap().to_string_lossy()
+    ));
+    let backup = std::fs::read_to_string(&backup_path)?;
+    assert_eq!(backup, "hello, world\n");
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn in_place_edit_symlink_replaced_with_backup() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = assert_fs::TempDir::new()?;
+    let target = temp_dir.child("target.txt");
+    let link = temp_dir.child("link.txt");
+
+    target.write_str("hello, world\n")?;
+
+    std::os::unix::fs::symlink(target.path(), link.path())?;
+
+    new_ucmd!()
+        .args(&[
+            "-i",
+            ".bak",
+            "-e",
+            "s/world/universe/",
+            link.path().to_str().unwrap(),
+        ])
+        .succeeds();
+
+    // Target should remain untouched
+    let unchanged = std::fs::read_to_string(target.path())?;
+    assert_eq!(unchanged, "hello, world\n");
+
+    // Symlink path should now contain the updated content
+    let edited = std::fs::read_to_string(link.path())?;
+    assert_eq!(edited, "hello, universe\n");
+
+    // Backup of the symlink file (not the target) should exist
+    let backup_path = link.path().with_file_name(format!(
+        "{}.bak",
+        link.file_name().unwrap().to_string_lossy()
+    ));
+    let backup = std::fs::read_to_string(&backup_path)?;
+    assert_eq!(backup, "hello, world\n");
+
+    Ok(())
+}
 
 ////////////////////////////////////////////////////////////
 // Large complex scripts
