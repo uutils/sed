@@ -8,9 +8,6 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-// TODO: remove when compile is implemented
-#![allow(dead_code)]
-
 use crate::fast_regex::{Captures, Match, Regex};
 use crate::named_writer::NamedWriter;
 
@@ -320,19 +317,6 @@ pub enum CommandData {
     Transliteration(Box<Transliteration>), // Transliteration command 'y'
 }
 
-#[derive(Debug)]
-/// Text to append before a line is read
-pub struct AppendBuffer {
-    append_type: AppendType,
-    content: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppendType {
-    String,
-    File,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Flag for space modifications
 pub enum SpaceFlag {
@@ -528,6 +512,7 @@ mod tests {
     }
 
     // from_strings
+    #[test]
     fn test_basic_transliteration() {
         let t = Transliteration::from_strings("abcδ", "1234");
 
