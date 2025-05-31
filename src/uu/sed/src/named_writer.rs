@@ -14,7 +14,8 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use uucore::error::{UResult, USimpleError};
+use uucore::display::Quotable;
+use uucore::error::{FromIo, UResult};
 
 thread_local! {
     /// Global list of all writers that should be flushed at shutdown
@@ -36,12 +37,7 @@ impl NamedWriter {
             .write(true)
             .truncate(true)
             .open(&path)
-            .map_err(|e| {
-                USimpleError::new(
-                    2,
-                    format!("Error opening output file {}: {}", path.display(), e),
-                )
-            })?;
+            .map_err_context(|| format!("error opening output file {}", path.quote()))?;
 
         let writer = Rc::new(RefCell::new(NamedWriter {
             path,
@@ -55,14 +51,14 @@ impl NamedWriter {
     /// Write a line to the file with a newline, returning descriptive errors.
     pub fn write_line(&mut self, line: &str) -> UResult<()> {
         writeln!(self.writer, "{}", line)
-            .map_err(|e| USimpleError::new(2, format!("{}: {}", self.path.display(), e)))
+            .map_err_context(|| format!("error writing to file {}", self.path.quote()))
     }
 
     /// Flush the writer, returning a descriptive error.
     pub fn flush(&mut self) -> UResult<()> {
         self.writer
             .flush()
-            .map_err(|e| USimpleError::new(2, format!("{}: {}", self.path.display(), e)))
+            .map_err_context(|| format!("error writing to file {}", self.path.quote()))
     }
 }
 

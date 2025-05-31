@@ -12,6 +12,7 @@ pub mod command;
 pub mod compiler;
 pub mod delimited_parser;
 pub mod fast_io;
+pub mod fast_regex;
 pub mod in_place;
 pub mod named_writer;
 pub mod processor;
@@ -22,7 +23,6 @@ use crate::command::{ProcessingContext, ScriptValue, StringSpace};
 use crate::compiler::compile;
 use crate::processor::process_all_files;
 use clap::{Arg, ArgMatches, Command, arg};
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
@@ -35,10 +35,10 @@ const USAGE: &str = "sed [OPTION]... [script] [file]...";
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
     let (scripts, files) = get_scripts_files(&matches)?;
-    let mut processing_context = build_context(&matches);
+    let mut context = build_context(&matches);
 
-    let executable = compile(scripts, &mut processing_context)?;
-    process_all_files(executable, files, processing_context)?;
+    let executable = compile(scripts, &mut context)?;
+    process_all_files(executable, files, &mut context)?;
     Ok(())
 }
 
@@ -202,12 +202,13 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         last_line: false,
         last_file: false,
         stop_processing: false,
-        saved_regex: const { RefCell::new(None) },
+        saved_regex: None,
         input_action: None,
         hold: StringSpace::default(),
         parsed_block_nesting: 0,
         label_to_command_map: HashMap::new(),
         substitution_made: false,
+        append_elements: Vec::new(),
     }
 }
 

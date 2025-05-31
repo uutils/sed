@@ -8,18 +8,15 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-// TODO: remove when compile is implemented
-#![allow(dead_code)]
-
+use crate::fast_regex::{Captures, Match, Regex};
 use crate::named_writer::NamedWriter;
 
-use regex::Captures;
-use regex::Regex;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf; // For file descriptors and equivalent
 use std::rc::Rc;
-use uucore::error::UResult;
+use uucore::error::{UResult, USimpleError};
 
 #[derive(Debug, Default, Clone)]
 /// Compilation and processing options provided mostly through the
@@ -52,7 +49,7 @@ pub struct ProcessingContext {
     /// Stop processing further input.
     pub stop_processing: bool,
     /// Previously compiled RE, saved for reuse when specifying an empty RE
-    pub saved_regex: RefCell<Option<Regex>>,
+    pub saved_regex: Option<Regex>,
     /// Modification of input processing action
     // This is required to avoid doubly borrowing the reader in the 'N'
     // command.
@@ -65,6 +62,15 @@ pub struct ProcessingContext {
     pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
     /// True if a substitution was made as specified in the t command
     pub substitution_made: bool,
+    /// Elements to append at the end of each command processing cycle
+    pub append_elements: Vec<AppendElement>,
+}
+
+#[derive(Clone, Debug)]
+/// Elements that shall be appended at the end of each command processing cycle
+pub enum AppendElement {
+    Text(String),  // The specified text string
+    Path(PathBuf), // The contents of the specified file path
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -100,7 +106,7 @@ pub struct Address {
 #[derive(Debug)]
 pub enum AddressValue {
     LineNumber(usize),
-    Regex(Regex),
+    Regex(Option<Regex>),
 }
 
 #[derive(Debug)]
@@ -115,38 +121,65 @@ pub enum ReplacementPart {
 /// All specified replacements for an RE
 pub struct ReplacementTemplate {
     pub parts: Vec<ReplacementPart>,
+    pub max_group_number: usize, // Highest used group number (e.g. 8 for \8)
 }
 
 impl Default for ReplacementTemplate {
     /// Create an empty template.
     fn default() -> Self {
-        ReplacementTemplate { parts: Vec::new() }
+        ReplacementTemplate::new(Vec::new())
     }
 }
 
 impl ReplacementTemplate {
+    /// Construct from the parts
+    pub fn new(parts: Vec<ReplacementPart>) -> Self {
+        let max_group_number = parts
+            .iter()
+            .filter_map(|part| match part {
+                ReplacementPart::Group(n) => Some(*n),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+
+        Self {
+            parts,
+            max_group_number: max_group_number.try_into().unwrap(),
+        }
+    }
+
     /// Apply the template to the given RE captures.
     /// Example:
-    /// let result = regex.replace_all(input, |caps: &regex::Captures| {
-    ///    template.apply(caps) });
+    /// let result = regex.replace_all(input, |caps: &Captures| {
+    ///    template.apply_captures(caps) });
     /// Returns an error if a backreference in the template was not matched by the RE.
-    pub fn apply(&self, caps: &Captures) -> UResult<String> {
+    pub fn apply_captures(&self, caps: &Captures) -> UResult<String> {
         let mut result = String::new();
+
+        // Invalid group numbers may end here through (unkown at compile time)
+        // reused REs.
+        if self.max_group_number > caps.len() - 1 {
+            return Err(USimpleError::new(
+                2,
+                format!(
+                    "invalid reference \\{} on `s' command's RHS",
+                    self.max_group_number
+                ),
+            ));
+        }
 
         for part in &self.parts {
             match part {
                 ReplacementPart::Literal(s) => result.push_str(s),
 
                 ReplacementPart::WholeMatch => {
-                    result.push_str(caps.get(0).map_or("", |m| m.as_str()));
+                    result.push_str(caps.get(0)?.map(|m| m.as_str()).unwrap_or(""));
                 }
 
                 ReplacementPart::Group(n) => {
-                    // Compilation guarantees we only get valid group numbers
-                    result.push_str(
-                        caps.get((*n).try_into().unwrap())
-                            .map_or("", |m| m.as_str()),
-                    );
+                    let i: usize = (*n).try_into().unwrap();
+                    result.push_str(caps.get(i)?.map(|m| m.as_str()).unwrap_or(""));
                 }
             }
         }
@@ -154,46 +187,35 @@ impl ReplacementTemplate {
         Ok(result)
     }
 
-    /// Returns the highest capture group number referenced in this template.
-    pub fn max_group_number(&self) -> u32 {
-        self.parts
-            .iter()
-            .filter_map(|part| {
-                if let ReplacementPart::Group(n) = part {
-                    Some(*n)
-                } else {
-                    None
+    /// Apply the template to the given RE single match.
+    pub fn apply_match(&self, m: &Match) -> String {
+        let mut result = String::new();
+
+        for part in &self.parts {
+            match part {
+                ReplacementPart::Literal(s) => result.push_str(s),
+
+                ReplacementPart::WholeMatch => result.push_str(m.as_str()),
+
+                ReplacementPart::Group(_) => {
+                    panic!("unexpected Regex group replacement")
                 }
-            })
-            .max()
-            .unwrap_or(0)
+            }
+        }
+        result
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 /// Substitution command
 pub struct Substitution {
     pub occurrence: usize, // Which occurrence to substitute
     pub print_flag: bool,  // True if 'p' flag
     pub ignore_case: bool, // True if 'I' flag
     pub write_file: Option<Rc<RefCell<NamedWriter>>>, // Writer to file if 'w' flag is used
-    pub regex: Regex,      // Regular expression
+    pub regex: Option<Regex>, // Regular expression
     pub line_number: usize, // Line number
     pub replacement: ReplacementTemplate, // Specified broken-down replacement
-}
-
-impl Default for Substitution {
-    fn default() -> Self {
-        Substitution {
-            occurrence: 0,
-            print_flag: false,
-            ignore_case: false,
-            write_file: None,
-            regex: Regex::new("").unwrap(), // safe dummy regex
-            line_number: 0,
-            replacement: ReplacementTemplate::default(),
-        }
-    }
 }
 
 /// The block of the first and most common Unicode characters:
@@ -261,7 +283,6 @@ pub struct Command {
     pub addr2: Option<Address>,             // End address
     pub non_select: bool,                   // True if '!'
     pub start_line: Option<usize>,          // Start line number (or None)
-    pub text: Option<String>,               // Text for ':', 'a', 'c', 'i', 'r', 'w'
     pub data: CommandData,                  // Command-specific data
     pub next: Option<Rc<RefCell<Command>>>, // Pointer to next command
 }
@@ -274,7 +295,6 @@ impl Default for Command {
             addr2: None,
             non_select: false,
             start_line: None,
-            text: None,
             data: CommandData::None,
             next: None,
         }
@@ -289,22 +309,12 @@ pub enum CommandData {
     Block(Option<Rc<RefCell<Command>>>), // Commands for '{'
     BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't'
     Label(Option<String>),               // Label name for 'b', 't', ':'
-    NamedWriter(Box<NamedWriter>),       // File descriptor for 'w'
+    Path(PathBuf),                       // File path for 'r'
+    NamedWriter(Rc<RefCell<NamedWriter>>), // File output for 'w'
+    Number(usize),                       // Number for 'l', 'q', 'Q' (GNU)
     Substitution(Box<Substitution>),     // Substitute command 's'
+    Text(Cow<'static, str>),             // Text for 'a', 'c', 'i'
     Transliteration(Box<Transliteration>), // Transliteration command 'y'
-}
-
-#[derive(Debug)]
-/// Text to append before a line is read
-pub struct AppendBuffer {
-    append_type: AppendType,
-    content: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AppendType {
-    String,
-    File,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,107 +336,123 @@ pub struct InputAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regex::Regex;
+    use crate::fast_io::IOChunk;
 
     // Return the captures for the RE applied to the specified string
-    fn caps_for<'a>(re: &str, input: &'a str) -> regex::Captures<'a> {
-        Regex::new(re).unwrap().captures(input).unwrap()
+    fn caps_for<'a>(re: &str, chunk: &'a mut IOChunk) -> Captures<'a> {
+        Regex::new(re)
+            .unwrap()
+            .captures(chunk)
+            .unwrap()
+            .expect("captures")
     }
 
     #[test]
     // s/foo//
     fn test_empty_template() {
         let template = ReplacementTemplate::default();
-        let caps = caps_for("foo", "foo");
+        let input = &mut IOChunk::from_str("foo");
+        let caps = caps_for("foo", input);
 
-        let result = template.apply(&caps).unwrap();
+        let result = template.apply_captures(&caps).unwrap();
         assert_eq!(result, "");
     }
 
     #[test]
     // s/abc/hello/
     fn test_literal_only() {
-        let template = ReplacementTemplate {
-            parts: vec![ReplacementPart::Literal("hello".into())],
-        };
-        let caps = caps_for("abc", "abc");
+        let template = ReplacementTemplate::new(vec![ReplacementPart::Literal("hello".into())]);
+        let input = &mut IOChunk::from_str("abc");
+        let caps = caps_for("abc", input);
 
-        let result = template.apply(&caps).unwrap();
+        let result = template.apply_captures(&caps).unwrap();
         assert_eq!(result, "hello");
     }
 
     #[test]
     // s/foo\d+/got: &/
     fn test_whole_match() {
-        let template = ReplacementTemplate {
-            parts: vec![
-                ReplacementPart::Literal("got: ".into()),
-                ReplacementPart::WholeMatch,
-            ],
-        };
-        let caps = caps_for(r"foo\d+", "foo42");
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Literal("got: ".into()),
+            ReplacementPart::WholeMatch,
+        ]);
+        let input = &mut IOChunk::from_str("foo42");
+        let caps = caps_for(r"foo\d+", input);
 
-        let result = template.apply(&caps).unwrap();
+        let result = template.apply_captures(&caps).unwrap();
         assert_eq!(result, "got: foo42");
     }
 
     #[test]
     // s/foo(\d+)/number: \1/
     fn test_backreference() {
-        let template = ReplacementTemplate {
-            parts: vec![
-                ReplacementPart::Literal("number: ".into()),
-                ReplacementPart::Group(1),
-            ],
-        };
-        let caps = caps_for(r"foo(\d+)", "foo42");
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Literal("number: ".into()),
+            ReplacementPart::Group(1),
+        ]);
+        let input = &mut IOChunk::from_str("foo42");
+        let caps = caps_for(r"foo(\d+)", input);
 
-        let result = template.apply(&caps).unwrap();
+        let result = template.apply_captures(&caps).unwrap();
         assert_eq!(result, "number: 42");
     }
 
     #[test]
     // s/(\w+):(\d+)/key: \1, value: \2/
     fn test_multiple_parts() {
-        let template = ReplacementTemplate {
-            parts: vec![
-                ReplacementPart::Literal("key: ".into()),
-                ReplacementPart::Group(1),
-                ReplacementPart::Literal(", value: ".into()),
-                ReplacementPart::Group(2),
-            ],
-        };
-        let caps = caps_for(r"(\w+):(\d+)", "x:123");
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Literal("key: ".into()),
+            ReplacementPart::Group(1),
+            ReplacementPart::Literal(", value: ".into()),
+            ReplacementPart::Group(2),
+        ]);
+        let input = &mut IOChunk::from_str("x:123");
+        let caps = caps_for(r"(\w+):(\d+)", input);
 
-        let result = template.apply(&caps).unwrap();
+        let result = template.apply_captures(&caps).unwrap();
         assert_eq!(result, "key: x, value: 123");
+    }
+
+    #[test]
+    // s/(\w+):(\d+)/key: \1, value: \3/
+    fn test_invalid_group() {
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Literal("key: ".into()),
+            ReplacementPart::Group(1),
+            ReplacementPart::Literal(", value: ".into()),
+            ReplacementPart::Group(3),
+        ]);
+        let input = &mut IOChunk::from_str("x:123");
+        let caps = caps_for(r"(\w+):(\d+)", input);
+
+        let result = template.apply_captures(&caps);
+        assert!(result.is_err());
+
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("invalid reference \\3"));
     }
 
     // max_group_number
     #[test]
     fn test_max_group_number_with_groups() {
-        let template = ReplacementTemplate {
-            parts: vec![
-                ReplacementPart::Literal("a".into()),
-                ReplacementPart::Group(2),
-                ReplacementPart::WholeMatch,
-                ReplacementPart::Group(5),
-                ReplacementPart::Literal("z".into()),
-            ],
-        };
-        assert_eq!(template.max_group_number(), 5);
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Literal("a".into()),
+            ReplacementPart::Group(2),
+            ReplacementPart::WholeMatch,
+            ReplacementPart::Group(5),
+            ReplacementPart::Literal("z".into()),
+        ]);
+        assert_eq!(template.max_group_number, 5);
     }
 
     #[test]
     fn test_max_group_number_without_groups() {
-        let template = ReplacementTemplate {
-            parts: vec![
-                ReplacementPart::Literal("no".into()),
-                ReplacementPart::WholeMatch,
-                ReplacementPart::Literal("groups".into()),
-            ],
-        };
-        assert_eq!(template.max_group_number(), 0);
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Literal("no".into()),
+            ReplacementPart::WholeMatch,
+            ReplacementPart::Literal("groups".into()),
+        ]);
+        assert_eq!(template.max_group_number, 0);
     }
 
     // Transliteration
@@ -486,6 +512,7 @@ mod tests {
     }
 
     // from_strings
+    #[test]
     fn test_basic_transliteration() {
         let t = Transliteration::from_strings("abcδ", "1234");
 

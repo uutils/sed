@@ -15,17 +15,22 @@ use crate::command::{
 use crate::delimited_parser::{
     compilation_error, parse_char_escape, parse_regex, parse_transliteration,
 };
+use crate::fast_regex::Regex;
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
-use regex::Regex;
+
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::LazyLock;
+use terminal_size::{Width, terminal_size};
 use uucore::error::{UResult, USimpleError};
+
+const DEFAULT_OUTPUT_WIDTH: usize = 60;
 
 // A global, immutable map of command properties, initialized on first access
 static CMD_MAP: LazyLock<HashMap<char, CommandSpec>> = LazyLock::new(build_command_map);
@@ -33,12 +38,13 @@ static CMD_MAP: LazyLock<HashMap<char, CommandSpec>> = LazyLock::new(build_comma
 // Types of command arguments recognized by the parser
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandArgs {
-    Empty,         // d D g G h H l n N p P q x = \0
+    Empty,         // d D g G h H n N p P x = \0
     Text,          // a c i
     NonSelect,     // !
     BeginGroup,    // {
     EndGroup,      // }
     Label,         // b t :
+    Number,        // l q Q (GNU extension)
     ReadFile,      // r
     WriteFile,     // w
     Substitute,    // s
@@ -119,7 +125,7 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
         CommandSpec {
             code: 'l',
             n_addr: 2,
-            args: CommandArgs::Empty,
+            args: CommandArgs::Number,
         },
         CommandSpec {
             code: 'n',
@@ -144,7 +150,12 @@ fn build_command_map() -> HashMap<char, CommandSpec> {
         CommandSpec {
             code: 'q',
             n_addr: 1,
-            args: CommandArgs::Empty,
+            args: CommandArgs::Number,
+        },
+        CommandSpec {
+            code: 'Q', // GNU extension
+            n_addr: 1,
+            args: CommandArgs::Number,
         },
         CommandSpec {
             code: 'r',
@@ -206,19 +217,21 @@ pub fn compile(
     let mut empty_line = ScriptCharProvider::new("");
     let result = compile_sequence(&mut make_providers, &mut empty_line, context)?;
 
-    // Link the ends of command blocks to their following commands.
-    if context.parsed_block_nesting > 0 {
-        return Err(USimpleError::new(1, "unmatched `{'"));
-    }
-    patch_block_endings(result.clone());
+    // Comment-out the following to show the compiled script.
+    #[cfg(any())]
+    dbg!(&result);
 
     // Link branch commands to the target label commands.
     populate_label_map(result.clone(), context)?;
     resolve_branch_targets(result.clone(), context)?;
 
-    // Comment-out the following to show the compiled script.
-    #[cfg(any())]
-    dbg!(&result);
+    // Link the ends of command blocks to their following commands.
+    // This converts the tree into a graph, so it must be the last
+    // conversion than traverses the structure as a tree.
+    if context.parsed_block_nesting > 0 {
+        return Err(USimpleError::new(1, "unmatched `{'"));
+    }
+    patch_block_endings(result.clone());
 
     // TODO: setup append & match structures
     Ok(result)
@@ -459,6 +472,24 @@ fn compile_address_range(
     Ok(n_addr)
 }
 
+/// Read the line's remaining characters as a file path and return it.
+fn read_file_path(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<PathBuf> {
+    line.advance(); // Skip the command/w character
+    line.eat_spaces(); // Skip any leading whitespace
+
+    let mut path = String::new();
+    while !line.eol() {
+        path.push(line.current());
+        line.advance();
+    }
+
+    if path.is_empty() {
+        compilation_error(lines, line, "missing file path")
+    } else {
+        Ok(PathBuf::from(path))
+    }
+}
+
 /// Compile and return a single range address specification.
 fn compile_address(
     lines: &ScriptLineProvider,
@@ -502,14 +533,14 @@ fn compile_address(
         }
         '+' => {
             line.advance();
-            let number = parse_number(lines, line)?;
+            let number = parse_number(lines, line, true)?.unwrap();
             Ok(Address {
                 atype: AddressType::RelLine,
                 value: AddressValue::LineNumber(number),
             })
         }
         c if c.is_ascii_digit() => {
-            let number = parse_number(lines, line)?;
+            let number = parse_number(lines, line, true)?.unwrap();
             Ok(Address {
                 atype: AddressType::Line,
                 value: AddressValue::LineNumber(number),
@@ -521,7 +552,12 @@ fn compile_address(
 
 /// Parse and return the decimal number at the current line position.
 /// Advance the line to first non-digit or EOL.
-fn parse_number(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<usize> {
+/// Issue an error if the number is required.
+fn parse_number(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    required: bool,
+) -> UResult<Option<usize>> {
     let mut num_str = String::new();
 
     while !line.eol() && line.current().is_ascii_digit() {
@@ -529,10 +565,19 @@ fn parse_number(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UR
         line.advance();
     }
 
+    if num_str.is_empty() {
+        if required {
+            return compilation_error(lines, line, "number expected");
+        } else {
+            return Ok(None);
+        }
+    }
+
     num_str
         .parse::<usize>()
         .map_err(|_| format!("invalid number '{}'", num_str))
         .map_err(|msg| compilation_error::<usize>(lines, line, msg).unwrap_err())
+        .map(Some)
 }
 
 /// Parse the end of a command, failing with an error on extra characters.
@@ -558,90 +603,116 @@ fn parse_command_ending(
 }
 
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
-/// - Replacces `\(` and `\)` with `(` and `)`
-/// - Escapes ERE-only metacharacters: `+ ? { } | ( )`
-/// - Leaves all other characters as-is
+/// - Replaces `\(` and `\)` with `(` and `)`.
+/// - Puts single-digit back-references in non-capturing groups..
+/// - Escapes ERE-only metacharacters: `+ ? { } | ( )`.
+/// - Leaves all other characters as-is.
 fn bre_to_ere(pattern: &str) -> String {
     let mut result = String::with_capacity(pattern.len());
     let mut chars = pattern.chars().peekable();
 
+    let mut at_beginning = true;
+    let mut previous: Option<char> = None;
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.peek() {
                 Some('(') => {
                     chars.next();
-                    result.push('('); // group start
+                    result.push('('); // Group start
                 }
                 Some(')') => {
                     chars.next();
-                    result.push(')'); // group end
+                    result.push(')'); // Group end
+                }
+                Some(v) if v.is_ascii_digit() => {
+                    // Back-reference.  In sed BREs these are single-digit
+                    // (\1-\9) whereas fancy_regex supports multi-digit
+                    // back-references. Put them in a non-capturing group
+                    // to avoid having the number extend beyond the single
+                    // digit. Example: In sed \11 matches group 1 followed
+                    // by '1', not group 11.
+                    result.push_str(&format!(r"(?:\{})", v));
+                    chars.next();
                 }
                 Some(&next) => {
+                    // Preserve other escaped characters.
                     chars.next();
                     result.push('\\');
-                    result.push(next); // preserve other escaped characters
+                    result.push(next);
                 }
                 None => {
-                    result.push('\\'); // trailing backslash, keep it
+                    // Trailing backslash; keep it.
+                    result.push('\\');
                 }
             }
         } else {
             match c {
                 '+' | '?' | '{' | '}' | '|' | '(' | ')' => {
-                    result.push('\\'); // escape unsupported ERE metacharacters
+                    // Escape unsupported ERE metacharacters.
+                    result.push('\\');
+                    result.push(c);
+                }
+                '^' if !at_beginning && previous != Some('[') => {
+                    // In BREs ^ has special meaning at the beginning
+                    // and as bracket negation.  This heuristic escapes
+                    // all other uses, which per POSIX are valid in EREs.
+                    // "the ERE "a^b" is valid, but can never match because
+                    // the 'a' prevents the expression "^b" from matching
+                    // starting at the first character."
+                    // POSIX 9.4.9 ERE Expression Anchoring
+                    result.push('\\');
+                    result.push(c);
+                }
+                '$' if chars.peek().is_some() => {
+                    // Similarly for $ appearing not at the end.
+                    result.push('\\');
                     result.push(c);
                 }
                 _ => result.push(c),
             }
         }
+        at_beginning = false;
+        previous = Some(c);
     }
 
     result
 }
 
 /// Compile the provided regular expression string into a corresponding engine.
+/// An empty pattern results in None, which means that the last RE employed
+/// at runtime will be used.
 fn compile_regex(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
     pattern: &str,
     context: &ProcessingContext,
     icase: bool,
-) -> UResult<Regex> {
+) -> UResult<Option<Regex>> {
     if pattern.is_empty() {
-        let maybe_existing = context.saved_regex.borrow();
-        if let Some(existing) = &*maybe_existing {
-            Ok(existing.clone())
-        } else {
-            compilation_error(lines, line, "no previously compiled regex available")
-        }
-    } else {
-        // Convert basic to extended regular expression if needed.
-        let ere_pattern = if context.regex_extended {
-            pattern
-        } else {
-            &bre_to_ere(pattern)
-        };
-
-        // Add case-insensitive modifier if needed.
-        let full_pattern = if icase {
-            if ere_pattern.is_empty() {
-                return compilation_error(lines, line, "cannot specify a modifier on an empty RE");
-            }
-            format!("(?i){}", ere_pattern)
-        } else {
-            ere_pattern.to_string()
-        };
-
-        // Compile into engine.
-        let compiled = Regex::new(&full_pattern).map_err(|e| {
-            compilation_error::<Regex>(lines, line, format!("invalid regex '{}': {}", pattern, e))
-                .unwrap_err()
-        })?;
-
-        *context.saved_regex.borrow_mut() = Some(compiled.clone());
-
-        Ok(compiled)
+        return Ok(None);
     }
+
+    // Convert basic to extended regular expression if needed.
+    let pattern = if context.regex_extended {
+        pattern
+    } else {
+        &bre_to_ere(pattern)
+    };
+
+    // Add case-insensitive modifier if needed.
+    let pattern = if icase {
+        format!("(?i){}", pattern)
+    } else {
+        pattern.to_string()
+    };
+
+    // Compile into engine.
+    let compiled = Regex::new(&pattern).map_err(|e| {
+        compilation_error::<Regex>(lines, line, format!("invalid regex '{}': {}", pattern, e))
+            .unwrap_err()
+    })?;
+
+    Ok(Some(compiled))
 }
 
 /// Compile a regular expression replacement string.
@@ -677,19 +748,29 @@ pub fn compile_replacement(
                     }
 
                     match line.current() {
-                        // \1 - \9
-                        c @ '1'..='9' => {
+                        // \0 - \9
+                        c @ '0'..='9' => {
                             let ref_num = c.to_digit(10).unwrap();
 
                             if !literal.is_empty() {
                                 parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
                             }
-                            parts.push(ReplacementPart::Group(ref_num));
+                            if ref_num == 0 {
+                                parts.push(ReplacementPart::WholeMatch);
+                            } else {
+                                parts.push(ReplacementPart::Group(ref_num));
+                            }
                             line.advance();
                         }
 
-                        // literal \ and &
+                        // Literal \ and &
                         '\\' | '&' => {
+                            literal.push(line.current());
+                            line.advance();
+                        }
+
+                        // Literal delimiter
+                        v if v == delimiter => {
                             literal.push(line.current());
                             line.advance();
                         }
@@ -727,7 +808,7 @@ pub fn compile_replacement(
                     if !literal.is_empty() {
                         parts.push(ReplacementPart::Literal(literal));
                     }
-                    return Ok(ReplacementTemplate { parts });
+                    return Ok(ReplacementTemplate::new(parts));
                 }
 
                 c => {
@@ -764,9 +845,6 @@ fn compile_subst_command(
     }
 
     let pattern = parse_regex(lines, line)?;
-    if pattern.is_empty() {
-        return compilation_error(lines, line, "unterminated substitute pattern");
-    }
 
     let mut subst = Box::new(Substitution {
         line_number: lines.get_line_number(),
@@ -776,25 +854,29 @@ fn compile_subst_command(
     subst.replacement = compile_replacement(lines, line)?;
     compile_subst_flags(lines, line, &mut subst)?;
 
-    // Compile regex with now known ignore_case flag.
-    subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
-
-    let re_captures: u32 = subst
-        .regex
-        .captures_len()
-        .saturating_sub(1)
-        .try_into()
-        .unwrap();
-    let max_group_number = subst.replacement.max_group_number();
-    if max_group_number > re_captures {
+    if pattern.is_empty() && subst.ignore_case {
         return compilation_error(
             lines,
             line,
-            format!(
-                "group number \\{} is larger than the {} available RE groups",
-                max_group_number, re_captures
-            ),
+            "cannot specify modifiers on an empty regular expression",
         );
+    }
+
+    // Compile regex with now known ignore_case flag.
+    subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
+
+    // Catch invalid group references at compile time, if possible.
+    if let Some(regex) = &subst.regex {
+        if subst.replacement.max_group_number > regex.captures_len() - 1 {
+            return compilation_error(
+                lines,
+                line,
+                format!(
+                    "invalid reference \\{} on `s' command's RHS",
+                    subst.replacement.max_group_number
+                ),
+            );
+        }
     }
 
     cmd.data = CommandData::Substitution(subst);
@@ -908,20 +990,8 @@ pub fn compile_subst_flags(
             }
 
             'w' => {
-                line.advance();
-                line.eat_spaces();
-
-                let mut path = String::new();
-                while !line.eol() && line.current() != ';' {
-                    path.push(line.current());
-                    line.advance();
-                }
-
-                if path.is_empty() {
-                    return compilation_error(lines, line, "missing filename after 'w' flag");
-                }
-
-                subst.write_file = Some(NamedWriter::new(PathBuf::from(path))?);
+                let path = read_file_path(lines, line)?;
+                subst.write_file = Some(NamedWriter::new(path)?);
                 return Ok(()); // 'w' is the last flag allowed
             }
 
@@ -958,11 +1028,17 @@ fn compile_label_command(
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
 ) -> UResult<()> {
+    /// Return true if `c` is in the POSIX portable filename character set.
+    fn is_portable_filename_char(c: char) -> bool {
+        c.is_ascii_alphanumeric()  // A–Z, a–z, 0–9
+        || matches!(c, '.' | '_' | '-')
+    }
+
     line.advance(); // Skip the command character
     line.eat_spaces(); // Skip any leading whitespace
 
     let mut label = String::new();
-    while !line.eol() && line.current().is_ascii_alphanumeric() {
+    while !line.eol() && is_portable_filename_char(line.current()) {
         label.push(line.current());
         line.advance();
     }
@@ -978,6 +1054,87 @@ fn compile_label_command(
 
     line.eat_spaces(); // Skip any trailing whitespace
     parse_command_ending(lines, line, cmd)
+}
+
+/// Return the width of the command's terminal or a default.
+fn output_width() -> usize {
+    if let Some((Width(w), _)) = terminal_size() {
+        w as usize
+    } else {
+        DEFAULT_OUTPUT_WIDTH
+    }
+}
+
+fn compile_number_command(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<()> {
+    line.advance(); // Skip the command character
+    line.eat_spaces(); // Skip any leading whitespace
+
+    match parse_number(lines, line, false)? {
+        Some(n) => {
+            cmd.data = CommandData::Number(n);
+        }
+        None => match cmd.code {
+            'q' | 'Q' => {
+                cmd.data = CommandData::Number(0);
+            }
+            'l' => {
+                cmd.data = CommandData::Number(output_width());
+            }
+            _ => panic!("invalid number-expecting command"),
+        },
+    }
+
+    line.eat_spaces(); // Skip any trailing whitespace
+    parse_command_ending(lines, line, cmd)
+}
+
+fn compile_text_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+) -> UResult<()> {
+    line.advance(); // Skip the command character.
+
+    line.eat_spaces(); // Skip any leading whitespace.
+    if line.eol() || line.current() != '\\' {
+        return compilation_error(
+            lines,
+            line,
+            format!("command `{}' expects \\ followed by text", cmd.code),
+        );
+    }
+
+    line.advance(); // Skip \.
+    line.eat_spaces(); // Skip any whitespace at the end of \.
+    if !line.eol() {
+        return compilation_error(
+            lines,
+            line,
+            format!(
+                "extra characters after \\ at the end of `{}' command",
+                cmd.code
+            ),
+        );
+    }
+
+    let mut text = String::new();
+    while let Some(line) = lines.next_line()? {
+        if line.ends_with('\\') {
+            // Line ends with \ to escape \n; remove the trailing \.
+            text.push_str(&line[..line.len() - 1]);
+            text.push('\n');
+        } else {
+            text.push_str(&line);
+            text.push('\n');
+            break;
+        }
+    }
+    cmd.data = CommandData::Text(Cow::Owned(text));
+    Ok(())
 }
 
 // Compile the specified command
@@ -1013,6 +1170,10 @@ fn compile_command(
         CommandArgs::NonSelect => { // !
             // Implemented at a higher level.
         }
+        CommandArgs::Number => {
+            // l q Q
+            compile_number_command(lines, line, &mut cmd)?;
+        }
         CommandArgs::Substitute => {
             // s
             return compile_subst_command(lines, line, &mut cmd, context);
@@ -1021,12 +1182,19 @@ fn compile_command(
             // y
             return compile_trans_command(lines, line, &mut cmd);
         }
-        // TODO
-        CommandArgs::Text => { // a c i
+        CommandArgs::Text => {
+            // a c i
+            compile_text_command(lines, line, &mut cmd)?;
         }
-        CommandArgs::ReadFile => { // r
+        CommandArgs::ReadFile => {
+            // r
+            let path = read_file_path(lines, line)?;
+            cmd.data = CommandData::Path(path);
         }
-        CommandArgs::WriteFile => { // w
+        CommandArgs::WriteFile => {
+            // w
+            let path = read_file_path(lines, line)?;
+            cmd.data = CommandData::NamedWriter(NamedWriter::new(path)?);
         }
     }
 
@@ -1074,11 +1242,25 @@ fn lookup_command(cmd: char) -> Option<&'static CommandSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fast_io::IOChunk;
 
+    // Return an empty line provider and a char provider for the specified str.
     fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
         let lines = ScriptLineProvider::new(vec![]); // Empty for tests
         let line = ScriptCharProvider::new(input);
         (lines, line)
+    }
+
+    fn make_line_provider(lines: &[&str]) -> ScriptLineProvider {
+        let input = lines
+            .iter()
+            .map(|s| ScriptValue::StringVal(s.to_string()))
+            .collect();
+        ScriptLineProvider::new(input)
+    }
+
+    fn make_char_provider(input: &str) -> ScriptCharProvider {
+        ScriptCharProvider::new(input)
     }
 
     /// Return a default ProcessingContext for use in tests.
@@ -1257,14 +1439,28 @@ mod tests {
     #[test]
     fn test_parse_number_basic() {
         let (lines, mut chars) = make_providers("123abc");
-        assert_eq!(parse_number(&lines, &mut chars).unwrap(), 123);
+        assert_eq!(parse_number(&lines, &mut chars, true).unwrap(), Some(123));
         assert_eq!(chars.current(), 'a'); // Should stop at first non-digit
     }
 
     #[test]
+    fn test_parse_optional_number_missing() {
+        let (lines, mut chars) = make_providers(" ;");
+        assert_eq!(parse_number(&lines, &mut chars, false).unwrap(), None);
+    }
+
+    #[test]
     fn test_parse_number_invalid() {
-        let (lines, mut chars) = make_providers("abc");
-        assert!(parse_number(&lines, &mut chars).is_err());
+        let (lines, mut chars) = make_providers("537654897563495734653453434534534534545");
+        let err = parse_number(&lines, &mut chars, true).unwrap_err();
+        assert!(err.to_string().contains("invalid number"));
+    }
+
+    #[test]
+    fn test_parse_required_number_missing() {
+        let (lines, mut chars) = make_providers("");
+        let err = parse_number(&lines, &mut chars, true).unwrap_err();
+        assert!(err.to_string().contains("number expected"));
     }
 
     // compile_re
@@ -1275,39 +1471,22 @@ mod tests {
     #[test]
     fn test_compile_re_basic() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", &ctx(), false).unwrap();
-        assert!(regex.is_match("abc"));
-        assert!(!regex.is_match("ABC"));
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), false)
+            .unwrap()
+            .expect("regex should be present");
+        assert!(regex.is_match(&mut IOChunk::from_str("abc")).unwrap());
+        assert!(!regex.is_match(&mut IOChunk::from_str("ABC")).unwrap());
     }
 
     #[test]
     fn test_compile_re_case_insensitive() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", &ctx(), true).unwrap();
-        assert!(regex.is_match("abc"));
-        assert!(regex.is_match("ABC"));
-        assert!(regex.is_match("AbC"));
-    }
-
-    #[test]
-    fn test_compile_re_saved_and_reuse() {
-        let context = ctx();
-        // Save a regex
-        let (lines1, chars1) = dummy_providers();
-        let _ = compile_regex(&lines1, &chars1, "abc", &context, false).unwrap();
-
-        // Now try to reuse it
-        let (lines2, chars2) = dummy_providers();
-        let reused = compile_regex(&lines2, &chars2, "", &context, false).unwrap();
-
-        assert!(reused.is_match("abc"));
-    }
-
-    #[test]
-    fn test_compile_re_empty_and_not_saved() {
-        let (lines, chars) = dummy_providers();
-        let result = compile_regex(&lines, &chars, "", &ctx(), false);
-        assert!(result.is_err()); // Should fail because nothing was saved
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), true)
+            .unwrap()
+            .expect("regex should be present");
+        assert!(regex.is_match(&mut IOChunk::from_str("abc")).unwrap());
+        assert!(regex.is_match(&mut IOChunk::from_str("ABC")).unwrap());
+        assert!(regex.is_match(&mut IOChunk::from_str("AbC")).unwrap());
     }
 
     #[test]
@@ -1354,8 +1533,32 @@ mod tests {
         let (lines, mut chars) = make_providers("/hello/");
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
-        if let AddressValue::Regex(re) = addr.value {
-            assert!(re.is_match("hello"));
+        if let AddressValue::Regex(Some(re)) = addr.value {
+            assert!(re.is_match(&mut IOChunk::from_str("hello")).unwrap());
+        } else {
+            panic!("expected Regex address value");
+        }
+    }
+
+    #[test]
+    fn test_compile_addr_regex_backref_match() {
+        let (lines, mut chars) = make_providers(r"/he\(.\)\1o/");
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
+        assert!(matches!(addr.atype, AddressType::Re));
+        if let AddressValue::Regex(Some(re)) = addr.value {
+            assert!(re.is_match(&mut IOChunk::from_str("hello")).unwrap());
+        } else {
+            panic!("expected Regex address value");
+        }
+    }
+
+    #[test]
+    fn test_compile_addr_regex_backref_no_match() {
+        let (lines, mut chars) = make_providers(r"/he\(.\)\1o/");
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
+        assert!(matches!(addr.atype, AddressType::Re));
+        if let AddressValue::Regex(Some(re)) = addr.value {
+            assert!(!re.is_match(&mut IOChunk::from_str("helio")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1366,8 +1569,8 @@ mod tests {
         let (lines, mut chars) = make_providers("\\#hello#");
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
-        if let AddressValue::Regex(re) = addr.value {
-            assert!(re.is_match("hello"));
+        if let AddressValue::Regex(Some(re)) = addr.value {
+            assert!(re.is_match(&mut IOChunk::from_str("hello")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1378,26 +1581,8 @@ mod tests {
         let (lines, mut chars) = make_providers("/hello/I");
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
-        if let AddressValue::Regex(re) = addr.value {
-            assert!(re.is_match("HELLO")); // case-insensitive
-        } else {
-            panic!("expected Regex address value");
-        }
-    }
-
-    #[test]
-    fn test_compile_addr_empty_regex_saved() {
-        let context = ctx();
-        // First save a regex
-        let (lines1, mut chars1) = make_providers("/saved/");
-        let _ = compile_address(&lines1, &mut chars1, &context).unwrap();
-
-        // Then reuse it with empty regex
-        let (lines2, mut chars2) = make_providers("//");
-        let addr = compile_address(&lines2, &mut chars2, &context).unwrap();
-        assert!(matches!(addr.atype, AddressType::Re));
-        if let AddressValue::Regex(re) = addr.value {
-            assert!(re.is_match("saved"));
+        if let AddressValue::Regex(Some(re)) = addr.value {
+            assert!(re.is_match(&mut IOChunk::from_str("HELLO")).unwrap()); // case-insensitive
         } else {
             panic!("expected Regex address value");
         }
@@ -1487,9 +1672,9 @@ mod tests {
             cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match("foo"));
-            assert!(!re.is_match("bar"));
+        if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
+            assert!(re.is_match(&mut IOChunk::from_str("foo")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::from_str("bar")).unwrap());
         } else {
             panic!("expected a regex address");
         };
@@ -1507,9 +1692,9 @@ mod tests {
             cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match("foo"));
-            assert!(!re.is_match("bar"));
+        if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
+            assert!(re.is_match(&mut IOChunk::from_str("foo")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::from_str("bar")).unwrap());
         } else {
             panic!("expected a regex address");
         }
@@ -1518,9 +1703,9 @@ mod tests {
             cmd.borrow().addr2.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd.borrow().addr2.as_ref().unwrap().value {
-            assert!(re.is_match("bar"));
-            assert!(!re.is_match("foo"));
+        if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr2.as_ref().unwrap().value {
+            assert!(re.is_match(&mut IOChunk::from_str("bar")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::from_str("foo")).unwrap());
         } else {
             panic!("expected a regex address");
         };
@@ -1537,53 +1722,22 @@ mod tests {
             cmd.borrow().addr1.as_ref().unwrap().atype,
             AddressType::Re
         ));
-        if let AddressValue::Regex(re) = &cmd.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match("FOO"));
-            assert!(re.is_match("foo"));
+        if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
+            assert!(re.is_match(&mut IOChunk::from_str("FOO")).unwrap());
+            assert!(re.is_match(&mut IOChunk::from_str("foo")).unwrap());
         } else {
             panic!("expected a regex address with case-insensitive match");
         };
     }
 
-    #[test]
-    fn test_compile_re_reuse_saved() {
-        let context = ctx();
-        // First save a regex
-        let (lines1, mut chars1) = make_providers("/abc/");
-        let mut cmd1 = Rc::new(RefCell::new(Command::default()));
-        compile_address_range(&lines1, &mut chars1, &mut cmd1, &context).unwrap();
-
-        // Now reuse it
-        let (lines2, mut chars2) = make_providers("//");
-        let mut cmd2 = Rc::new(RefCell::new(Command::default()));
-        let n_addr = compile_address_range(&lines2, &mut chars2, &mut cmd2, &context).unwrap();
-
-        assert_eq!(n_addr, 1);
-        assert!(matches!(
-            cmd2.borrow().addr1.as_ref().unwrap().atype,
-            AddressType::Re
-        ));
-        if let AddressValue::Regex(re) = &cmd2.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match("abc"));
-        };
-    }
-
     // compile_sequence
-    fn make_provider(lines: &[&str]) -> ScriptLineProvider {
-        let input = lines
-            .iter()
-            .map(|s| ScriptValue::StringVal(s.to_string()))
-            .collect();
-        ScriptLineProvider::new(input)
-    }
-
     fn empty_line() -> ScriptCharProvider {
         ScriptCharProvider::new("")
     }
 
     #[test]
     fn test_compile_sequence_empty_input() {
-        let mut provider = make_provider(&[]);
+        let mut provider = make_line_provider(&[]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1592,7 +1746,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_comment_only() {
-        let mut provider = make_provider(&["# comment", "   ", ";;"]);
+        let mut provider = make_line_provider(&["# comment", "   ", ";;"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1601,7 +1755,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_single_command() {
-        let mut provider = make_provider(&["42q"]);
+        let mut provider = make_line_provider(&["42q"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1625,7 +1779,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_non_selected_single_command() {
-        let mut provider = make_provider(&["42!p"]);
+        let mut provider = make_line_provider(&["42!p"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1649,7 +1803,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_multiple_lines() {
-        let mut provider = make_provider(&["1q", "2d"]);
+        let mut provider = make_line_provider(&["1q", "2d"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1665,7 +1819,7 @@ mod tests {
 
     #[test]
     fn test_compile_sequence_single_line_multiple_commands() {
-        let mut provider = make_provider(&["1q;2d"]);
+        let mut provider = make_line_provider(&["1q;2d"]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -1714,6 +1868,15 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_replacement_escaped_delimiter() {
+        let (mut lines, mut chars) = make_providers(r"/hell\/o/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "hell/o"));
+    }
+
+    #[test]
     fn test_compile_replacement_backrefs_and_literal() {
         let (mut lines, mut chars) = make_providers("/prefix \\1 and \\2/");
         let template = compile_replacement(&mut lines, &mut chars).unwrap();
@@ -1728,6 +1891,18 @@ mod tests {
     #[test]
     fn test_compile_replacement_whole_match() {
         let (mut lines, mut chars) = make_providers("/The match was: &/");
+        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 2);
+        assert!(
+            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "The match was: ")
+        );
+        assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
+    }
+
+    #[test]
+    fn test_compile_replacement_whole_match_synonym() {
+        let (mut lines, mut chars) = make_providers(r"/The match was: \0/");
         let template = compile_replacement(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 2);
@@ -1854,7 +2029,7 @@ mod tests {
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
-        assert!(err.to_string().contains("missing filename"));
+        assert!(err.to_string().contains("missing file path"));
     }
 
     #[test]
@@ -1877,6 +2052,7 @@ mod tests {
         let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
+
     // compile_subst_command
     #[test]
     fn test_compile_subst_invalid_delimiter_backslash() {
@@ -1888,15 +2064,6 @@ mod tests {
             err.to_string()
                 .contains("substitute pattern cannot be delimited")
         );
-    }
-
-    #[test]
-    fn test_compile_subst_empty_pattern() {
-        let (mut lines, mut chars) = make_providers("s//bar/");
-        let mut cmd = Command::default();
-
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
-        assert!(err.to_string().contains("unterminated substitute pattern"));
     }
 
     #[test]
@@ -1940,15 +2107,12 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_subst_invalid_group_number() {
-        let (mut lines, mut chars) = make_providers(r"s/\(.\)\(.\)/\3\2\1/");
+    fn test_compile_subst_invalid_group_reference() {
+        let (mut lines, mut chars) = make_providers(r"s/f(o)o/\2/");
         let mut cmd = Command::default();
 
         let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("group number \\3 is larger than the 2 available RE groups")
-        );
+        assert!(err.to_string().contains("invalid reference \\2"));
     }
 
     // bre_to_ere
@@ -1983,6 +2147,21 @@ mod tests {
     #[test]
     fn test_trailing_backslash_is_preserved() {
         assert_eq!(bre_to_ere(r"abc\"), r"abc\");
+    }
+
+    #[test]
+    fn test_caret_escaped_in_middle() {
+        assert_eq!(bre_to_ere(r"^a^[^x]c"), r"^a\^[^x]c");
+    }
+
+    #[test]
+    fn test_dollar_escaped_in_middle() {
+        assert_eq!(bre_to_ere(r"a$c$"), r"a\$c$");
+    }
+
+    #[test]
+    fn test_bre_back_reference() {
+        assert_eq!(bre_to_ere(r"\(.\)\1\(.\)\2"), r"(.)(?:\1)(.)(?:\2)");
     }
 
     // patch_block_endings
@@ -2338,5 +2517,92 @@ mod tests {
             CommandData::BranchTarget(Some(ptr)) => assert!(Rc::ptr_eq(ptr, &label)),
             _ => panic!("Expected BranchTarget(Some(...))"),
         }
+    }
+
+    // compile_text_command
+    #[test]
+    fn test_compile_single_line_text_command() {
+        let mut chars = make_char_provider("a\\");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "line1\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_spaces_single_line_text_command() {
+        let mut chars = make_char_provider("a \\ ");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "line1\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_two_line_text_command() {
+        let mut chars = make_char_provider("a\\");
+        let mut lines = make_line_provider(&["line1\\", "line2"]);
+        let mut cmd = Command::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "line1\nline2\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_text_command_without_backslash() {
+        let mut chars = make_char_provider("a");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("expects \\ followed by text"));
+    }
+
+    #[test]
+    fn test_compile_text_command_with_trailing_chars() {
+        let mut chars = make_char_provider("a \\ foo");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("extra characters after \\"));
+    }
+
+    // read_file_path
+    #[test]
+    fn test_read_existing_file_path() {
+        let (lines, mut chars) = make_providers("r /etc/motd");
+
+        let path = read_file_path(&lines, &mut chars).unwrap();
+        assert_eq!(path.to_str().unwrap(), "/etc/motd");
+    }
+
+    #[test]
+    fn test_read_missing_file_path() {
+        let (lines, mut chars) = make_providers("w ");
+
+        let err = read_file_path(&lines, &mut chars).unwrap_err();
+        assert!(err.to_string().contains("missing file path"));
     }
 }
