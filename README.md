@@ -14,7 +14,7 @@ and other extensions.
 
 ## Status
 
-It is currently work in progress!
+It is currently a work in progress!
 
 ## Installation
 
