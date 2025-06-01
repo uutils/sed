@@ -68,8 +68,7 @@ jobs:
 
     - name: rust toolchain ~ install
       uses: dtolnay/rust-toolchain@nightly
-      with:
-        components: llvm-tools-preview
+    - run: rustup component add llvm-tools-preview
     - name: Test
       run: cargo test --no-fail-fast
       env:
@@ -97,14 +96,17 @@ jobs:
       id: coverage
       shell: bash
       run: |
+        set -v
         ## Generate coverage data
         COVERAGE_REPORT_DIR="target/debug"
         COVERAGE_REPORT_FILE="${COVERAGE_REPORT_DIR}/lcov.info"
         mkdir -p "${COVERAGE_REPORT_DIR}"
         # display coverage files
-        grcov . --binary-path="${COVERAGE_REPORT_DIR}" --output-type files --ignore build.rs --ignore "vendor/*" --ignore "/*" --ignore "[a-zA-Z]:/*" --excl-br-line "^\s*((debug_)?assert(_eq|_ne)?!|#\[derive\()" | sort --unique
+        grcov . --output-type files --binary-path "${COVERAGE_REPORT_DIR}" --source-dir . --keep-only "src/*" | sort --unique
         # generate coverage report
-        grcov . --binary-path="${COVERAGE_REPORT_DIR}" --output-type lcov --output-path "${COVERAGE_REPORT_FILE}" --branch --ignore build.rs --ignore "vendor/*" --ignore "/*" --ignore "[a-zA-Z]:/*" --excl-br-line "^\s*((debug_)?assert(_eq|_ne)?!|#\[derive\()"
+        grcov . --output-type lcov --output-path "${COVERAGE_REPORT_FILE}" --binary-path "${COVERAGE_REPORT_DIR}" --source-dir . --keep-only "src/*" --branch
+        ls -al ${COVERAGE_REPORT_FILE}
+        ls -al
         echo "report=${COVERAGE_REPORT_FILE}" >> $GITHUB_OUTPUT
     - name: Upload coverage results (to Codecov.io)
       uses: codecov/codecov-action@v5
@@ -115,4 +117,3 @@ jobs:
         flags: ${{ steps.vars.outputs.CODECOV_FLAGS }}
         name: codecov-umbrella
         fail_ci_if_error: false
-
