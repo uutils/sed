@@ -9,28 +9,33 @@
 // file that was distributed with this source code.
 
 use crate::command::{
-    Address, AddressType, AddressValue, Command, CommandData, InputAction, ProcessingContext,
-    Substitution, Transliteration,
+    Address, AddressType, AddressValue, AppendElement, Command, CommandData, InputAction,
+    ProcessingContext, Substitution, Transliteration,
 };
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
+use crate::fast_regex::Regex;
 use crate::in_place::InPlace;
 use crate::named_writer;
+
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::rc::Rc;
-use uucore::error::{UResult, USimpleError};
+use uucore::display::Quotable;
+use uucore::error::{FromIo, UResult, USimpleError, set_exit_code};
 
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
     addr: &Address,
     pattern: &mut IOChunk,
-    context: &ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<bool> {
     match addr.atype {
         AddressType::Re => {
             if let AddressValue::Regex(ref re) = addr.value {
-                Ok(re.is_match(pattern.as_str()?))
+                let regex = re_or_saved_re(re, context)?;
+                regex.is_match(pattern)
             } else {
                 Ok(false)
             }
@@ -161,6 +166,25 @@ fn write_chunk(
     Ok(())
 }
 
+/// Return a reference to the current or the saved RE if the RE is None.
+/// Update the saved RE to RE.
+fn re_or_saved_re<'a>(
+    regex: &Option<Regex>,
+    context: &'a mut ProcessingContext,
+) -> UResult<&'a Regex> {
+    if let Some(re) = regex {
+        // First time we see this regex: clone it *once* into the context.
+        context.saved_regex = Some(re.clone());
+        // Return a reference into context.saved_regex.
+        Ok(context.saved_regex.as_ref().unwrap())
+    } else if let Some(ref saved_re) = context.saved_regex {
+        // We already have one: just borrow it.
+        Ok(saved_re)
+    } else {
+        Err(USimpleError::new(2, "no previous regular expression"))
+    }
+}
+
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
@@ -173,30 +197,78 @@ fn substitute(
     let mut result = String::new();
     let mut replaced = false;
 
-    let text = pattern.as_str()?;
+    let mut text: Option<&str> = None;
 
-    for caps in sub.regex.captures_iter(text) {
-        count += 1;
-        let m = caps.get(0).unwrap();
+    let regex = re_or_saved_re(&sub.regex, context)?;
 
-        // Always write the unmatched text before this match.
-        result.push_str(&text[last_end..m.start()]);
+    match (sub.occurrence, sub.replacement.max_group_number) {
+        (1, 0) => {
+            // Example: s/foo/bar/: find() is enough.
+            let m = regex.find(pattern)?;
+            if let Some(m) = m {
+                text = Some(pattern.as_str()?);
+                result.push_str(&text.unwrap()[last_end..m.start()]);
 
-        if sub.occurrence == 0 || count == sub.occurrence {
-            let replacement = sub.replacement.apply(&caps)?;
-            result.push_str(&replacement);
-            replaced = true;
-        } else {
-            // Not the target match — leave the match unchanged.
-            result.push_str(m.as_str());
+                let replacement = sub.replacement.apply_match(&m);
+                result.push_str(&replacement);
+                replaced = true;
+                last_end = m.end();
+            }
         }
 
-        last_end = m.end();
+        (1, _) => {
+            // Example: s/\(.\)\(.\)/\2\1/: captures() is enough.
+            let caps = regex.captures(pattern)?;
+            if let Some(caps) = caps {
+                let m = caps.get(0)?.unwrap();
+                text = Some(pattern.as_str()?);
+                result.push_str(&text.unwrap()[last_end..m.start()]);
+
+                let replacement = sub.replacement.apply_captures(&caps)?;
+                result.push_str(&replacement);
+                replaced = true;
+                last_end = m.end();
+            }
+        }
+
+        (_, _) => {
+            // Example: s/(.)(.)/\2\1/3: captures_iter() is needed.
+            // Iterate over multiple captures of the RE in the pattern.
+            for caps in regex.captures_iter(pattern)? {
+                count += 1;
+                let caps = caps?;
+
+                let m = caps.get(0)?.unwrap();
+
+                // Always write the unmatched text before this match.
+                if text.is_none() {
+                    text = Some(pattern.as_str()?);
+                }
+                result.push_str(&text.unwrap()[last_end..m.start()]);
+
+                if sub.occurrence == 0 || count == sub.occurrence {
+                    let replacement = sub.replacement.apply_captures(&caps)?;
+                    result.push_str(&replacement);
+                    replaced = true;
+                } else {
+                    // Not the target match — leave the match unchanged.
+                    result.push_str(m.as_str());
+                }
+
+                last_end = m.end();
+
+                // Early exit if only a specific occurrence,
+                // (likely 1) needed replacing.
+                if count == sub.occurrence {
+                    break;
+                }
+            }
+        }
     }
 
     // Handle substitution success.
     if replaced {
-        result.push_str(&text[last_end..]);
+        result.push_str(&text.unwrap()[last_end..]);
 
         pattern.set_to_string(result, pattern.is_newline_terminated());
 
@@ -237,6 +309,90 @@ fn transliterate(pattern: &mut IOChunk, trans: &Transliteration) -> UResult<()> 
     Ok(())
 }
 
+/// Output any data queued for output at the end of the cycle.
+fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> UResult<()> {
+    for elem in &context.append_elements {
+        match elem {
+            AppendElement::Text(text) => {
+                output.write_str(text.clone())?;
+            }
+            AppendElement::Path(path) => {
+                output.copy_file(path)?;
+            }
+        }
+    }
+    context.append_elements.clear();
+    Ok(())
+}
+
+/// Return the specified command variant or panic.
+// Example: let path = extract_variant!(command, Path);
+macro_rules! extract_variant {
+    ($cmd:expr, $variant:ident) => {
+        match &$cmd.data {
+            CommandData::$variant(inner) => inner,
+            _ => panic!(concat!("Expected ", stringify!($variant), " command data")),
+        }
+    };
+}
+
+/// List the passed pattern space in unambiguous form.
+fn list(output: &mut OutputBuffer, line: &IOChunk, max_width: usize) -> UResult<()> {
+    // Special case for an empty pattern space
+    if line.is_empty() {
+        if line.is_newline_terminated() {
+            output.write_str("$\n")?;
+        }
+        return Ok(());
+    }
+
+    let line = line.as_str()?;
+    let mut buff = String::new();
+    let mut line_width = 0;
+
+    for ch in line.chars() {
+        if ch == '\n' {
+            buff.push_str("$\n");
+            output.write_str(&buff)?;
+            line_width = 0;
+            continue;
+        }
+
+        let mut char_buff = [0u8; 1];
+        let out_str: Cow<str> = match ch {
+            '\x07' => Cow::Borrowed(r"\a"),
+            '\x08' => Cow::Borrowed(r"\b"),
+            '\x0b' => Cow::Borrowed(r"\v"),
+            '\x0c' => Cow::Borrowed(r"\f"),
+            '\\' => Cow::Borrowed(r"\\"),
+            '\r' => Cow::Borrowed(r"\r"),
+            '\t' => Cow::Borrowed(r"\t"),
+            c if c.is_ascii_control() => Cow::Owned(format!("\\{:03o}", ch as u8)),
+            c if c == ' ' || c.is_ascii_graphic() => Cow::Borrowed(ch.encode_utf8(&mut char_buff)),
+            c if (c as u32) <= 0xFFFF => Cow::Owned(format!("\\u{:04X}", c as u32)),
+            _ => Cow::Owned(format!("\\U{:08X}", ch as u32)),
+        };
+
+        // See if folding is required before adding out_str and terminator.
+        let out_len = out_str.len();
+        if line_width + out_len + 1 > max_width {
+            buff.push_str("\\\n");
+            output.write_str(&buff)?;
+            line_width = 0;
+            buff.clear();
+        }
+        buff.push_str(out_str.as_ref());
+        line_width += out_len;
+    }
+
+    if !buff.is_empty() {
+        buff.push_str("$\n");
+        output.write_str(buff)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::cognitive_complexity)]
 /// Process a single input file
 fn process_file(
     commands: &Option<Rc<RefCell<Command>>>,
@@ -278,9 +434,7 @@ fn process_file(
             match command.code {
                 '{' => {
                     // Block begin; start processing the enclosed ones.
-                    let CommandData::Block(body) = &command.data else {
-                        panic!("Expected Block command data");
-                    };
+                    let body = extract_variant!(command, Block);
                     current = body.clone();
                     continue;
                 }
@@ -288,13 +442,15 @@ fn process_file(
                     // Block end: continue with the block's patched next.
                 }
                 'a' => {
-                    // TODO
+                    // Write the text to standard output at a later point.
+                    let text = extract_variant!(command, Text);
+                    context
+                        .append_elements
+                        .push(AppendElement::Text(text.clone().into_owned()));
                 }
                 'b' => {
                     // Branch to the specified label or end if none is given.
-                    let CommandData::BranchTarget(target) = &command.data else {
-                        panic!("Expected BranchTarget command data");
-                    };
+                    let target = extract_variant!(command, BranchTarget);
                     if target.is_some() {
                         // New command to execute
                         current = target.clone();
@@ -305,7 +461,14 @@ fn process_file(
                     }
                 }
                 'c' => {
-                    // TODO
+                    // At range end replace pattern space with text and
+                    // start the next cycle.
+                    pattern.clear();
+                    if command.addr2.is_none() || context.last_address || context.last_line {
+                        let text = extract_variant!(command, Text);
+                        output.write_str(text.as_ref())?;
+                    }
+                    break;
                 }
                 'd' => {
                     // Delete the pattern space and start the next cycle.
@@ -348,15 +511,19 @@ fn process_file(
                     context.hold.has_newline = pattern.is_newline_terminated();
                 }
                 'i' => {
-                    // TODO
+                    // Write text to standard output.
+                    let text = extract_variant!(command, Text);
+                    output.write_str(text.as_ref())?;
                 }
                 'l' => {
-                    // TODO
+                    let width = *extract_variant!(command, Number);
+                    list(output, &pattern, width)?;
                 }
                 'n' => {
                     break;
                 }
                 'N' => {
+                    flush_appends(output, context)?;
                     // Append to pattern `\n` and the next line
                     // Rather than reading input here, which would result
                     // in a double borrow on reader, modify the action
@@ -385,27 +552,37 @@ fn process_file(
                     }
                 }
                 'q' => {
+                    // Quit after printing the pattern space.
+                    set_exit_code(*extract_variant!(command, Number) as i32);
                     context.stop_processing = true;
                     break;
                 }
+                'Q' => {
+                    // Quit immediatelly.
+                    set_exit_code(*extract_variant!(command, Number) as i32);
+                    context.stop_processing = true;
+                    context.quiet = true;
+                    break;
+                }
                 'r' => {
-                    // TODO
+                    // Copy the file to standard output at a later point.
+                    let path = extract_variant!(command, Path);
+                    context
+                        .append_elements
+                        .push(AppendElement::Path(path.clone()));
                 }
                 's' => {
                     let subst = match &mut command.data {
                         CommandData::Substitution(subst) => subst,
                         _ => panic!("Expected Substitution command data"),
                     };
-
                     substitute(&mut pattern, &mut *subst, context, output)?;
                 }
                 't' if !context.substitution_made => { /* Do nothing. */ }
                 't' => {
                     // Branch to the specified label or end if none is given
                     // if a substitution was made since last cycle or t.
-                    let CommandData::BranchTarget(target) = &command.data else {
-                        panic!("Expected BranchTarget command data");
-                    };
+                    let target = extract_variant!(command, BranchTarget);
                     context.substitution_made = false;
                     if target.is_some() {
                         // New command to execute
@@ -417,7 +594,9 @@ fn process_file(
                     }
                 }
                 'w' => {
-                    // TODO
+                    // Append the pattern space to the specified file.
+                    let writer = extract_variant!(command, NamedWriter);
+                    writer.borrow_mut().write_line(pattern.as_str()?)?;
                 }
                 'x' => {
                     // Exchange the contents of the pattern and hold spaces.
@@ -426,18 +605,15 @@ fn process_file(
                     std::mem::swap(pat_has_newline, &mut context.hold.has_newline);
                 }
                 'y' => {
-                    let trans = match &mut command.data {
-                        CommandData::Transliteration(trans) => trans,
-                        _ => panic!("Expected Transliteration command data"),
-                    };
-
+                    let trans = extract_variant!(command, Transliteration);
                     transliterate(&mut pattern, trans)?;
                 }
                 ':' => {
                     // Branch target; do nothing.
                 }
                 '=' => {
-                    // TODO
+                    // Output current line number.
+                    output.write_str(format!("{}\n", context.line_number))?;
                 }
                 // The compilation should supply only valid codes.
                 _ => panic!("invalid command code"),
@@ -449,6 +625,8 @@ fn process_file(
         if !context.quiet {
             write_chunk(output, context, &pattern)?;
         }
+
+        flush_appends(output, context)?;
 
         if context.stop_processing {
             break;
@@ -474,27 +652,23 @@ fn process_file(
 pub fn process_all_files(
     commands: Option<Rc<RefCell<Command>>>,
     files: Vec<PathBuf>,
-    mut context: ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<()> {
     context.unbuffered = context.unbuffered || io::stdout().is_terminal();
 
-    let mut in_place = InPlace::new(context.clone())?;
+    let mut in_place = InPlace::new(context.clone());
     let last_file_index = files.len() - 1;
 
     for (index, path) in files.iter().enumerate() {
         context.last_file = index == last_file_index;
-        let mut reader = LineReader::open(path).map_err(|e| {
-            USimpleError::new(
-                2,
-                format!("Error opening input file {}: {}", path.display(), e),
-            )
-        })?;
+        let mut reader = LineReader::open(path)
+            .map_err_context(|| format!("error opening input file {}", path.quote()))?;
         let output = in_place.begin(path)?;
 
         if context.separate {
             context.line_number = 0;
         }
-        process_file(&commands, &mut reader, output, &mut context)?;
+        process_file(&commands, &mut reader, output, context)?;
 
         // Handle any N command remains.
         if context.last_file && !context.separate && !context.quiet {
