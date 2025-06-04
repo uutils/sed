@@ -14,12 +14,19 @@ and other extensions.
 
 ## Status
 
-This is still a work in progress, but the current version can
-already execute complex scripts,
-such as solving the Towers of Hanoi puzzle and performing
-arbitrary precision integer arithmetic.
-The commands `=`, `l`, `r`, and `w`, as well as in-place replacement
-are still missing.
+At this state _sed_ implements all POSIX commands
+and can run correctly the two complex scripts:
+[hanoi.sed](https://github.com/uutils/sed/blob/main/tests/fixtures/sed/script/hanoi.sed) (solves the Towers of Hanoi puzzle) and
+[math.sed](https://github.com/uutils/sed/blob/main/tests/fixtures/sed/script/math.sed)  (implements an arbitrary precision integer math calculator).
+
+The performance of this Rust implementation is now better than the GNU and FreeBSD implementations for most benchmarked cases.
+
+Further work aims to 
+improve runtime error reporting by including script coordinates in each command,
+adjust buffering on terminal output to match current implementations,
+implement more GNU extensions, and
+improve performance where possible.
+
 
 ## Installation
 
