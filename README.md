@@ -14,7 +14,7 @@ and other extensions.
 
 ## Status
 
-This is still work in progress, but the current version can
+This is still a work in progress, but the current version can
 already execute complex scripts,
 such as solving the Towers of Hanoi puzzle and performing
 arbitrary precision integer arithmetic.
