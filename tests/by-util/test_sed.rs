@@ -906,7 +906,7 @@ fn test_invalid_backreference() {
         .args(&["-n", "-e", r"s/./X/;s//\1/", LINES1])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:8: command `s': error: invalid reference \\1 on command's RHS\n");
+        .stderr_is("sed: <script argument 1>:1:8: error: invalid reference \\1 on command's RHS\n");
 }
 
 #[test]
@@ -915,7 +915,7 @@ fn test_duplicate_label() {
         .args(&[":foo;:foo"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:6: command `:': error: duplicate label `foo'\n");
+        .stderr_is("sed: <script argument 1>:1:6: error: duplicate label `foo'\n");
 }
 
 #[test]
@@ -924,5 +924,5 @@ fn test_undefined_label() {
         .args(&["b foo"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:1: command `b': error: undefined label `foo'\n");
+        .stderr_is("sed: <script argument 1>:1:1: error: undefined label `foo'\n");
 }
