@@ -11,6 +11,7 @@
 pub mod command;
 pub mod compiler;
 pub mod delimited_parser;
+pub mod error_handling;
 pub mod fast_io;
 pub mod fast_regex;
 pub mod in_place;
