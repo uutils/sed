@@ -10,7 +10,7 @@
 
 use crate::command::{
     Address, AddressType, AddressValue, Command, CommandData, ProcessingContext, ReplacementPart,
-    ReplacementTemplate, ScriptValue, Substitution, Transliteration,
+    ReplacementTemplate, Substitution, Transliteration,
 };
 use crate::delimited_parser::{
     compilation_error, parse_char_escape, parse_regex, parse_transliteration,
@@ -18,7 +18,7 @@ use crate::delimited_parser::{
 use crate::fast_regex::Regex;
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
-use crate::script_line_provider::ScriptLineProvider;
+use crate::script_line_provider::{ScriptLineProvider, ScriptValue};
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -394,7 +394,7 @@ fn compile_sequence(
             continue;
         }
 
-        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let mut cmd = Rc::new(RefCell::new(Command::at_position(lines, line)));
         let n_addr = compile_address_range(lines, line, &mut cmd, context)?;
         line.eat_spaces();
         let mut cmd_spec = get_cmd_spec(lines, line, n_addr)?;
@@ -1854,7 +1854,35 @@ mod tests {
         };
         assert_eq!(line, 1);
 
+        assert_eq!(cmd.line_number, 1);
+        assert_eq!(cmd.column_number, 1);
+        assert_eq!(cmd.input_name.as_ref(), "<script argument 1>");
+
         assert!(cmd.next.is_none());
+    }
+
+    #[test]
+    fn test_compile_two_commands() {
+        let scripts = vec![ScriptValue::StringVal("l;q".to_string())];
+        let mut opts = ProcessingContext::default();
+
+        let result = compile(scripts, &mut opts).unwrap();
+        let binding = result.unwrap();
+        let cmd = binding.borrow();
+
+        assert_eq!(cmd.code, 'l');
+        assert_eq!(cmd.line_number, 1);
+        assert_eq!(cmd.column_number, 1);
+        assert_eq!(cmd.input_name.as_ref(), "<script argument 1>");
+
+        let binding2 = cmd.next.clone().unwrap();
+        let cmd2 = binding2.borrow();
+        assert_eq!(cmd2.code, 'q');
+        assert_eq!(cmd2.line_number, 1);
+        assert_eq!(cmd2.column_number, 3);
+        assert_eq!(cmd2.input_name.as_ref(), "<script argument 1>");
+
+        assert!(cmd2.next.is_none());
     }
 
     // compile_replacement
