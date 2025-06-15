@@ -10,7 +10,7 @@
 
 use crate::command::{
     Address, AddressType, AddressValue, AppendElement, Command, CommandData, InputAction,
-    ProcessingContext, Substitution, Transliteration,
+    ProcessingContext, Transliteration,
 };
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::fast_regex::Regex;
@@ -24,6 +24,17 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError, set_exit_code};
+
+/// Return the specified command variant or panic.
+// Example: let path = extract_variant!(command, Path);
+macro_rules! extract_variant {
+    ($cmd:expr, $variant:ident) => {
+        match &$cmd.data {
+            CommandData::$variant(inner) => inner,
+            _ => panic!(concat!("Expected ", stringify!($variant), " command data")),
+        }
+    };
+}
 
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
@@ -188,10 +199,12 @@ fn re_or_saved_re<'a>(
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
-    sub: &mut Substitution,
+    command: &Command,
     context: &mut ProcessingContext,
     output: &mut OutputBuffer,
 ) -> UResult<()> {
+    let sub = extract_variant!(command, Substitution);
+
     let mut count = 0;
     let mut last_end = 0;
     let mut result = String::new();
@@ -224,7 +237,7 @@ fn substitute(
                 text = Some(pattern.as_str()?);
                 result.push_str(&text.unwrap()[last_end..m.start()]);
 
-                let replacement = sub.replacement.apply_captures(&caps)?;
+                let replacement = sub.replacement.apply_captures(command, &caps)?;
                 result.push_str(&replacement);
                 replaced = true;
                 last_end = m.end();
@@ -247,7 +260,7 @@ fn substitute(
                 result.push_str(&text.unwrap()[last_end..m.start()]);
 
                 if sub.occurrence == 0 || count == sub.occurrence {
-                    let replacement = sub.replacement.apply_captures(&caps)?;
+                    let replacement = sub.replacement.apply_captures(command, &caps)?;
                     result.push_str(&replacement);
                     replaced = true;
                 } else {
@@ -323,17 +336,6 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
     }
     context.append_elements.clear();
     Ok(())
-}
-
-/// Return the specified command variant or panic.
-// Example: let path = extract_variant!(command, Path);
-macro_rules! extract_variant {
-    ($cmd:expr, $variant:ident) => {
-        match &$cmd.data {
-            CommandData::$variant(inner) => inner,
-            _ => panic!(concat!("Expected ", stringify!($variant), " command data")),
-        }
-    };
 }
 
 /// List the passed pattern space in unambiguous form.
@@ -572,11 +574,7 @@ fn process_file(
                         .push(AppendElement::Path(path.clone()));
                 }
                 's' => {
-                    let subst = match &mut command.data {
-                        CommandData::Substitution(subst) => subst,
-                        _ => panic!("Expected Substitution command data"),
-                    };
-                    substitute(&mut pattern, &mut *subst, context, output)?;
+                    substitute(&mut pattern, &command, context, output)?;
                 }
                 't' if !context.substitution_made => { /* Do nothing. */ }
                 't' => {

@@ -147,9 +147,9 @@ impl ReplacementTemplate {
     /// Apply the template to the given RE captures.
     /// Example:
     /// let result = regex.replace_all(input, |caps: &Captures| {
-    ///    template.apply_captures(caps) });
+    ///    template.apply_captures(&command, caps) });
     /// Returns an error if a backreference in the template was not matched by the RE.
-    pub fn apply_captures(&self, caps: &Captures) -> UResult<String> {
+    pub fn apply_captures(&self, _command: &Command, caps: &Captures) -> UResult<String> {
         let mut result = String::new();
 
         // Invalid group numbers may end here through (unkown at compile time)
@@ -368,8 +368,9 @@ mod tests {
         let template = ReplacementTemplate::default();
         let input = &mut IOChunk::from_str("foo");
         let caps = caps_for("foo", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "");
     }
 
@@ -379,8 +380,9 @@ mod tests {
         let template = ReplacementTemplate::new(vec![ReplacementPart::Literal("hello".into())]);
         let input = &mut IOChunk::from_str("abc");
         let caps = caps_for("abc", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "hello");
     }
 
@@ -393,8 +395,9 @@ mod tests {
         ]);
         let input = &mut IOChunk::from_str("foo42");
         let caps = caps_for(r"foo\d+", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "got: foo42");
     }
 
@@ -407,8 +410,9 @@ mod tests {
         ]);
         let input = &mut IOChunk::from_str("foo42");
         let caps = caps_for(r"foo(\d+)", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "number: 42");
     }
 
@@ -423,8 +427,9 @@ mod tests {
         ]);
         let input = &mut IOChunk::from_str("x:123");
         let caps = caps_for(r"(\w+):(\d+)", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "key: x, value: 123");
     }
 
@@ -439,8 +444,9 @@ mod tests {
         ]);
         let input = &mut IOChunk::from_str("x:123");
         let caps = caps_for(r"(\w+):(\d+)", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps);
+        let result = template.apply_captures(&cmd, &caps);
         assert!(result.is_err());
 
         let msg = result.unwrap_err().to_string();
