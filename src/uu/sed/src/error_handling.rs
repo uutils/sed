@@ -15,7 +15,7 @@ use std::rc::Rc;
 
 use uucore::error::{UResult, USimpleError};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 /// The location in a script where a command is defined
 pub struct ScriptLocation {
     pub input_name: Rc<str>,  // Shared input name
