@@ -12,9 +12,8 @@ use crate::command::{
     Address, AddressType, AddressValue, Command, CommandData, ProcessingContext, ReplacementPart,
     ReplacementTemplate, Substitution, Transliteration,
 };
-use crate::delimited_parser::{
-    compilation_error, parse_char_escape, parse_regex, parse_transliteration,
-};
+use crate::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
+use crate::error_handling::compilation_error;
 use crate::fast_regex::Regex;
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
