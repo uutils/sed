@@ -8,6 +8,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+use crate::error_handling::runtime_error;
 use crate::fast_regex::{Captures, Match, Regex};
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
@@ -18,7 +19,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf; // For file descriptors and equivalent
 use std::rc::Rc;
-use uucore::error::{UResult, USimpleError};
+use uucore::error::UResult;
 
 #[derive(Debug, Default, Clone)]
 /// Compilation and processing options provided mostly through the
@@ -149,19 +150,19 @@ impl ReplacementTemplate {
     /// let result = regex.replace_all(input, |caps: &Captures| {
     ///    template.apply_captures(&command, caps) });
     /// Returns an error if a backreference in the template was not matched by the RE.
-    pub fn apply_captures(&self, _command: &Command, caps: &Captures) -> UResult<String> {
+    pub fn apply_captures(&self, command: &Command, caps: &Captures) -> UResult<String> {
         let mut result = String::new();
 
         // Invalid group numbers may end here through (unkown at compile time)
         // reused REs.
         if self.max_group_number > caps.len() - 1 {
-            return Err(USimpleError::new(
-                2,
+            return runtime_error(
+                command,
                 format!(
-                    "invalid reference \\{} on `s' command's RHS",
+                    "invalid reference \\{} on command's RHS",
                     self.max_group_number
                 ),
-            ));
+            );
         }
 
         for part in &self.parts {
