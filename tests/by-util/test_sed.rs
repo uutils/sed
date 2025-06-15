@@ -897,3 +897,32 @@ check_output!(pi, ["-f", "script/math.sed", "input/pi"]);
 
 // Solve the Towers of Hanoi puzzle
 check_output!(hanoi, ["-f", "script/hanoi.sed", "input/hanoi"]);
+
+////////////////////////////////////////////////////////////
+// Error handling
+#[test]
+fn test_invalid_backreference() {
+    new_ucmd!()
+        .args(&["-n", "-e", r"s/./X/;s//\1/", LINES1])
+        .fails()
+        .code_is(2)
+        .stderr_is("sed: <script argument 1>:1:8: command `s': error: invalid reference \\1 on command's RHS\n");
+}
+
+#[test]
+fn test_duplicate_label() {
+    new_ucmd!()
+        .args(&[":foo;:foo"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:6: command `:': error: duplicate label `foo'\n");
+}
+
+#[test]
+fn test_undefined_label() {
+    new_ucmd!()
+        .args(&["b foo"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: command `b': error: undefined label `foo'\n");
+}

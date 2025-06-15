@@ -13,7 +13,7 @@ use crate::command::{
     ReplacementTemplate, Substitution, Transliteration,
 };
 use crate::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
-use crate::error_handling::compilation_error;
+use crate::error_handling::{compilation_error, semantic_error};
 use crate::fast_regex::Regex;
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
@@ -309,7 +309,7 @@ fn populate_label_map(
         if let Some(label) = maybe_label {
             if cmd.code == ':' {
                 if context.label_to_command_map.contains_key(&label) {
-                    return Err(USimpleError::new(2, format!("duplicate label `{label}'")));
+                    return semantic_error(&cmd, format!("duplicate label `{label}'"));
                 }
                 context.label_to_command_map.insert(label, rc_cmd.clone());
             }
@@ -348,7 +348,8 @@ fn resolve_branch_targets(
                         .get(&label)
                         .cloned()
                         .ok_or_else(|| {
-                            USimpleError::new(2, format!("undefined label `{label}'"))
+                            semantic_error::<()>(&cmd, format!("undefined label `{label}'"))
+                                .unwrap_err()
                         })?;
                     CommandData::BranchTarget(Some(target))
                 }

@@ -263,7 +263,7 @@ impl<'a> IOChunk<'a> {
                         self.utf8_verified.set(true);
                         Ok(())
                     }
-                    Err(e) => Err(USimpleError::new(1, e.to_string())),
+                    Err(e) => Err(USimpleError::new(2, e.to_string())),
                 }
             }
         }
