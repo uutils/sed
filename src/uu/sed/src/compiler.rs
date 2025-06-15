@@ -309,7 +309,8 @@ fn populate_label_map(
         if let Some(label) = maybe_label {
             if cmd.code == ':' {
                 if context.label_to_command_map.contains_key(&label) {
-                    return semantic_error(&cmd, format!("duplicate label `{label}'"));
+                    return semantic_error(&cmd.location, format!("duplicate label `{label}'"));
+>>>>>>> a429b31 (Isolate error location into separate struct)
                 }
                 context.label_to_command_map.insert(label, rc_cmd.clone());
             }
@@ -348,8 +349,11 @@ fn resolve_branch_targets(
                         .get(&label)
                         .cloned()
                         .ok_or_else(|| {
-                            semantic_error::<()>(&cmd, format!("undefined label `{label}'"))
-                                .unwrap_err()
+                            semantic_error::<()>(
+                                &cmd.location,
+                                format!("undefined label `{label}'"),
+                            )
+                            .unwrap_err()
                         })?;
                     CommandData::BranchTarget(Some(target))
                 }
@@ -1854,9 +1858,9 @@ mod tests {
         };
         assert_eq!(line, 1);
 
-        assert_eq!(cmd.line_number, 1);
-        assert_eq!(cmd.column_number, 1);
-        assert_eq!(cmd.input_name.as_ref(), "<script argument 1>");
+        assert_eq!(cmd.location.line_number, 1);
+        assert_eq!(cmd.location.column_number, 1);
+        assert_eq!(cmd.location.input_name.as_ref(), "<script argument 1>");
 
         assert!(cmd.next.is_none());
     }
@@ -1871,16 +1875,16 @@ mod tests {
         let cmd = binding.borrow();
 
         assert_eq!(cmd.code, 'l');
-        assert_eq!(cmd.line_number, 1);
-        assert_eq!(cmd.column_number, 1);
-        assert_eq!(cmd.input_name.as_ref(), "<script argument 1>");
+        assert_eq!(cmd.location.line_number, 1);
+        assert_eq!(cmd.location.column_number, 1);
+        assert_eq!(cmd.location.input_name.as_ref(), "<script argument 1>");
 
         let binding2 = cmd.next.clone().unwrap();
         let cmd2 = binding2.borrow();
         assert_eq!(cmd2.code, 'q');
-        assert_eq!(cmd2.line_number, 1);
-        assert_eq!(cmd2.column_number, 3);
-        assert_eq!(cmd2.input_name.as_ref(), "<script argument 1>");
+        assert_eq!(cmd2.location.line_number, 1);
+        assert_eq!(cmd2.location.column_number, 3);
+        assert_eq!(cmd2.location.input_name.as_ref(), "<script argument 1>");
 
         assert!(cmd2.next.is_none());
     }

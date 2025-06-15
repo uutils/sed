@@ -8,7 +8,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::error_handling::runtime_error;
+use crate::error_handling::{ScriptLocation, runtime_error};
 use crate::fast_regex::{Captures, Match, Regex};
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
@@ -157,7 +157,7 @@ impl ReplacementTemplate {
         // reused REs.
         if self.max_group_number > caps.len() - 1 {
             return runtime_error(
-                command,
+                &command.location,
                 format!(
                     "invalid reference \\{} on command's RHS",
                     self.max_group_number
@@ -281,11 +281,7 @@ pub struct Command {
     pub start_line: Option<usize>,          // Start line number (or None)
     pub data: CommandData,                  // Command-specific data
     pub next: Option<Rc<RefCell<Command>>>, // Pointer to next command
-
-    // Coordinates of command's definition
-    pub input_name: Rc<str>,  // Shared input name
-    pub line_number: usize,   // 1-based line number
-    pub column_number: usize, // 1-based column number
+    pub location: ScriptLocation,           // Command's definition location
 }
 
 impl Default for Command {
@@ -298,9 +294,7 @@ impl Default for Command {
             start_line: None,
             data: CommandData::None,
             next: None,
-            input_name: Rc::from("<unknown>"),
-            line_number: 1,
-            column_number: 1,
+            location: ScriptLocation::default(),
         }
     }
 }
@@ -309,9 +303,7 @@ impl Command {
     /// Construct with position information from the given providers.
     pub fn at_position(lines: &ScriptLineProvider, line: &ScriptCharProvider) -> Self {
         Command {
-            line_number: lines.get_line_number(),
-            column_number: line.get_pos() + 1,
-            input_name: Rc::from(lines.get_input_name()),
+            location: ScriptLocation::at_position(lines, line),
             ..Default::default()
         }
     }
