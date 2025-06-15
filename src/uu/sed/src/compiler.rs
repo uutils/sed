@@ -1368,7 +1368,7 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert!(msg.contains("test.sed:42:4: error: unexpected token"));
+        assert!(msg.contains("test.sed:42:5: error: unexpected token"));
     }
 
     #[test]
@@ -1385,7 +1385,7 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert_eq!(msg, "input.txt:3:0: error: invalid command 'x'");
+        assert_eq!(msg, "input.txt:3:1: error: invalid command 'x'");
     }
 
     // get_cmd_spec
@@ -1397,7 +1397,7 @@ mod tests {
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("test.sed:1:0: error: command expected"));
+        assert!(msg.contains("test.sed:1:1: error: command expected"));
     }
 
     #[test]
@@ -1408,7 +1408,7 @@ mod tests {
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("script.sed:2:0: error: invalid command code `@'"));
+        assert!(msg.contains("script.sed:2:1: error: invalid command code `@'"));
     }
 
     #[test]
@@ -1420,7 +1420,7 @@ mod tests {
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("input.sed:3:0: error: command q expects up to 1 address(es), found 2")
+            msg.contains("input.sed:3:1: error: command q expects up to 1 address(es), found 2")
         );
     }
 

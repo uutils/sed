@@ -25,7 +25,7 @@ pub fn compilation_error<T>(
             "{}:{}:{}: error: {}",
             lines.get_input_name(),
             lines.get_line_number(),
-            line.get_pos(),
+            line.get_pos() + 1,
             msg.to_string()
         ),
     ))
