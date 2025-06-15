@@ -8,12 +8,20 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::ScriptValue;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
+use std::path::PathBuf;
+
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult};
+
+#[derive(Debug, PartialEq)]
+/// The specification of a script: through a string or a file
+pub enum ScriptValue {
+    StringVal(String),
+    PathVal(PathBuf),
+}
 
 #[derive(Debug)]
 /// The provider of script lines across all specified scripts

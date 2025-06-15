@@ -10,6 +10,8 @@
 
 use crate::fast_regex::{Captures, Match, Regex};
 use crate::named_writer::NamedWriter;
+use crate::script_char_provider::ScriptCharProvider;
+use crate::script_line_provider::ScriptLineProvider;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -78,13 +80,6 @@ pub enum AppendElement {
 pub struct StringSpace {
     pub content: String,   // Line content without newline
     pub has_newline: bool, // True if \n-terminated
-}
-
-#[derive(Debug, PartialEq)]
-/// The specification of a script: through a string or a file
-pub enum ScriptValue {
-    StringVal(String),
-    PathVal(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,6 +280,11 @@ pub struct Command {
     pub start_line: Option<usize>,          // Start line number (or None)
     pub data: CommandData,                  // Command-specific data
     pub next: Option<Rc<RefCell<Command>>>, // Pointer to next command
+
+    // Coordinates of command's definition
+    pub input_name: Rc<str>,  // Shared input name
+    pub line_number: usize,   // 1-based line number
+    pub column_number: usize, // 1-based column number
 }
 
 impl Default for Command {
@@ -297,6 +297,21 @@ impl Default for Command {
             start_line: None,
             data: CommandData::None,
             next: None,
+            input_name: Rc::from("<unknown>"),
+            line_number: 1,
+            column_number: 1,
+        }
+    }
+}
+
+impl Command {
+    /// Construct with position information from the given providers.
+    pub fn at_position(lines: &ScriptLineProvider, line: &ScriptCharProvider) -> Self {
+        Command {
+            line_number: lines.get_line_number(),
+            column_number: line.get_pos() + 1,
+            input_name: Rc::from(lines.get_input_name()),
+            ..Default::default()
         }
     }
 }
