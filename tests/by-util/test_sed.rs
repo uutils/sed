@@ -926,3 +926,12 @@ fn test_undefined_label() {
         .code_is(1)
         .stderr_is("sed: <script argument 1>:1:1: error: undefined label `foo'\n");
 }
+
+#[test]
+fn test_fancy_regex_error() {
+    new_ucmd!()
+        .args(&["-E", r"/(\.+)+\1b$/p", "input/dots-4k.txt"])
+        .fails()
+        .code_is(2)
+        .stderr_is("sed: <script argument 1>:1:1: error: Error executing regex: Max limit for backtracking count exceeded\n");
+}
