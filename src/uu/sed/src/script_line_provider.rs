@@ -104,22 +104,13 @@ impl ScriptLineProvider {
             return Ok(());
         }
 
-        fn truncate_with_ellipsis(input: &str) -> String {
-            const MAX_LEN: usize = 20;
-            if input.chars().count() <= MAX_LEN {
-                input.to_string()
-            } else {
-                input.chars().take(MAX_LEN).collect::<String>() + "..."
-            }
-        }
-
         match &self.sources[next_index] {
             ScriptValue::StringVal(s) => {
                 let cursor = std::io::Cursor::new(s.clone());
                 self.state = State::Active {
                     index: next_index,
                     reader: Box::new(BufReader::new(cursor)),
-                    input_name: truncate_with_ellipsis(s),
+                    input_name: format!("<script argument {}>", next_index + 1),
                     line_number: 0,
                 };
             }
@@ -254,7 +245,7 @@ mod tests {
         if let Some(line) = provider.next_line().unwrap() {
             assert_eq!(line.trim(), "l1");
             assert_eq!(provider.get_line_number(), 1);
-            assert_eq!(provider.get_input_name(), "l1\nl2\n");
+            assert_eq!(provider.get_input_name(), "<script argument 1>");
         } else {
             panic!("Expected a line");
         }
@@ -262,7 +253,7 @@ mod tests {
         if let Some(line) = provider.next_line().unwrap() {
             assert_eq!(line.trim(), "l2");
             assert_eq!(provider.get_line_number(), 2);
-            assert_eq!(provider.get_input_name(), "l1\nl2\n");
+            assert_eq!(provider.get_input_name(), "<script argument 1>");
         } else {
             panic!("Expected a line");
         }
@@ -270,7 +261,7 @@ mod tests {
         if let Some(line) = provider.next_line().unwrap() {
             assert_eq!(line.trim(), "l3");
             assert_eq!(provider.get_line_number(), 1);
-            assert_eq!(provider.get_input_name(), "l3");
+            assert_eq!(provider.get_input_name(), "<script argument 2>");
         } else {
             panic!("Expected a line");
         }
