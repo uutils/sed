@@ -12,6 +12,7 @@ use crate::command::{
     Address, AddressType, AddressValue, AppendElement, Command, CommandData, InputAction,
     ProcessingContext, Transliteration,
 };
+use crate::error_handling::{ScriptLocation, runtime_error};
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::fast_regex::Regex;
 use crate::in_place::InPlace;
@@ -23,7 +24,7 @@ use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::display::Quotable;
-use uucore::error::{FromIo, UResult, USimpleError, set_exit_code};
+use uucore::error::{FromIo, UResult, set_exit_code};
 
 /// Return the specified command variant or panic.
 // Example: let path = extract_variant!(command, Path);
@@ -41,11 +42,12 @@ fn match_address(
     addr: &Address,
     pattern: &mut IOChunk,
     context: &mut ProcessingContext,
+    location: &ScriptLocation,
 ) -> UResult<bool> {
     match addr.atype {
         AddressType::Re => {
             if let AddressValue::Regex(ref re) = addr.value {
-                let regex = re_or_saved_re(re, context)?;
+                let regex = re_or_saved_re(re, context, location)?;
                 regex.is_match(pattern)
             } else {
                 Ok(false)
@@ -99,7 +101,7 @@ fn applies(
                     }
                 }
                 _ => {
-                    if match_address(addr2, pattern, context)? {
+                    if match_address(addr2, pattern, context, &command.location)? {
                         command.start_line = None;
                         context.last_address = true;
                         Ok(true)
@@ -120,7 +122,7 @@ fn applies(
                 }
             }
         } else if let Some(addr1) = &command.addr1 {
-            if match_address(addr1, pattern, context)? {
+            if match_address(addr1, pattern, context, &command.location)? {
                 match addr2.atype {
                     AddressType::Line => {
                         if let AddressValue::LineNumber(n) = addr2.value {
@@ -150,7 +152,7 @@ fn applies(
             Ok(false)
         }
     } else if let Some(addr1) = &command.addr1 {
-        Ok(match_address(addr1, pattern, context)?)
+        Ok(match_address(addr1, pattern, context, &command.location)?)
     } else {
         Ok(false)
     };
@@ -182,6 +184,7 @@ fn write_chunk(
 fn re_or_saved_re<'a>(
     regex: &Option<Regex>,
     context: &'a mut ProcessingContext,
+    location: &ScriptLocation,
 ) -> UResult<&'a Regex> {
     if let Some(re) = regex {
         // First time we see this regex: clone it *once* into the context.
@@ -192,7 +195,7 @@ fn re_or_saved_re<'a>(
         // We already have one: just borrow it.
         Ok(saved_re)
     } else {
-        Err(USimpleError::new(2, "no previous regular expression"))
+        runtime_error(location, "no previous regular expression")
     }
 }
 
@@ -212,7 +215,7 @@ fn substitute(
 
     let mut text: Option<&str> = None;
 
-    let regex = re_or_saved_re(&sub.regex, context)?;
+    let regex = re_or_saved_re(&sub.regex, context, &command.location)?;
 
     match (sub.occurrence, sub.replacement.max_group_number) {
         (1, 0) => {
