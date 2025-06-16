@@ -942,7 +942,7 @@ fn test_write_file_failure() {
         .args(&["w /xyzzy/xyzy", LINES1])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:1: error: creating file '/xyzzy/xyzy': The system cannot find the path specified. (os error 3)\n");
+        .stderr_contains("sed: <script argument 1>:1:1: error: creating file '/xyzzy/xyzy':");
 }
 
 #[test]
