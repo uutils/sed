@@ -944,3 +944,21 @@ fn test_write_file_failure() {
         .code_is(2)
         .stderr_is("sed: <script argument 1>:1:1: error: creating file '/xyzzy/xyzy': The system cannot find the path specified. (os error 3)\n");
 }
+
+#[test]
+fn test_missing_substitute_re() {
+    new_ucmd!()
+        .args(&["l;s//foo/", LINES1])
+        .fails()
+        .code_is(2)
+        .stderr_is("sed: <script argument 1>:1:3: error: no previous regular expression\n");
+}
+
+#[test]
+fn test_missing_address_re() {
+    new_ucmd!()
+        .args(&["l\np;//s/foo/bar/", LINES1])
+        .fails()
+        .code_is(2)
+        .stderr_is("sed: <script argument 1>:2:3: error: no previous regular expression\n");
+}
