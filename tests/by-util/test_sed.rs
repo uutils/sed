@@ -935,3 +935,12 @@ fn test_fancy_regex_error() {
         .code_is(2)
         .stderr_is("sed: <script argument 1>:1:1: error: Error executing regex: Max limit for backtracking count exceeded\n");
 }
+
+#[test]
+fn test_write_file_failure() {
+    new_ucmd!()
+        .args(&["w /xyzzy/xyzy", LINES1])
+        .fails()
+        .code_is(2)
+        .stderr_is("sed: <script argument 1>:1:1: error: creating file '/xyzzy/xyzy': The system cannot find the path specified. (os error 3)\n");
+}

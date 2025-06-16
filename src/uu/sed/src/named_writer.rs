@@ -8,6 +8,8 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+use crate::error_handling::{ScriptLocation, runtime_error};
+
 use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -15,7 +17,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use uucore::display::Quotable;
-use uucore::error::{FromIo, UResult};
+use uucore::error::UResult;
 
 thread_local! {
     /// Global list of all writers that should be flushed at shutdown
@@ -26,22 +28,27 @@ thread_local! {
 /// Writer that tracks its file name for better error messages
 pub struct NamedWriter {
     pub path: PathBuf,
-    pub writer: BufWriter<File>,
+    writer: BufWriter<File>,
+    location: ScriptLocation,
 }
 
 impl NamedWriter {
     /// Create a new writer, truncate the file, and register it for flushing.
-    pub fn new(path: PathBuf) -> UResult<Rc<RefCell<Self>>> {
+    pub fn new(path: PathBuf, location: ScriptLocation) -> UResult<Rc<RefCell<Self>>> {
         let file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(&path)
-            .map_err_context(|| format!("error opening output file {}", path.quote()))?;
+            .map_err(|e| {
+                runtime_error::<()>(&location, format!("creating file {}: {}", path.quote(), e))
+                    .unwrap_err()
+            })?;
 
         let writer = Rc::new(RefCell::new(NamedWriter {
             path,
             writer: BufWriter::new(file),
+            location,
         }));
 
         FLUSH_LIST.with(|list| list.borrow_mut().push(Rc::clone(&writer)));
@@ -50,15 +57,24 @@ impl NamedWriter {
 
     /// Write a line to the file with a newline, returning descriptive errors.
     pub fn write_line(&mut self, line: &str) -> UResult<()> {
-        writeln!(self.writer, "{line}")
-            .map_err_context(|| format!("error writing to file {}", self.path.quote()))
+        writeln!(self.writer, "{line}").map_err(|e| {
+            runtime_error::<()>(
+                &self.location,
+                format!("writing to file {}: {e}", self.path.quote()),
+            )
+            .unwrap_err()
+        })
     }
 
     /// Flush the writer, returning a descriptive error.
     pub fn flush(&mut self) -> UResult<()> {
-        self.writer
-            .flush()
-            .map_err_context(|| format!("error writing to file {}", self.path.quote()))
+        self.writer.flush().map_err(|e| {
+            runtime_error::<()>(
+                &self.location,
+                format!("writing to file {}: {}", self.path.quote(), e),
+            )
+            .unwrap_err()
+        })
     }
 }
 

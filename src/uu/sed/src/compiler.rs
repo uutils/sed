@@ -999,8 +999,9 @@ pub fn compile_subst_flags(
             }
 
             'w' => {
+                let location = ScriptLocation::at_position(lines, line);
                 let path = read_file_path(lines, line)?;
-                subst.write_file = Some(NamedWriter::new(path)?);
+                subst.write_file = Some(NamedWriter::new(path, location)?);
                 return Ok(()); // 'w' is the last flag allowed
             }
 
@@ -1202,8 +1203,9 @@ fn compile_command(
         }
         CommandArgs::WriteFile => {
             // w
+            let location = ScriptLocation::at_position(lines, line);
             let path = read_file_path(lines, line)?;
-            cmd.data = CommandData::NamedWriter(NamedWriter::new(path)?);
+            cmd.data = CommandData::NamedWriter(NamedWriter::new(path, location)?);
         }
     }
 
