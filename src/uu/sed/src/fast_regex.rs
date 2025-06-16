@@ -236,29 +236,24 @@ pub fn remove_escapes(pattern: &str) -> String {
 
 #[derive(Clone, Debug)]
 /// A regular expression that can be implemented in diverse efficient ways
-pub enum RegexEngine {
-    Literal(LiteralMatcher), // Fastest: literal bytes
-    Byte(ByteRegex),         // Slower: byte-based RE
-    Fancy(FancyRegex),       // Slowest: RE supporting UTF-8 and back-references
-}
-
-#[derive(Clone, Debug)]
-pub struct Regex {
-    loc: ScriptLocation,
-    engine: RegexEngine,
+pub enum Regex {
+    Literal(LiteralMatcher),           // Fastest: literal bytes
+    Byte(ByteRegex),                   // Slower: byte-based RE
+    Fancy(FancyRegex, ScriptLocation), // Slowest: RE supporting UTF-8 and back-references
 }
 
 impl Regex {
     /// Construct the most efficient RE-like matching engine possible.
-    pub fn new(loc: ScriptLocation, pattern: &str) -> Result<Self, Box<dyn Error>> {
-        let engine = if NEEDS_FANCY_RE.is_match(pattern) {
-            RegexEngine::Fancy(FancyRegex::new(pattern)?)
+    pub fn new(location: ScriptLocation, pattern: &str) -> Result<Self, Box<dyn Error>> {
+        if NEEDS_FANCY_RE.is_match(pattern) {
+            Ok(Regex::Fancy(FancyRegex::new(pattern)?, location))
         } else if NEEDS_RE.is_match(pattern) {
-            RegexEngine::Byte(ByteRegex::new(pattern)?)
+            Ok(Regex::Byte(ByteRegex::new(pattern)?))
         } else {
-            RegexEngine::Literal(LiteralMatcher::new(&remove_escapes(pattern)))
-        };
-        Ok(Regex { loc, engine })
+            Ok(Regex::Literal(LiteralMatcher::new(&remove_escapes(
+                pattern,
+            ))))
+        }
     }
 
     #[cfg(test)]
@@ -269,14 +264,14 @@ impl Regex {
 
     /// Check if the regex matches the content of the IOChunk.
     pub fn is_match(&self, chunk: &mut IOChunk) -> UResult<bool> {
-        match &self.engine {
-            RegexEngine::Literal(m) => Ok(m.is_match(chunk.as_bytes())),
-            RegexEngine::Byte(re) => Ok(re.is_match(chunk.as_bytes())),
-            RegexEngine::Fancy(re) => {
+        match self {
+            Regex::Literal(m) => Ok(m.is_match(chunk.as_bytes())),
+            Regex::Byte(re) => Ok(re.is_match(chunk.as_bytes())),
+            Regex::Fancy(re, location) => {
                 let text = chunk.as_str()?;
                 match re.is_match(text) {
                     Ok(found) => Ok(found),
-                    Err(e) => runtime_error(&self.loc, e.to_string()),
+                    Err(e) => runtime_error(location, e.to_string()),
                 }
             }
         }
@@ -284,36 +279,36 @@ impl Regex {
 
     /// Return an iterator over capture groups.
     pub fn captures_iter<'t>(&'t self, chunk: &'t IOChunk) -> UResult<CaptureMatches<'t>> {
-        match &self.engine {
-            RegexEngine::Literal(m) => {
+        match self {
+            Regex::Literal(m) => {
                 let haystack = chunk.as_bytes();
                 Ok(CaptureMatches::Literal(Box::new(m.iter(haystack).map(
                     |(start, end, text)| Ok(Captures::Literal(Match { start, end, text })),
                 ))))
             }
 
-            RegexEngine::Byte(re) => Ok(CaptureMatches::Byte(re.captures_iter(chunk.as_bytes()))),
+            Regex::Byte(re) => Ok(CaptureMatches::Byte(re.captures_iter(chunk.as_bytes()))),
 
-            RegexEngine::Fancy(re) => {
+            Regex::Fancy(re, location) => {
                 let text = chunk.as_str()?;
-                Ok(CaptureMatches::Fancy(re.captures_iter(text), &self.loc))
+                Ok(CaptureMatches::Fancy(re.captures_iter(text), location))
             }
         }
     }
 
     /// Return the number of capture groups, including group 0.
     pub fn captures_len(&self) -> usize {
-        match &self.engine {
-            RegexEngine::Literal(_) => 1, // Only group 0
-            RegexEngine::Byte(re) => re.captures_len(),
-            RegexEngine::Fancy(re) => re.captures_len(),
+        match self {
+            Regex::Literal(_) => 1, // Only group 0
+            Regex::Byte(re) => re.captures_len(),
+            Regex::Fancy(re, _location) => re.captures_len(),
         }
     }
 
     /// Return the elements of the first capture.
     pub fn captures<'t>(&self, chunk: &'t IOChunk) -> UResult<Option<Captures<'t>>> {
-        match &self.engine {
-            RegexEngine::Literal(m) => {
+        match self {
+            Regex::Literal(m) => {
                 let haystack = chunk.as_bytes();
                 match m.find(haystack) {
                     Some((start, end, text)) => {
@@ -323,17 +318,17 @@ impl Regex {
                 }
             }
 
-            RegexEngine::Byte(re) => {
+            Regex::Byte(re) => {
                 let bytes = chunk.as_bytes();
                 Ok(re.captures(bytes).map(Captures::Byte))
             }
 
-            RegexEngine::Fancy(re) => {
+            Regex::Fancy(re, location) => {
                 let text = chunk.as_str()?;
                 match re.captures(text) {
                     Ok(Some(caps)) => Ok(Some(Captures::Fancy(caps))),
                     Ok(None) => Ok(None),
-                    Err(e) => runtime_error(&self.loc, e.to_string()),
+                    Err(e) => runtime_error(location, e.to_string()),
                 }
             }
         }
@@ -341,8 +336,8 @@ impl Regex {
 
     /// Return a non-capturing result for a single match.
     pub fn find<'t>(&self, chunk: &'t IOChunk) -> UResult<Option<Match<'t>>> {
-        match &self.engine {
-            RegexEngine::Literal(m) => {
+        match self {
+            Regex::Literal(m) => {
                 let haystack = chunk.as_bytes();
                 match m.find(haystack) {
                     Some((start, end, text)) => Ok(Some(Match { start, end, text })),
@@ -350,7 +345,7 @@ impl Regex {
                 }
             }
 
-            RegexEngine::Byte(re) => {
+            Regex::Byte(re) => {
                 let haystack = chunk.as_bytes();
                 if let Some(m) = re.find(haystack) {
                     // Attempt UTF-8 decode for the match region only
@@ -366,7 +361,7 @@ impl Regex {
                 }
             }
 
-            RegexEngine::Fancy(re) => {
+            Regex::Fancy(re, location) => {
                 let text = chunk.as_str()?;
                 match re.find(text) {
                     Ok(Some(m)) => Ok(Some(Match {
@@ -375,7 +370,7 @@ impl Regex {
                         text: m.as_str(),
                     })),
                     Ok(None) => Ok(None),
-                    Err(e) => runtime_error(&self.loc, e.to_string()),
+                    Err(e) => runtime_error(location, e.to_string()),
                 }
             }
         }
@@ -396,10 +391,10 @@ impl<'t> Iterator for CaptureMatches<'t> {
         match self {
             CaptureMatches::Literal(iter) => iter.next(),
             CaptureMatches::Byte(iter) => iter.next().map(|caps| Ok(Captures::Byte(caps))),
-            CaptureMatches::Fancy(iter, loc) => match iter.next() {
+            CaptureMatches::Fancy(iter, location) => match iter.next() {
                 Some(Ok(caps)) => Some(Ok(Captures::Fancy(caps))),
                 Some(Err(e)) => Some(runtime_error(
-                    loc,
+                    location,
                     format!("error retrieving RE captures: {e}"),
                 )),
                 None => None,
@@ -606,19 +601,19 @@ mod tests {
     #[test]
     fn assert_byte_selection() {
         let re = Regex::new_unlocated(r"x*").unwrap();
-        assert!(matches!(re.engine, RegexEngine::Byte(_)));
+        assert!(matches!(re, Regex::Byte(_)));
     }
 
     #[test]
     fn assert_fancy() {
         let re = Regex::new_unlocated(r"\d").unwrap();
-        assert!(matches!(re.engine, RegexEngine::Fancy(_)));
+        assert!(matches!(re, Regex::Fancy(_, _)));
     }
 
     #[test]
     fn assert_literal() {
         let re = Regex::new_unlocated(r"x\.").unwrap();
-        assert!(matches!(re.engine, RegexEngine::Literal(_)));
+        assert!(matches!(re, Regex::Literal(_)));
     }
 
     #[test]
