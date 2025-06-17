@@ -10,15 +10,14 @@
 
 use crate::command::{
     Address, AddressType, AddressValue, Command, CommandData, ProcessingContext, ReplacementPart,
-    ReplacementTemplate, ScriptValue, Substitution, Transliteration,
+    ReplacementTemplate, Substitution, Transliteration,
 };
-use crate::delimited_parser::{
-    compilation_error, parse_char_escape, parse_regex, parse_transliteration,
-};
+use crate::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
+use crate::error_handling::{ScriptLocation, compilation_error, semantic_error};
 use crate::fast_regex::Regex;
 use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
-use crate::script_line_provider::ScriptLineProvider;
+use crate::script_line_provider::{ScriptLineProvider, ScriptValue};
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -310,7 +309,7 @@ fn populate_label_map(
         if let Some(label) = maybe_label {
             if cmd.code == ':' {
                 if context.label_to_command_map.contains_key(&label) {
-                    return Err(USimpleError::new(2, format!("duplicate label `{}'", label)));
+                    return semantic_error(&cmd.location, format!("duplicate label `{}'", label));
                 }
                 context.label_to_command_map.insert(label, rc_cmd.clone());
             }
@@ -349,7 +348,11 @@ fn resolve_branch_targets(
                         .get(&label)
                         .cloned()
                         .ok_or_else(|| {
-                            USimpleError::new(2, format!("undefined label `{}'", label))
+                            semantic_error::<()>(
+                                &cmd.location,
+                                format!("undefined label `{}'", label),
+                            )
+                            .unwrap_err()
                         })?;
                     CommandData::BranchTarget(Some(target))
                 }
@@ -394,7 +397,7 @@ fn compile_sequence(
             continue;
         }
 
-        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let mut cmd = Rc::new(RefCell::new(Command::at_position(lines, line)));
         let n_addr = compile_address_range(lines, line, &mut cmd, context)?;
         line.eat_spaces();
         let mut cmd_spec = get_cmd_spec(lines, line, n_addr)?;
@@ -990,8 +993,9 @@ pub fn compile_subst_flags(
             }
 
             'w' => {
+                let location = ScriptLocation::at_position(lines, line);
                 let path = read_file_path(lines, line)?;
-                subst.write_file = Some(NamedWriter::new(path)?);
+                subst.write_file = Some(NamedWriter::new(path, location)?);
                 return Ok(()); // 'w' is the last flag allowed
             }
 
@@ -1193,8 +1197,9 @@ fn compile_command(
         }
         CommandArgs::WriteFile => {
             // w
+            let location = ScriptLocation::at_position(lines, line);
             let path = read_file_path(lines, line)?;
-            cmd.data = CommandData::NamedWriter(NamedWriter::new(path)?);
+            cmd.data = CommandData::NamedWriter(NamedWriter::new(path, location)?);
         }
     }
 
@@ -1368,7 +1373,7 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert!(msg.contains("test.sed:42:4: error: unexpected token"));
+        assert!(msg.contains("test.sed:42:5: error: unexpected token"));
     }
 
     #[test]
@@ -1385,7 +1390,7 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert_eq!(msg, "input.txt:3:0: error: invalid command 'x'");
+        assert_eq!(msg, "input.txt:3:1: error: invalid command 'x'");
     }
 
     // get_cmd_spec
@@ -1397,7 +1402,7 @@ mod tests {
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("test.sed:1:0: error: command expected"));
+        assert!(msg.contains("test.sed:1:1: error: command expected"));
     }
 
     #[test]
@@ -1408,7 +1413,7 @@ mod tests {
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("script.sed:2:0: error: invalid command code `@'"));
+        assert!(msg.contains("script.sed:2:1: error: invalid command code `@'"));
     }
 
     #[test]
@@ -1420,7 +1425,7 @@ mod tests {
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("input.sed:3:0: error: command q expects up to 1 address(es), found 2")
+            msg.contains("input.sed:3:1: error: command q expects up to 1 address(es), found 2")
         );
     }
 
@@ -1854,7 +1859,35 @@ mod tests {
         };
         assert_eq!(line, 1);
 
+        assert_eq!(cmd.location.line_number, 1);
+        assert_eq!(cmd.location.column_number, 1);
+        assert_eq!(cmd.location.input_name.as_ref(), "<script argument 1>");
+
         assert!(cmd.next.is_none());
+    }
+
+    #[test]
+    fn test_compile_two_commands() {
+        let scripts = vec![ScriptValue::StringVal("l;q".to_string())];
+        let mut opts = ProcessingContext::default();
+
+        let result = compile(scripts, &mut opts).unwrap();
+        let binding = result.unwrap();
+        let cmd = binding.borrow();
+
+        assert_eq!(cmd.code, 'l');
+        assert_eq!(cmd.location.line_number, 1);
+        assert_eq!(cmd.location.column_number, 1);
+        assert_eq!(cmd.location.input_name.as_ref(), "<script argument 1>");
+
+        let binding2 = cmd.next.clone().unwrap();
+        let cmd2 = binding2.borrow();
+        assert_eq!(cmd2.code, 'q');
+        assert_eq!(cmd2.location.line_number, 1);
+        assert_eq!(cmd2.location.column_number, 3);
+        assert_eq!(cmd2.location.input_name.as_ref(), "<script argument 1>");
+
+        assert!(cmd2.next.is_none());
     }
 
     // compile_replacement

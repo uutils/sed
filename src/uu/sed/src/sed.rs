@@ -11,6 +11,7 @@
 pub mod command;
 pub mod compiler;
 pub mod delimited_parser;
+pub mod error_handling;
 pub mod fast_io;
 pub mod fast_regex;
 pub mod in_place;
@@ -19,9 +20,10 @@ pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;
 
-use crate::command::{ProcessingContext, ScriptValue, StringSpace};
+use crate::command::{ProcessingContext, StringSpace};
 use crate::compiler::compile;
 use crate::processor::process_all_files;
+use crate::script_line_provider::ScriptValue;
 use clap::{Arg, ArgMatches, Command, arg};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -197,6 +199,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         null_data: matches.get_flag("null-data"),
 
         // Other context
+        input_name: "<stdin>".to_string(),
         line_number: 0,
         last_address: false,
         last_line: false,
