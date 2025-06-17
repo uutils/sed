@@ -8,6 +8,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+use crate::command::ProcessingContext;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
 
@@ -88,4 +89,28 @@ pub fn semantic_error<T>(location: &ScriptLocation, msg: impl ToString) -> UResu
 /// The error's exit code is 2 (processing phase).
 pub fn runtime_error<T>(location: &ScriptLocation, msg: impl ToString) -> UResult<T> {
     location_error(location, msg, 2)
+}
+
+/// Fail with msg as a runtime error at the command's and input's location.
+/// This is to be used in cases where the error depends on both, for example,
+/// a fancy regular expression applied on invalid UTF-8 input.
+/// (A fixed string match will not err in this case.)
+/// The error's exit code is 2 (processing phase).
+pub fn input_runtime_error<T>(
+    location: &ScriptLocation,
+    context: &ProcessingContext,
+    msg: impl ToString,
+) -> UResult<T> {
+    Err(USimpleError::new(
+        2,
+        format!(
+            "{}:{}:{}: {}:{} error: {}",
+            location.input_name,
+            location.line_number,
+            location.column_number,
+            context.input_name,
+            context.line_number,
+            msg.to_string()
+        ),
+    ))
 }

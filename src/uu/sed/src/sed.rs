@@ -199,6 +199,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         null_data: matches.get_flag("null-data"),
 
         // Other context
+        input_name: "<stdin>".to_string(),
         line_number: 0,
         last_address: false,
         last_line: false,
