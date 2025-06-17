@@ -348,7 +348,7 @@ mod tests {
 
     // Return the captures for the RE applied to the specified string
     fn caps_for<'a>(re: &str, chunk: &'a mut IOChunk) -> Captures<'a> {
-        Regex::new(ScriptLocation::default(), re)
+        Regex::new(re)
             .unwrap()
             .captures(chunk)
             .unwrap()

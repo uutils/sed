@@ -927,13 +927,42 @@ fn test_undefined_label() {
         .stderr_is("sed: <script argument 1>:1:1: error: undefined label `foo'\n");
 }
 
+// The following test diverse ways in which regexes are matched.
+// Search for 'regex\.' to find them in the code.
 #[test]
-fn test_fancy_regex_error() {
+fn test_fancy_regex_is_match_error() {
     new_ucmd!()
         .args(&["-E", r"/(\.+)+\1b$/p", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
         .stderr_is("sed: <script argument 1>:1:1: error: Error executing regex: Max limit for backtracking count exceeded\n");
+}
+
+#[test]
+fn test_fancy_regex_find_error() {
+    new_ucmd!()
+        .args(&["-E", r"p;s/(\.+)+\1b$/X/", "input/dots-4k.txt"])
+        .fails()
+        .code_is(2)
+        .stderr_is("sed: <script argument 1>:1:3: error: Error executing regex: Max limit for backtracking count exceeded\n");
+}
+
+#[test]
+fn test_fancy_regex_captures_error() {
+    new_ucmd!()
+        .args(&["-E", r"p;s/(\.+)+\1b$/\1/", "input/dots-4k.txt"])
+        .fails()
+        .code_is(2)
+        .stderr_is("sed: <script argument 1>:1:3: error: Error executing regex: Max limit for backtracking count exceeded\n");
+}
+
+#[test]
+fn test_fancy_regex_captures_iter_error() {
+    new_ucmd!()
+        .args(&["-E", r"p;s/(\.+)+\1b$/\1/3", "input/dots-4k.txt"])
+        .fails()
+        .code_is(2)
+        .stderr_is("sed: <script argument 1>:1:3: error: error retrieving RE captures: Error executing regex: Max limit for backtracking count exceeded\n");
 }
 
 #[test]
