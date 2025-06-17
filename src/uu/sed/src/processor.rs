@@ -12,7 +12,7 @@ use crate::command::{
     Address, AddressType, AddressValue, AppendElement, Command, CommandData, InputAction,
     ProcessingContext, Transliteration,
 };
-use crate::error_handling::{ScriptLocation, runtime_error};
+use crate::error_handling::{ScriptLocation, input_runtime_error};
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::fast_regex::Regex;
 use crate::in_place::InPlace;
@@ -50,7 +50,7 @@ fn match_address(
                 let regex = re_or_saved_re(re, context, location)?;
                 match regex.is_match(pattern) {
                     Ok(result) => Ok(result),
-                    Err(e) => runtime_error(location, e.to_string()),
+                    Err(e) => input_runtime_error(location, context, e.to_string()),
                 }
             } else {
                 Ok(false)
@@ -198,7 +198,7 @@ fn re_or_saved_re<'a>(
         // We already have one: just borrow it.
         Ok(saved_re)
     } else {
-        runtime_error(location, "no previous regular expression")
+        input_runtime_error(location, context, "no previous regular expression")
     }
 }
 
@@ -220,13 +220,14 @@ fn substitute(
 
     let regex = re_or_saved_re(&sub.regex, context, &command.location)?;
 
-    match (sub.occurrence, sub.replacement.max_group_number) {
+    // The following let block allows a common input_runtime_error to be
+    // called once in all cases, and most importantly, to finish the regex
+    // mutable borrowing of context, so as to reuse context in the error call.
+    let subst_result = match (sub.occurrence, sub.replacement.max_group_number) {
         (1, 0) => {
             // Example: s/foo/bar/: find() is enough.
             match regex.find(pattern) {
-                Err(e) => {
-                    return runtime_error(&command.location, e.to_string());
-                }
+                Err(e) => Err(e),
                 Ok(Some(m)) => {
                     text = Some(pattern.as_str()?);
                     result.push_str(&text.unwrap()[last_end..m.start()]);
@@ -235,17 +236,16 @@ fn substitute(
                     result.push_str(&replacement);
                     replaced = true;
                     last_end = m.end();
+                    Ok(())
                 }
-                Ok(None) => (), // No match
+                Ok(None) => Ok(()), // No match
             }
         }
 
         (1, _) => {
             // Example: s/\(.\)\(.\)/\2\1/: captures() is enough.
             match regex.captures(pattern) {
-                Err(e) => {
-                    return runtime_error(&command.location, e.to_string());
-                }
+                Err(e) => Err(e),
                 Ok(Some(caps)) => {
                     let m = caps.get(0)?.unwrap();
                     text = Some(pattern.as_str()?);
@@ -255,50 +255,56 @@ fn substitute(
                     result.push_str(&replacement);
                     replaced = true;
                     last_end = m.end();
+                    Ok(())
                 }
-                Ok(None) => (), // No match
+                Ok(None) => Ok(()), // No match
             }
         }
 
         (_, _) => {
             // Example: s/(.)(.)/\2\1/3: captures_iter() is needed.
             // Iterate over multiple captures of the RE in the pattern.
-            for caps in regex.captures_iter(pattern)? {
-                match caps {
-                    Err(e) => {
-                        return runtime_error(&command.location, e.to_string());
+            'captures: {
+                for caps_result in regex.captures_iter(pattern)? {
+                    let caps = match caps_result {
+                        Ok(caps) => caps,
+                        Err(e) => break 'captures Err(e),
+                    };
+                    count += 1;
+
+                    let m = caps.get(0)?.unwrap();
+
+                    // Always write the unmatched text before this match.
+                    if text.is_none() {
+                        text = Some(pattern.as_str()?);
                     }
-                    Ok(caps) => {
-                        count += 1;
+                    result.push_str(&text.unwrap()[last_end..m.start()]);
 
-                        let m = caps.get(0)?.unwrap();
+                    if sub.occurrence == 0 || count == sub.occurrence {
+                        let replacement = sub.replacement.apply_captures(command, &caps)?;
+                        result.push_str(&replacement);
+                        replaced = true;
+                    } else {
+                        // Not the target match — leave the match unchanged.
+                        result.push_str(m.as_str());
+                    }
 
-                        // Always write the unmatched text before this match.
-                        if text.is_none() {
-                            text = Some(pattern.as_str()?);
-                        }
-                        result.push_str(&text.unwrap()[last_end..m.start()]);
+                    last_end = m.end();
 
-                        if sub.occurrence == 0 || count == sub.occurrence {
-                            let replacement = sub.replacement.apply_captures(command, &caps)?;
-                            result.push_str(&replacement);
-                            replaced = true;
-                        } else {
-                            // Not the target match — leave the match unchanged.
-                            result.push_str(m.as_str());
-                        }
-
-                        last_end = m.end();
-
-                        // Early exit if only a specific occurrence,
-                        // (likely 1) needed replacing.
-                        if count == sub.occurrence {
-                            break;
-                        }
+                    // Early exit if only a specific occurrence,
+                    // (likely 1) needed replacing.
+                    if count == sub.occurrence {
+                        break 'captures Ok(());
                     }
                 }
+                break 'captures Ok(());
             }
         }
+    };
+
+    // Handle errors.
+    if let Err(e) = subst_result {
+        return input_runtime_error(&command.location, context, e.to_string());
     }
 
     // Handle substitution success.
@@ -688,6 +694,7 @@ pub fn process_all_files(
         if context.separate {
             context.line_number = 0;
         }
+        context.input_name = path.quote().to_string();
         process_file(&commands, &mut reader, output, context)?;
 
         // Handle any N command remains.

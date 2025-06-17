@@ -935,7 +935,7 @@ fn test_fancy_regex_is_match_error() {
         .args(&["-E", r"/(\.+)+\1b$/p", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:1: error: Error executing regex: Max limit for backtracking count exceeded\n");
+        .stderr_is("sed: <script argument 1>:1:1: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
 }
 
 #[test]
@@ -944,7 +944,7 @@ fn test_fancy_regex_find_error() {
         .args(&["-E", r"p;s/(\.+)+\1b$/X/", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: error: Error executing regex: Max limit for backtracking count exceeded\n");
+        .stderr_is("sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
 }
 
 #[test]
@@ -953,7 +953,7 @@ fn test_fancy_regex_captures_error() {
         .args(&["-E", r"p;s/(\.+)+\1b$/\1/", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: error: Error executing regex: Max limit for backtracking count exceeded\n");
+        .stderr_is("sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
 }
 
 #[test]
@@ -962,7 +962,7 @@ fn test_fancy_regex_captures_iter_error() {
         .args(&["-E", r"p;s/(\.+)+\1b$/\1/3", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: error: error retrieving RE captures: Error executing regex: Max limit for backtracking count exceeded\n");
+        .stderr_is("sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: error retrieving RE captures: Error executing regex: Max limit for backtracking count exceeded\n");
 }
 
 #[test]
@@ -980,7 +980,7 @@ fn test_missing_substitute_re() {
         .args(&["l;s//foo/", LINES1])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: error: no previous regular expression\n");
+        .stderr_is("sed: <script argument 1>:1:3: 'input/lines1':1 error: no previous regular expression\n");
 }
 
 #[test]
@@ -989,5 +989,5 @@ fn test_missing_address_re() {
         .args(&["l\np;//s/foo/bar/", LINES1])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:2:3: error: no previous regular expression\n");
+        .stderr_is("sed: <script argument 1>:2:3: 'input/lines1':1 error: no previous regular expression\n");
 }
