@@ -11,8 +11,6 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::error_handling::{ScriptLocation, runtime_error};
-
 use fancy_regex::{
     CaptureMatches as FancyCaptureMatches, Captures as FancyCaptures, Regex as FancyRegex,
 };
@@ -237,29 +235,21 @@ pub fn remove_escapes(pattern: &str) -> String {
 #[derive(Clone, Debug)]
 /// A regular expression that can be implemented in diverse efficient ways
 pub enum Regex {
-    Literal(LiteralMatcher),           // Fastest: literal bytes
-    Byte(ByteRegex),                   // Slower: byte-based RE
-    Fancy(FancyRegex, ScriptLocation), // Slowest: RE supporting UTF-8 and back-references
+    Literal(LiteralMatcher), // Fastest: literal bytes
+    Byte(ByteRegex),         // Slower: byte-based RE
+    Fancy(FancyRegex),       // Slowest: RE supporting UTF-8 and back-references
 }
 
 impl Regex {
     /// Construct the most efficient RE-like matching engine possible.
-    pub fn new(location: ScriptLocation, pattern: &str) -> Result<Self, Box<dyn Error>> {
+    pub fn new(pattern: &str) -> Result<Self, Box<dyn Error>> {
         if NEEDS_FANCY_RE.is_match(pattern) {
-            Ok(Regex::Fancy(FancyRegex::new(pattern)?, location))
+            Ok(Self::Fancy(FancyRegex::new(pattern)?))
         } else if NEEDS_RE.is_match(pattern) {
-            Ok(Regex::Byte(ByteRegex::new(pattern)?))
+            Ok(Self::Byte(ByteRegex::new(pattern)?))
         } else {
-            Ok(Regex::Literal(LiteralMatcher::new(&remove_escapes(
-                pattern,
-            ))))
+            Ok(Self::Literal(LiteralMatcher::new(&remove_escapes(pattern))))
         }
-    }
-
-    #[cfg(test)]
-    /// Construct with a default location
-    pub fn new_unlocated(pattern: &str) -> Result<Self, Box<dyn Error>> {
-        Regex::new(ScriptLocation::default(), pattern)
     }
 
     /// Check if the regex matches the content of the IOChunk.
@@ -267,12 +257,10 @@ impl Regex {
         match self {
             Regex::Literal(m) => Ok(m.is_match(chunk.as_bytes())),
             Regex::Byte(re) => Ok(re.is_match(chunk.as_bytes())),
-            Regex::Fancy(re, location) => {
+            Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
-                match re.is_match(text) {
-                    Ok(found) => Ok(found),
-                    Err(e) => runtime_error(location, e.to_string()),
-                }
+                re.is_match(text)
+                    .map_err(|e| USimpleError::new(2, e.to_string()))
             }
         }
     }
@@ -289,9 +277,9 @@ impl Regex {
 
             Regex::Byte(re) => Ok(CaptureMatches::Byte(re.captures_iter(chunk.as_bytes()))),
 
-            Regex::Fancy(re, location) => {
+            Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
-                Ok(CaptureMatches::Fancy(re.captures_iter(text), location))
+                Ok(CaptureMatches::Fancy(re.captures_iter(text)))
             }
         }
     }
@@ -301,7 +289,7 @@ impl Regex {
         match self {
             Regex::Literal(_) => 1, // Only group 0
             Regex::Byte(re) => re.captures_len(),
-            Regex::Fancy(re, _location) => re.captures_len(),
+            Regex::Fancy(re) => re.captures_len(),
         }
     }
 
@@ -323,12 +311,12 @@ impl Regex {
                 Ok(re.captures(bytes).map(Captures::Byte))
             }
 
-            Regex::Fancy(re, location) => {
+            Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
                 match re.captures(text) {
                     Ok(Some(caps)) => Ok(Some(Captures::Fancy(caps))),
                     Ok(None) => Ok(None),
-                    Err(e) => runtime_error(location, e.to_string()),
+                    Err(e) => Err(USimpleError::new(2, e.to_string())),
                 }
             }
         }
@@ -361,7 +349,7 @@ impl Regex {
                 }
             }
 
-            Regex::Fancy(re, location) => {
+            Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
                 match re.find(text) {
                     Ok(Some(m)) => Ok(Some(Match {
@@ -370,7 +358,7 @@ impl Regex {
                         text: m.as_str(),
                     })),
                     Ok(None) => Ok(None),
-                    Err(e) => runtime_error(location, e.to_string()),
+                    Err(e) => Err(USimpleError::new(2, e.to_string())),
                 }
             }
         }
@@ -381,7 +369,7 @@ impl Regex {
 pub enum CaptureMatches<'t> {
     Literal(Box<dyn Iterator<Item = UResult<Captures<'t>>> + 't>),
     Byte(ByteCaptureMatches<'t, 't>),
-    Fancy(FancyCaptureMatches<'t, 't>, &'t ScriptLocation),
+    Fancy(FancyCaptureMatches<'t, 't>),
 }
 
 impl<'t> Iterator for CaptureMatches<'t> {
@@ -391,12 +379,12 @@ impl<'t> Iterator for CaptureMatches<'t> {
         match self {
             CaptureMatches::Literal(iter) => iter.next(),
             CaptureMatches::Byte(iter) => iter.next().map(|caps| Ok(Captures::Byte(caps))),
-            CaptureMatches::Fancy(iter, location) => match iter.next() {
+            CaptureMatches::Fancy(iter) => match iter.next() {
                 Some(Ok(caps)) => Some(Ok(Captures::Fancy(caps))),
-                Some(Err(e)) => Some(runtime_error(
-                    location,
+                Some(Err(e)) => Some(Err(USimpleError::new(
+                    2,
                     format!("error retrieving RE captures: {e}"),
-                )),
+                ))),
                 None => None,
             },
         }
@@ -600,25 +588,25 @@ mod tests {
     // Regex::new
     #[test]
     fn assert_byte_selection() {
-        let re = Regex::new_unlocated(r"x*").unwrap();
+        let re = Regex::new(r"x*").unwrap();
         assert!(matches!(re, Regex::Byte(_)));
     }
 
     #[test]
     fn assert_fancy() {
-        let re = Regex::new_unlocated(r"\d").unwrap();
-        assert!(matches!(re, Regex::Fancy(_, _)));
+        let re = Regex::new(r"\d").unwrap();
+        assert!(matches!(re, Regex::Fancy(_)));
     }
 
     #[test]
     fn assert_literal() {
-        let re = Regex::new_unlocated(r"x\.").unwrap();
+        let re = Regex::new(r"x\.").unwrap();
         assert!(matches!(re, Regex::Literal(_)));
     }
 
     #[test]
     fn handles_invalid_regex_gracefully() {
-        let err = Regex::new_unlocated("(").unwrap_err().to_string();
+        let err = Regex::new("(").unwrap_err().to_string();
         assert!(
             err.contains("unclosed group") || err.contains("error parsing"),
             "Unexpected error: {}",

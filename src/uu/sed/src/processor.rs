@@ -48,7 +48,10 @@ fn match_address(
         AddressType::Re => {
             if let AddressValue::Regex(ref re) = addr.value {
                 let regex = re_or_saved_re(re, context, location)?;
-                regex.is_match(pattern)
+                match regex.is_match(pattern) {
+                    Ok(result) => Ok(result),
+                    Err(e) => runtime_error(location, e.to_string()),
+                }
             } else {
                 Ok(false)
             }
@@ -220,30 +223,40 @@ fn substitute(
     match (sub.occurrence, sub.replacement.max_group_number) {
         (1, 0) => {
             // Example: s/foo/bar/: find() is enough.
-            let m = regex.find(pattern)?;
-            if let Some(m) = m {
-                text = Some(pattern.as_str()?);
-                result.push_str(&text.unwrap()[last_end..m.start()]);
+            match regex.find(pattern) {
+                Err(e) => {
+                    return runtime_error(&command.location, e.to_string());
+                }
+                Ok(Some(m)) => {
+                    text = Some(pattern.as_str()?);
+                    result.push_str(&text.unwrap()[last_end..m.start()]);
 
-                let replacement = sub.replacement.apply_match(&m);
-                result.push_str(&replacement);
-                replaced = true;
-                last_end = m.end();
+                    let replacement = sub.replacement.apply_match(&m);
+                    result.push_str(&replacement);
+                    replaced = true;
+                    last_end = m.end();
+                }
+                Ok(None) => (), // No match
             }
         }
 
         (1, _) => {
             // Example: s/\(.\)\(.\)/\2\1/: captures() is enough.
-            let caps = regex.captures(pattern)?;
-            if let Some(caps) = caps {
-                let m = caps.get(0)?.unwrap();
-                text = Some(pattern.as_str()?);
-                result.push_str(&text.unwrap()[last_end..m.start()]);
+            match regex.captures(pattern) {
+                Err(e) => {
+                    return runtime_error(&command.location, e.to_string());
+                }
+                Ok(Some(caps)) => {
+                    let m = caps.get(0)?.unwrap();
+                    text = Some(pattern.as_str()?);
+                    result.push_str(&text.unwrap()[last_end..m.start()]);
 
-                let replacement = sub.replacement.apply_captures(command, &caps)?;
-                result.push_str(&replacement);
-                replaced = true;
-                last_end = m.end();
+                    let replacement = sub.replacement.apply_captures(command, &caps)?;
+                    result.push_str(&replacement);
+                    replaced = true;
+                    last_end = m.end();
+                }
+                Ok(None) => (), // No match
             }
         }
 
@@ -251,32 +264,38 @@ fn substitute(
             // Example: s/(.)(.)/\2\1/3: captures_iter() is needed.
             // Iterate over multiple captures of the RE in the pattern.
             for caps in regex.captures_iter(pattern)? {
-                count += 1;
-                let caps = caps?;
+                match caps {
+                    Err(e) => {
+                        return runtime_error(&command.location, e.to_string());
+                    }
+                    Ok(caps) => {
+                        count += 1;
 
-                let m = caps.get(0)?.unwrap();
+                        let m = caps.get(0)?.unwrap();
 
-                // Always write the unmatched text before this match.
-                if text.is_none() {
-                    text = Some(pattern.as_str()?);
-                }
-                result.push_str(&text.unwrap()[last_end..m.start()]);
+                        // Always write the unmatched text before this match.
+                        if text.is_none() {
+                            text = Some(pattern.as_str()?);
+                        }
+                        result.push_str(&text.unwrap()[last_end..m.start()]);
 
-                if sub.occurrence == 0 || count == sub.occurrence {
-                    let replacement = sub.replacement.apply_captures(command, &caps)?;
-                    result.push_str(&replacement);
-                    replaced = true;
-                } else {
-                    // Not the target match — leave the match unchanged.
-                    result.push_str(m.as_str());
-                }
+                        if sub.occurrence == 0 || count == sub.occurrence {
+                            let replacement = sub.replacement.apply_captures(command, &caps)?;
+                            result.push_str(&replacement);
+                            replaced = true;
+                        } else {
+                            // Not the target match — leave the match unchanged.
+                            result.push_str(m.as_str());
+                        }
 
-                last_end = m.end();
+                        last_end = m.end();
 
-                // Early exit if only a specific occurrence,
-                // (likely 1) needed replacing.
-                if count == sub.occurrence {
-                    break;
+                        // Early exit if only a specific occurrence,
+                        // (likely 1) needed replacing.
+                        if count == sub.occurrence {
+                            break;
+                        }
+                    }
                 }
             }
         }

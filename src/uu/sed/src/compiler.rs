@@ -310,7 +310,6 @@ fn populate_label_map(
             if cmd.code == ':' {
                 if context.label_to_command_map.contains_key(&label) {
                     return semantic_error(&cmd.location, format!("duplicate label `{label}'"));
->>>>>>> a429b31 (Isolate error location into separate struct)
                 }
                 context.label_to_command_map.insert(label, rc_cmd.clone());
             }
@@ -509,7 +508,6 @@ fn compile_address(
     match line.current() {
         '\\' | '/' => {
             // Regular expression
-            let location = ScriptLocation::at_position(lines, line);
             if line.current() == '\\' {
                 // The next character is an arbitrary delimiter
                 line.advance();
@@ -526,9 +524,7 @@ fn compile_address(
 
             Ok(Address {
                 atype: AddressType::Re,
-                value: AddressValue::Regex(compile_regex(
-                    lines, line, &location, &re, context, icase,
-                )?),
+                value: AddressValue::Regex(compile_regex(lines, line, &re, context, icase)?),
             })
         }
         '$' => {
@@ -691,7 +687,6 @@ fn bre_to_ere(pattern: &str) -> String {
 fn compile_regex(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
-    location: &ScriptLocation,
     pattern: &str,
     context: &ProcessingContext,
     icase: bool,
@@ -715,7 +710,7 @@ fn compile_regex(
     };
 
     // Compile into engine.
-    let compiled = Regex::new(location.clone(), &pattern).map_err(|e| {
+    let compiled = Regex::new(&pattern).map_err(|e| {
         compilation_error::<Regex>(lines, line, format!("invalid regex '{pattern}': {e}"))
             .unwrap_err()
     })?;
@@ -852,7 +847,6 @@ fn compile_subst_command(
         );
     }
 
-    let location = ScriptLocation::at_position(lines, line);
     let pattern = parse_regex(lines, line)?;
 
     let mut subst = Box::new(Substitution {
@@ -872,7 +866,7 @@ fn compile_subst_command(
     }
 
     // Compile regex with now known ignore_case flag.
-    subst.regex = compile_regex(lines, line, &location, &pattern, context, subst.ignore_case)?;
+    subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
 
     // Catch invalid group references at compile time, if possible.
     if let Some(regex) = &subst.regex {
@@ -1482,16 +1476,9 @@ mod tests {
     #[test]
     fn test_compile_re_basic() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(
-            &lines,
-            &chars,
-            &ScriptLocation::default(),
-            "abc",
-            &ctx(),
-            false,
-        )
-        .unwrap()
-        .expect("regex should be present");
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), false)
+            .unwrap()
+            .expect("regex should be present");
         assert!(regex.is_match(&mut IOChunk::from_str("abc")).unwrap());
         assert!(!regex.is_match(&mut IOChunk::from_str("ABC")).unwrap());
     }
@@ -1499,16 +1486,9 @@ mod tests {
     #[test]
     fn test_compile_re_case_insensitive() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(
-            &lines,
-            &chars,
-            &ScriptLocation::default(),
-            "abc",
-            &ctx(),
-            true,
-        )
-        .unwrap()
-        .expect("regex should be present");
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), true)
+            .unwrap()
+            .expect("regex should be present");
         assert!(regex.is_match(&mut IOChunk::from_str("abc")).unwrap());
         assert!(regex.is_match(&mut IOChunk::from_str("ABC")).unwrap());
         assert!(regex.is_match(&mut IOChunk::from_str("AbC")).unwrap());
@@ -1517,14 +1497,7 @@ mod tests {
     #[test]
     fn test_compile_re_invalid() {
         let (lines, chars) = dummy_providers();
-        let result = compile_regex(
-            &lines,
-            &chars,
-            &ScriptLocation::default(),
-            "a[d",
-            &ctx(),
-            false,
-        );
+        let result = compile_regex(&lines, &chars, "a[d", &ctx(), false);
         assert!(result.is_err()); // Should fail due to open bracketed expression
     }
 
