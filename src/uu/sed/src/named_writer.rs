@@ -50,7 +50,7 @@ impl NamedWriter {
 
     /// Write a line to the file with a newline, returning descriptive errors.
     pub fn write_line(&mut self, line: &str) -> UResult<()> {
-        writeln!(self.writer, "{}", line)
+        writeln!(self.writer, "{line}")
             .map_err_context(|| format!("error writing to file {}", self.path.quote()))
     }
 
