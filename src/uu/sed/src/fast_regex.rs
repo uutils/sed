@@ -383,7 +383,7 @@ impl<'t> Iterator for CaptureMatches<'t> {
                 Some(Ok(caps)) => Some(Ok(Captures::Fancy(caps))),
                 Some(Err(e)) => Some(Err(USimpleError::new(
                     2,
-                    format!("error retrieving RE captures: {}", e),
+                    format!("error retrieving RE captures: {e}"),
                 ))),
                 None => None,
             },
