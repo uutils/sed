@@ -310,7 +310,7 @@ fn populate_label_map(
         if let Some(label) = maybe_label {
             if cmd.code == ':' {
                 if context.label_to_command_map.contains_key(&label) {
-                    return Err(USimpleError::new(2, format!("duplicate label `{}'", label)));
+                    return Err(USimpleError::new(2, format!("duplicate label `{label}'")));
                 }
                 context.label_to_command_map.insert(label, rc_cmd.clone());
             }
@@ -349,7 +349,7 @@ fn resolve_branch_targets(
                         .get(&label)
                         .cloned()
                         .ok_or_else(|| {
-                            USimpleError::new(2, format!("undefined label `{}'", label))
+                            USimpleError::new(2, format!("undefined label `{label}'"))
                         })?;
                     CommandData::BranchTarget(Some(target))
                 }
@@ -575,7 +575,7 @@ fn parse_number(
 
     num_str
         .parse::<usize>()
-        .map_err(|_| format!("invalid number '{}'", num_str))
+        .map_err(|_| format!("invalid number '{num_str}'"))
         .map_err(|msg| compilation_error::<usize>(lines, line, msg).unwrap_err())
         .map(Some)
 }
@@ -631,7 +631,7 @@ fn bre_to_ere(pattern: &str) -> String {
                     // to avoid having the number extend beyond the single
                     // digit. Example: In sed \11 matches group 1 followed
                     // by '1', not group 11.
-                    result.push_str(&format!(r"(?:\{})", v));
+                    result.push_str(&format!(r"(?:\{v})"));
                     chars.next();
                 }
                 Some(&next) => {
@@ -701,14 +701,14 @@ fn compile_regex(
 
     // Add case-insensitive modifier if needed.
     let pattern = if icase {
-        format!("(?i){}", pattern)
+        format!("(?i){pattern}")
     } else {
         pattern.to_string()
     };
 
     // Compile into engine.
     let compiled = Regex::new(&pattern).map_err(|e| {
-        compilation_error::<Regex>(lines, line, format!("invalid regex '{}': {}", pattern, e))
+        compilation_error::<Regex>(lines, line, format!("invalid regex '{pattern}': {e}"))
             .unwrap_err()
     })?;
 
@@ -1001,7 +1001,7 @@ pub fn compile_subst_flags(
                 return compilation_error(
                     lines,
                     line,
-                    format!("invalid substitute flag: '{}'", other),
+                    format!("invalid substitute flag: '{other}'"),
                 );
             }
         }
@@ -1216,7 +1216,7 @@ fn get_cmd_spec(
     let opt_cmd_spec = lookup_command(ch);
 
     if opt_cmd_spec.is_none() {
-        return compilation_error(lines, line, format!("invalid command code `{}'", ch));
+        return compilation_error(lines, line, format!("invalid command code `{ch}'"));
     }
 
     let cmd_spec = opt_cmd_spec.unwrap();
