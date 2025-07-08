@@ -10,8 +10,9 @@
 
 use crate::command::{
     Address, AddressType, AddressValue, AppendElement, Command, CommandData, InputAction,
-    ProcessingContext, Substitution, Transliteration,
+    ProcessingContext, Transliteration,
 };
+use crate::error_handling::{ScriptLocation, input_runtime_error};
 use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::fast_regex::Regex;
 use crate::in_place::InPlace;
@@ -23,19 +24,34 @@ use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::display::Quotable;
-use uucore::error::{FromIo, UResult, USimpleError, set_exit_code};
+use uucore::error::{FromIo, UResult, set_exit_code};
+
+/// Return the specified command variant or panic.
+// Example: let path = extract_variant!(command, Path);
+macro_rules! extract_variant {
+    ($cmd:expr, $variant:ident) => {
+        match &$cmd.data {
+            CommandData::$variant(inner) => inner,
+            _ => panic!(concat!("Expected ", stringify!($variant), " command data")),
+        }
+    };
+}
 
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
     addr: &Address,
     pattern: &mut IOChunk,
     context: &mut ProcessingContext,
+    location: &ScriptLocation,
 ) -> UResult<bool> {
     match addr.atype {
         AddressType::Re => {
             if let AddressValue::Regex(ref re) = addr.value {
-                let regex = re_or_saved_re(re, context)?;
-                regex.is_match(pattern)
+                let regex = re_or_saved_re(re, context, location)?;
+                match regex.is_match(pattern) {
+                    Ok(result) => Ok(result),
+                    Err(e) => input_runtime_error(location, context, e.to_string()),
+                }
             } else {
                 Ok(false)
             }
@@ -88,7 +104,7 @@ fn applies(
                     }
                 }
                 _ => {
-                    if match_address(addr2, pattern, context)? {
+                    if match_address(addr2, pattern, context, &command.location)? {
                         command.start_line = None;
                         context.last_address = true;
                         Ok(true)
@@ -109,7 +125,7 @@ fn applies(
                 }
             }
         } else if let Some(addr1) = &command.addr1 {
-            if match_address(addr1, pattern, context)? {
+            if match_address(addr1, pattern, context, &command.location)? {
                 match addr2.atype {
                     AddressType::Line => {
                         if let AddressValue::LineNumber(n) = addr2.value {
@@ -139,7 +155,7 @@ fn applies(
             Ok(false)
         }
     } else if let Some(addr1) = &command.addr1 {
-        Ok(match_address(addr1, pattern, context)?)
+        Ok(match_address(addr1, pattern, context, &command.location)?)
     } else {
         Ok(false)
     };
@@ -171,6 +187,7 @@ fn write_chunk(
 fn re_or_saved_re<'a>(
     regex: &Option<Regex>,
     context: &'a mut ProcessingContext,
+    location: &ScriptLocation,
 ) -> UResult<&'a Regex> {
     if let Some(re) = regex {
         // First time we see this regex: clone it *once* into the context.
@@ -181,17 +198,19 @@ fn re_or_saved_re<'a>(
         // We already have one: just borrow it.
         Ok(saved_re)
     } else {
-        Err(USimpleError::new(2, "no previous regular expression"))
+        input_runtime_error(location, context, "no previous regular expression")
     }
 }
 
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
-    sub: &mut Substitution,
+    command: &Command,
     context: &mut ProcessingContext,
     output: &mut OutputBuffer,
 ) -> UResult<()> {
+    let sub = extract_variant!(command, Substitution);
+
     let mut count = 0;
     let mut last_end = 0;
     let mut result = String::new();
@@ -199,71 +218,93 @@ fn substitute(
 
     let mut text: Option<&str> = None;
 
-    let regex = re_or_saved_re(&sub.regex, context)?;
+    let regex = re_or_saved_re(&sub.regex, context, &command.location)?;
 
-    match (sub.occurrence, sub.replacement.max_group_number) {
+    // The following let block allows a common input_runtime_error to be
+    // called once in all cases, and most importantly, to finish the regex
+    // mutable borrowing of context, so as to reuse context in the error call.
+    let subst_result = match (sub.occurrence, sub.replacement.max_group_number) {
         (1, 0) => {
             // Example: s/foo/bar/: find() is enough.
-            let m = regex.find(pattern)?;
-            if let Some(m) = m {
-                text = Some(pattern.as_str()?);
-                result.push_str(&text.unwrap()[last_end..m.start()]);
+            match regex.find(pattern) {
+                Err(e) => Err(e),
+                Ok(Some(m)) => {
+                    text = Some(pattern.as_str()?);
+                    result.push_str(&text.unwrap()[last_end..m.start()]);
 
-                let replacement = sub.replacement.apply_match(&m);
-                result.push_str(&replacement);
-                replaced = true;
-                last_end = m.end();
+                    let replacement = sub.replacement.apply_match(&m);
+                    result.push_str(&replacement);
+                    replaced = true;
+                    last_end = m.end();
+                    Ok(())
+                }
+                Ok(None) => Ok(()), // No match
             }
         }
 
         (1, _) => {
             // Example: s/\(.\)\(.\)/\2\1/: captures() is enough.
-            let caps = regex.captures(pattern)?;
-            if let Some(caps) = caps {
-                let m = caps.get(0)?.unwrap();
-                text = Some(pattern.as_str()?);
-                result.push_str(&text.unwrap()[last_end..m.start()]);
+            match regex.captures(pattern) {
+                Err(e) => Err(e),
+                Ok(Some(caps)) => {
+                    let m = caps.get(0)?.unwrap();
+                    text = Some(pattern.as_str()?);
+                    result.push_str(&text.unwrap()[last_end..m.start()]);
 
-                let replacement = sub.replacement.apply_captures(&caps)?;
-                result.push_str(&replacement);
-                replaced = true;
-                last_end = m.end();
+                    let replacement = sub.replacement.apply_captures(command, &caps)?;
+                    result.push_str(&replacement);
+                    replaced = true;
+                    last_end = m.end();
+                    Ok(())
+                }
+                Ok(None) => Ok(()), // No match
             }
         }
 
         (_, _) => {
             // Example: s/(.)(.)/\2\1/3: captures_iter() is needed.
             // Iterate over multiple captures of the RE in the pattern.
-            for caps in regex.captures_iter(pattern)? {
-                count += 1;
-                let caps = caps?;
+            'captures: {
+                for caps_result in regex.captures_iter(pattern)? {
+                    let caps = match caps_result {
+                        Ok(caps) => caps,
+                        Err(e) => break 'captures Err(e),
+                    };
+                    count += 1;
 
-                let m = caps.get(0)?.unwrap();
+                    let m = caps.get(0)?.unwrap();
 
-                // Always write the unmatched text before this match.
-                if text.is_none() {
-                    text = Some(pattern.as_str()?);
+                    // Always write the unmatched text before this match.
+                    if text.is_none() {
+                        text = Some(pattern.as_str()?);
+                    }
+                    result.push_str(&text.unwrap()[last_end..m.start()]);
+
+                    if sub.occurrence == 0 || count == sub.occurrence {
+                        let replacement = sub.replacement.apply_captures(command, &caps)?;
+                        result.push_str(&replacement);
+                        replaced = true;
+                    } else {
+                        // Not the target match — leave the match unchanged.
+                        result.push_str(m.as_str());
+                    }
+
+                    last_end = m.end();
+
+                    // Early exit if only a specific occurrence,
+                    // (likely 1) needed replacing.
+                    if count == sub.occurrence {
+                        break 'captures Ok(());
+                    }
                 }
-                result.push_str(&text.unwrap()[last_end..m.start()]);
-
-                if sub.occurrence == 0 || count == sub.occurrence {
-                    let replacement = sub.replacement.apply_captures(&caps)?;
-                    result.push_str(&replacement);
-                    replaced = true;
-                } else {
-                    // Not the target match — leave the match unchanged.
-                    result.push_str(m.as_str());
-                }
-
-                last_end = m.end();
-
-                // Early exit if only a specific occurrence,
-                // (likely 1) needed replacing.
-                if count == sub.occurrence {
-                    break;
-                }
+                break 'captures Ok(());
             }
         }
+    };
+
+    // Handle errors.
+    if let Err(e) = subst_result {
+        return input_runtime_error(&command.location, context, e.to_string());
     }
 
     // Handle substitution success.
@@ -323,17 +364,6 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
     }
     context.append_elements.clear();
     Ok(())
-}
-
-/// Return the specified command variant or panic.
-// Example: let path = extract_variant!(command, Path);
-macro_rules! extract_variant {
-    ($cmd:expr, $variant:ident) => {
-        match &$cmd.data {
-            CommandData::$variant(inner) => inner,
-            _ => panic!(concat!("Expected ", stringify!($variant), " command data")),
-        }
-    };
 }
 
 /// List the passed pattern space in unambiguous form.
@@ -434,7 +464,7 @@ fn process_file(
             match command.code {
                 '{' => {
                     // Block begin; start processing the enclosed ones.
-                    let body = extract_variant!(command, Block);
+                    let body = extract_variant!(command, BranchTarget);
                     current = body.clone();
                     continue;
                 }
@@ -572,11 +602,7 @@ fn process_file(
                         .push(AppendElement::Path(path.clone()));
                 }
                 's' => {
-                    let subst = match &mut command.data {
-                        CommandData::Substitution(subst) => subst,
-                        _ => panic!("Expected Substitution command data"),
-                    };
-                    substitute(&mut pattern, &mut *subst, context, output)?;
+                    substitute(&mut pattern, &command, context, output)?;
                 }
                 't' if !context.substitution_made => { /* Do nothing. */ }
                 't' => {
@@ -668,6 +694,7 @@ pub fn process_all_files(
         if context.separate {
             context.line_number = 0;
         }
+        context.input_name = path.quote().to_string();
         process_file(&commands, &mut reader, output, context)?;
 
         // Handle any N command remains.

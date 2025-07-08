@@ -8,15 +8,18 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+use crate::error_handling::{ScriptLocation, runtime_error};
 use crate::fast_regex::{Captures, Match, Regex};
 use crate::named_writer::NamedWriter;
+use crate::script_char_provider::ScriptCharProvider;
+use crate::script_line_provider::ScriptLineProvider;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf; // For file descriptors and equivalent
 use std::rc::Rc;
-use uucore::error::{UResult, USimpleError};
+use uucore::error::UResult;
 
 #[derive(Debug, Default, Clone)]
 /// Compilation and processing options provided mostly through the
@@ -38,6 +41,8 @@ pub struct ProcessingContext {
     pub null_data: bool,
 
     // Other context
+    /// Currently processed input file name (not script) in quoted form
+    pub input_name: String,
     /// Current input line number
     pub line_number: usize,
     /// True if this is the last address of a range
@@ -78,13 +83,6 @@ pub enum AppendElement {
 pub struct StringSpace {
     pub content: String,   // Line content without newline
     pub has_newline: bool, // True if \n-terminated
-}
-
-#[derive(Debug, PartialEq)]
-/// The specification of a script: through a string or a file
-pub enum ScriptValue {
-    StringVal(String),
-    PathVal(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,21 +150,21 @@ impl ReplacementTemplate {
     /// Apply the template to the given RE captures.
     /// Example:
     /// let result = regex.replace_all(input, |caps: &Captures| {
-    ///    template.apply_captures(caps) });
+    ///    template.apply_captures(&command, caps) });
     /// Returns an error if a backreference in the template was not matched by the RE.
-    pub fn apply_captures(&self, caps: &Captures) -> UResult<String> {
+    pub fn apply_captures(&self, command: &Command, caps: &Captures) -> UResult<String> {
         let mut result = String::new();
 
         // Invalid group numbers may end here through (unkown at compile time)
         // reused REs.
         if self.max_group_number > caps.len() - 1 {
-            return Err(USimpleError::new(
-                2,
+            return runtime_error(
+                &command.location,
                 format!(
-                    "invalid reference \\{} on `s' command's RHS",
+                    "invalid reference \\{} on command's RHS",
                     self.max_group_number
                 ),
-            ));
+            );
         }
 
         for part in &self.parts {
@@ -285,6 +283,7 @@ pub struct Command {
     pub start_line: Option<usize>,          // Start line number (or None)
     pub data: CommandData,                  // Command-specific data
     pub next: Option<Rc<RefCell<Command>>>, // Pointer to next command
+    pub location: ScriptLocation,           // Command's definition location
 }
 
 impl Default for Command {
@@ -297,6 +296,17 @@ impl Default for Command {
             start_line: None,
             data: CommandData::None,
             next: None,
+            location: ScriptLocation::default(),
+        }
+    }
+}
+
+impl Command {
+    /// Construct with position information from the given providers.
+    pub fn at_position(lines: &ScriptLineProvider, line: &ScriptCharProvider) -> Self {
+        Command {
+            location: ScriptLocation::at_position(lines, line),
+            ..Default::default()
         }
     }
 }
@@ -306,15 +316,14 @@ impl Default for Command {
 /// After parsing, t, b Label elements are converted into BranchTarget ones.
 pub enum CommandData {
     None,
-    Block(Option<Rc<RefCell<Command>>>), // Commands for '{'
-    BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't'
-    Label(Option<String>),               // Label name for 'b', 't', ':'
-    Path(PathBuf),                       // File path for 'r'
-    NamedWriter(Rc<RefCell<NamedWriter>>), // File output for 'w'
-    Number(usize),                       // Number for 'l', 'q', 'Q' (GNU)
-    Substitution(Box<Substitution>),     // Substitute command 's'
-    Text(Cow<'static, str>),             // Text for 'a', 'c', 'i'
-    Transliteration(Box<Transliteration>), // Transliteration command 'y'
+    BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't', '{'
+    Label(Option<String>),                      // Label name for 'b', 't', ':'
+    Path(PathBuf),                              // File path for 'r'
+    NamedWriter(Rc<RefCell<NamedWriter>>),      // File output for 'w'
+    Number(usize),                              // Number for 'l', 'q', 'Q' (GNU)
+    Substitution(Box<Substitution>),            // Substitute command 's'
+    Text(Cow<'static, str>),                    // Text for 'a', 'c', 'i'
+    Transliteration(Box<Transliteration>),      // Transliteration command 'y'
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -353,8 +362,9 @@ mod tests {
         let template = ReplacementTemplate::default();
         let input = &mut IOChunk::from_str("foo");
         let caps = caps_for("foo", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "");
     }
 
@@ -364,8 +374,9 @@ mod tests {
         let template = ReplacementTemplate::new(vec![ReplacementPart::Literal("hello".into())]);
         let input = &mut IOChunk::from_str("abc");
         let caps = caps_for("abc", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "hello");
     }
 
@@ -378,8 +389,9 @@ mod tests {
         ]);
         let input = &mut IOChunk::from_str("foo42");
         let caps = caps_for(r"foo\d+", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "got: foo42");
     }
 
@@ -392,8 +404,9 @@ mod tests {
         ]);
         let input = &mut IOChunk::from_str("foo42");
         let caps = caps_for(r"foo(\d+)", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "number: 42");
     }
 
@@ -408,8 +421,9 @@ mod tests {
         ]);
         let input = &mut IOChunk::from_str("x:123");
         let caps = caps_for(r"(\w+):(\d+)", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps).unwrap();
+        let result = template.apply_captures(&cmd, &caps).unwrap();
         assert_eq!(result, "key: x, value: 123");
     }
 
@@ -424,8 +438,9 @@ mod tests {
         ]);
         let input = &mut IOChunk::from_str("x:123");
         let caps = caps_for(r"(\w+):(\d+)", input);
+        let cmd = Command::default();
 
-        let result = template.apply_captures(&caps);
+        let result = template.apply_captures(&cmd, &caps);
         assert!(result.is_err());
 
         let msg = result.unwrap_err().to_string();
