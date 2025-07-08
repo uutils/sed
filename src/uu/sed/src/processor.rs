@@ -464,7 +464,7 @@ fn process_file(
             match command.code {
                 '{' => {
                     // Block begin; start processing the enclosed ones.
-                    let body = extract_variant!(command, Block);
+                    let body = extract_variant!(command, BranchTarget);
                     current = body.clone();
                     continue;
                 }

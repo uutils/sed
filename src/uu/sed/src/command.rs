@@ -316,15 +316,14 @@ impl Command {
 /// After parsing, t, b Label elements are converted into BranchTarget ones.
 pub enum CommandData {
     None,
-    Block(Option<Rc<RefCell<Command>>>), // Commands for '{'
-    BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't'
-    Label(Option<String>),               // Label name for 'b', 't', ':'
-    Path(PathBuf),                       // File path for 'r'
-    NamedWriter(Rc<RefCell<NamedWriter>>), // File output for 'w'
-    Number(usize),                       // Number for 'l', 'q', 'Q' (GNU)
-    Substitution(Box<Substitution>),     // Substitute command 's'
-    Text(Cow<'static, str>),             // Text for 'a', 'c', 'i'
-    Transliteration(Box<Transliteration>), // Transliteration command 'y'
+    BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't', '{'
+    Label(Option<String>),                      // Label name for 'b', 't', ':'
+    Path(PathBuf),                              // File path for 'r'
+    NamedWriter(Rc<RefCell<NamedWriter>>),      // File output for 'w'
+    Number(usize),                              // Number for 'l', 'q', 'Q' (GNU)
+    Substitution(Box<Substitution>),            // Substitute command 's'
+    Text(Cow<'static, str>),                    // Text for 'a', 'c', 'i'
+    Transliteration(Box<Transliteration>),      // Transliteration command 'y'
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
