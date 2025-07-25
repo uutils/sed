@@ -21,189 +21,35 @@ use crate::script_line_provider::{ScriptLineProvider, ScriptValue};
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::mem;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::LazyLock;
 use terminal_size::{Width, terminal_size};
 use uucore::error::{UResult, USimpleError};
 
 const DEFAULT_OUTPUT_WIDTH: usize = 60;
 
-// A global, immutable map of command properties, initialized on first access
-static CMD_MAP: LazyLock<HashMap<char, CommandSpec>> = LazyLock::new(build_command_map);
-
-// Types of command arguments recognized by the parser
+// Handling required after processing a command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CommandArgs {
-    Empty,         // d D g G h H n N p P x = \0
-    Text,          // a c i
-    NonSelect,     // !
-    BeginGroup,    // {
-    EndGroup,      // }
-    Label,         // b t :
-    Number,        // l q Q (GNU extension)
-    ReadFile,      // r
-    WriteFile,     // w
-    Substitute,    // s
-    Transliterate, // y
+enum CommandHandling {
+    GetNext,  // Get next command and process that: !
+    Return,   // Return from the sequence parser: }
+    Continue, // Continue sequence parsing: all other commands
 }
+
+/// The type of functions that compile individual commands
+type CommandHandler = fn(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    context: &mut ProcessingContext,
+) -> UResult<CommandHandling>;
 
 // Command specification
 #[derive(Debug, Clone, Copy)]
 struct CommandSpec {
-    code: char,        // Command letter used by sed
-    n_addr: usize,     // Number of supported addresses
-    args: CommandArgs, // Type of command arguments
-}
-
-// Build the command specification map (char -> CommandSpec)
-fn build_command_map() -> HashMap<char, CommandSpec> {
-    let formats = [
-        CommandSpec {
-            code: '{',
-            n_addr: 2,
-            args: CommandArgs::BeginGroup,
-        },
-        CommandSpec {
-            code: '}',
-            n_addr: 0,
-            args: CommandArgs::EndGroup,
-        },
-        CommandSpec {
-            code: 'a',
-            n_addr: 1,
-            args: CommandArgs::Text,
-        },
-        CommandSpec {
-            code: 'b',
-            n_addr: 2,
-            args: CommandArgs::Label,
-        },
-        CommandSpec {
-            code: 'c',
-            n_addr: 2,
-            args: CommandArgs::Text,
-        },
-        CommandSpec {
-            code: 'd',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'D',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'g',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'G',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'h',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'H',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'i',
-            n_addr: 1,
-            args: CommandArgs::Text,
-        },
-        CommandSpec {
-            code: 'l',
-            n_addr: 2,
-            args: CommandArgs::Number,
-        },
-        CommandSpec {
-            code: 'n',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'N',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'p',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'P',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'q',
-            n_addr: 1,
-            args: CommandArgs::Number,
-        },
-        CommandSpec {
-            code: 'Q', // GNU extension
-            n_addr: 1,
-            args: CommandArgs::Number,
-        },
-        CommandSpec {
-            code: 'r',
-            n_addr: 1,
-            args: CommandArgs::ReadFile,
-        },
-        CommandSpec {
-            code: 's',
-            n_addr: 2,
-            args: CommandArgs::Substitute,
-        },
-        CommandSpec {
-            code: 't',
-            n_addr: 2,
-            args: CommandArgs::Label,
-        },
-        CommandSpec {
-            code: 'w',
-            n_addr: 2,
-            args: CommandArgs::WriteFile,
-        },
-        CommandSpec {
-            code: 'x',
-            n_addr: 2,
-            args: CommandArgs::Empty,
-        },
-        CommandSpec {
-            code: 'y',
-            n_addr: 2,
-            args: CommandArgs::Transliterate,
-        },
-        CommandSpec {
-            code: '!',
-            n_addr: 2,
-            args: CommandArgs::NonSelect,
-        },
-        CommandSpec {
-            code: ':',
-            n_addr: 0,
-            args: CommandArgs::Label,
-        },
-        CommandSpec {
-            code: '=',
-            n_addr: 1,
-            args: CommandArgs::Empty,
-        },
-    ];
-
-    formats.into_iter().map(|f| (f.code, f)).collect()
+    n_addr: usize,           // Number of supported addresses
+    handler: CommandHandler, // Argument-specific command compilation handler
 }
 
 /// Compile the scripts into an executable data structure.
@@ -402,31 +248,22 @@ fn compile_sequence(
         let mut cmd = Rc::new(RefCell::new(Command::at_position(lines, line)));
         let n_addr = compile_address_range(lines, line, &mut cmd, context)?;
         line.eat_spaces();
-        let mut cmd_spec = get_cmd_spec(lines, line, n_addr)?;
+        let mut cmd_spec = get_verified_cmd_spec(lines, line, n_addr)?;
 
-        // The ! command shall be followed by another one
-        match cmd_spec.args {
-            CommandArgs::NonSelect => {
-                line.advance();
-                line.eat_spaces();
-                cmd.borrow_mut().non_select = true;
-                cmd_spec = get_cmd_spec(lines, line, n_addr)?;
+        // Compile the command according to its specification.
+        let mut cmd_mut = cmd.borrow_mut();
+        cmd_mut.code = line.current();
+        match (cmd_spec.handler)(lines, line, &mut cmd_mut, context)? {
+            CommandHandling::GetNext => {
+                cmd_spec = get_verified_cmd_spec(lines, line, n_addr)?;
+                cmd_mut.code = line.current();
+                (cmd_spec.handler)(lines, line, &mut cmd_mut, context)?;
             }
-            CommandArgs::EndGroup => {
-                if context.parsed_block_nesting == 0 {
-                    return compilation_error(lines, line, "unexpected `}'");
-                }
-                context.parsed_block_nesting -= 1;
-                line.advance();
-                line.eat_spaces();
-                let mut cmd_ref = cmd.borrow_mut();
-                parse_command_ending(lines, line, &mut cmd_ref)?;
-                return Ok(head);
-            }
-            _ => (),
+            CommandHandling::Return => return Ok(head),
+            CommandHandling::Continue => (),
         }
+        drop(cmd_mut);
 
-        compile_command(lines, line, &mut cmd, cmd_spec, context)?;
         if let Some(ref t) = tail {
             // there's already a tail: link it
             t.borrow_mut().next = Some(cmd.clone());
@@ -832,12 +669,13 @@ pub fn compile_replacement(
     }
 }
 
+// Handles s
 fn compile_subst_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    context: &ProcessingContext,
-) -> UResult<()> {
+    context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
     line.advance(); // move past 's'
 
     let delimiter = line.current();
@@ -886,14 +724,17 @@ fn compile_subst_command(
 
     cmd.data = CommandData::Substitution(subst);
 
-    parse_command_ending(lines, line, cmd)
+    parse_command_ending(lines, line, cmd)?;
+    Ok(CommandHandling::Continue)
 }
 
+// Handles y
 fn compile_trans_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-) -> UResult<()> {
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
     line.advance(); // move past 'y'
 
     let delimiter = line.current();
@@ -919,7 +760,8 @@ fn compile_trans_command(
     cmd.data = CommandData::Transliteration(transliteration);
 
     line.advance(); // move past last delimiter
-    parse_command_ending(lines, line, cmd)
+    parse_command_ending(lines, line, cmd)?;
+    Ok(CommandHandling::Continue)
 }
 
 /// Parse the substitution command's optional flags
@@ -1016,24 +858,100 @@ pub fn compile_subst_flags(
     Ok(())
 }
 
+// Handles }
+fn compile_end_group_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    if context.parsed_block_nesting == 0 {
+        return compilation_error(lines, line, "unexpected `}'");
+    }
+    context.parsed_block_nesting -= 1;
+    line.advance();
+    line.eat_spaces();
+    parse_command_ending(lines, line, cmd)?;
+    Ok(CommandHandling::Return)
+}
+
+// Handles !
+fn compile_negation_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    line.advance();
+    line.eat_spaces();
+    if cmd.non_select {
+        return compilation_error(lines, line, "negation already applied");
+    }
+    cmd.non_select = true;
+    Ok(CommandHandling::GetNext)
+}
+
 /// Compile a command that doesn't take any arguments
 // Handles d D g G h H l n N p P q x =
 fn compile_empty_command(
-    lines: &ScriptLineProvider,
+    lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-) -> UResult<()> {
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
     line.advance(); // Skip the command character
     line.eat_spaces(); // Skip any trailing whitespace
 
-    parse_command_ending(lines, line, cmd)
+    parse_command_ending(lines, line, cmd)?;
+    Ok(CommandHandling::Continue)
 }
 
-fn compile_label_command(
-    lines: &ScriptLineProvider,
+// Handles r
+fn compile_read_file_command(
+    lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-) -> UResult<()> {
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    let path = read_file_path(lines, line)?;
+    cmd.data = CommandData::Path(path);
+    Ok(CommandHandling::Continue)
+}
+
+// Handles w
+fn compile_write_file_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    let location = ScriptLocation::at_position(lines, line);
+    let path = read_file_path(lines, line)?;
+    cmd.data = CommandData::NamedWriter(NamedWriter::new(path, location)?);
+    Ok(CommandHandling::Continue)
+}
+
+// Handles {
+fn compile_block_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    line.advance(); // move past '{'
+    context.parsed_block_nesting += 1;
+    let block_body = compile_sequence(lines, line, context)?;
+    cmd.data = CommandData::BranchTarget(block_body);
+    Ok(CommandHandling::Continue)
+}
+
+// Handles b, t, :
+fn compile_label_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
     /// Return true if `c` is in the POSIX portable filename character set.
     fn is_portable_filename_char(c: char) -> bool {
         c.is_ascii_alphanumeric()  // A–Z, a–z, 0–9
@@ -1059,7 +977,8 @@ fn compile_label_command(
     }
 
     line.eat_spaces(); // Skip any trailing whitespace
-    parse_command_ending(lines, line, cmd)
+    parse_command_ending(lines, line, cmd)?;
+    Ok(CommandHandling::Continue)
 }
 
 /// Return the width of the command's terminal or a default.
@@ -1071,11 +990,14 @@ fn output_width() -> usize {
     }
 }
 
+/// Compile commands that take a number as an argument.
+// Handles l q Q
 fn compile_number_command(
-    lines: &ScriptLineProvider,
+    lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-) -> UResult<()> {
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
     line.advance(); // Skip the command character
     line.eat_spaces(); // Skip any leading whitespace
 
@@ -1095,14 +1017,18 @@ fn compile_number_command(
     }
 
     line.eat_spaces(); // Skip any trailing whitespace
-    parse_command_ending(lines, line, cmd)
+    parse_command_ending(lines, line, cmd)?;
+    Ok(CommandHandling::Continue)
 }
 
+/// Compile commands that take text as an argument.
+// Handles a, c, i
 fn compile_text_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-) -> UResult<()> {
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
     line.advance(); // Skip the command character.
 
     line.eat_spaces(); // Skip any leading whitespace.
@@ -1140,87 +1066,22 @@ fn compile_text_command(
         }
     }
     cmd.data = CommandData::Text(Cow::Owned(text));
-    Ok(())
-}
-
-// Compile the specified command
-fn compile_command(
-    lines: &mut ScriptLineProvider,
-    line: &mut ScriptCharProvider,
-    cmd: &mut Rc<RefCell<Command>>,
-    cmd_spec: &'static CommandSpec,
-    context: &mut ProcessingContext,
-) -> UResult<()> {
-    let mut cmd = cmd.borrow_mut();
-    cmd.code = line.current();
-
-    match cmd_spec.args {
-        CommandArgs::BeginGroup => {
-            // {
-            line.advance(); // move past '{'
-            context.parsed_block_nesting += 1;
-            let block_body = compile_sequence(lines, line, context)?;
-            cmd.data = CommandData::BranchTarget(block_body);
-        }
-        CommandArgs::EndGroup => { // }
-            // Implemented at a higher level.
-        }
-        CommandArgs::Empty => {
-            // d D g G h H l n N p P q x =
-            return compile_empty_command(lines, line, &mut cmd);
-        }
-        CommandArgs::Label => {
-            // b t :
-            compile_label_command(lines, line, &mut cmd)?;
-        }
-        CommandArgs::NonSelect => { // !
-            // Implemented at a higher level.
-        }
-        CommandArgs::Number => {
-            // l q Q
-            compile_number_command(lines, line, &mut cmd)?;
-        }
-        CommandArgs::Substitute => {
-            // s
-            return compile_subst_command(lines, line, &mut cmd, context);
-        }
-        CommandArgs::Transliterate => {
-            // y
-            return compile_trans_command(lines, line, &mut cmd);
-        }
-        CommandArgs::Text => {
-            // a c i
-            compile_text_command(lines, line, &mut cmd)?;
-        }
-        CommandArgs::ReadFile => {
-            // r
-            let path = read_file_path(lines, line)?;
-            cmd.data = CommandData::Path(path);
-        }
-        CommandArgs::WriteFile => {
-            // w
-            let location = ScriptLocation::at_position(lines, line);
-            let path = read_file_path(lines, line)?;
-            cmd.data = CommandData::NamedWriter(NamedWriter::new(path, location)?);
-        }
-    }
-
-    Ok(())
+    Ok(CommandHandling::Continue)
 }
 
 // Return the specification for the command letter at the current line position
 // checking for diverse errors.
-fn get_cmd_spec(
+fn get_verified_cmd_spec(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
     n_addr: usize,
-) -> UResult<&'static CommandSpec> {
+) -> UResult<CommandSpec> {
     if line.eol() {
         return compilation_error(lines, line, "command expected");
     }
 
     let ch = line.current();
-    let opt_cmd_spec = lookup_command(ch);
+    let opt_cmd_spec = get_cmd_spec(ch);
 
     if opt_cmd_spec.is_none() {
         return compilation_error(lines, line, format!("invalid command code `{ch}'"));
@@ -1241,9 +1102,72 @@ fn get_cmd_spec(
     Ok(cmd_spec)
 }
 
-// Look up a command format by its command code.
-fn lookup_command(cmd: char) -> Option<&'static CommandSpec> {
-    CMD_MAP.get(&cmd)
+// Look up a command addresses and handler by its command code.
+fn get_cmd_spec(cmd_code: char) -> Option<CommandSpec> {
+    match cmd_code {
+        '!' => Some(CommandSpec {
+            n_addr: 2,
+            handler: compile_negation_command,
+        }),
+        '=' => Some(CommandSpec {
+            n_addr: 1,
+            handler: compile_empty_command,
+        }),
+        ':' => Some(CommandSpec {
+            n_addr: 0,
+            handler: compile_label_command,
+        }),
+        '{' => Some(CommandSpec {
+            n_addr: 2,
+            handler: compile_block_command,
+        }),
+        '}' => Some(CommandSpec {
+            n_addr: 0,
+            handler: compile_end_group_command,
+        }),
+        'a' | 'i' => Some(CommandSpec {
+            n_addr: 1,
+            handler: compile_text_command,
+        }),
+        'b' | 't' => Some(CommandSpec {
+            n_addr: 2,
+            handler: compile_label_command,
+        }),
+        'c' => Some(CommandSpec {
+            n_addr: 2,
+            handler: compile_text_command,
+        }),
+        'd' | 'D' | 'g' | 'G' | 'h' | 'H' | 'n' | 'N' | 'p' | 'P' | 'x' => Some(CommandSpec {
+            n_addr: 2,
+            handler: compile_empty_command,
+        }),
+        'l' => Some(CommandSpec {
+            n_addr: 2,
+            handler: compile_number_command,
+        }),
+        // Q is a GNU extension
+        'q' | 'Q' => Some(CommandSpec {
+            n_addr: 1,
+            handler: compile_number_command,
+        }),
+        'r' => Some(CommandSpec {
+            n_addr: 1,
+            handler: compile_read_file_command,
+        }),
+        's' => Some(CommandSpec {
+            n_addr: 2,
+            handler: compile_subst_command,
+        }),
+        'w' => Some(CommandSpec {
+            n_addr: 2,
+            handler: compile_write_file_command,
+        }),
+        'y' => Some(CommandSpec {
+            n_addr: 2,
+            handler: compile_trans_command,
+        }),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1275,80 +1199,34 @@ mod tests {
         ProcessingContext::default()
     }
 
-    // lookup_command
+    // get_cmd_spec
     #[test]
     fn test_lookup_empty_command() {
-        let cmd = lookup_command('d').unwrap();
+        let cmd = get_cmd_spec('d').unwrap();
         assert_eq!(cmd.n_addr, 2);
-        assert_eq!(cmd.args, CommandArgs::Empty);
     }
 
     #[test]
     fn test_lookup_text_command() {
-        let cmd = lookup_command('a').unwrap();
+        let cmd = get_cmd_spec('a').unwrap();
         assert_eq!(cmd.n_addr, 1);
-        assert_eq!(cmd.args, CommandArgs::Text);
     }
 
     #[test]
     fn test_lookup_nonselect_command() {
-        let cmd = lookup_command('!').unwrap();
+        let cmd = get_cmd_spec('!').unwrap();
         assert_eq!(cmd.n_addr, 2);
-        assert_eq!(cmd.args, CommandArgs::NonSelect);
-    }
-
-    #[test]
-    fn test_lookup_group_command() {
-        let cmd = lookup_command('{').unwrap();
-        assert_eq!(cmd.n_addr, 2);
-        assert_eq!(cmd.args, CommandArgs::BeginGroup);
     }
 
     #[test]
     fn test_lookup_endgroup_command() {
-        let cmd = lookup_command('}').unwrap();
+        let cmd = get_cmd_spec('}').unwrap();
         assert_eq!(cmd.n_addr, 0);
-        assert_eq!(cmd.args, CommandArgs::EndGroup);
-    }
-
-    #[test]
-    fn test_lookup_label_command() {
-        let cmd = lookup_command(':').unwrap();
-        assert_eq!(cmd.n_addr, 0);
-        assert_eq!(cmd.args, CommandArgs::Label);
-    }
-
-    #[test]
-    fn test_lookup_readfile_command() {
-        let cmd = lookup_command('r').unwrap();
-        assert_eq!(cmd.n_addr, 1);
-        assert_eq!(cmd.args, CommandArgs::ReadFile);
-    }
-
-    #[test]
-    fn test_lookup_writefile_command() {
-        let cmd = lookup_command('w').unwrap();
-        assert_eq!(cmd.n_addr, 2);
-        assert_eq!(cmd.args, CommandArgs::WriteFile);
-    }
-
-    #[test]
-    fn test_lookup_substitute_command() {
-        let cmd = lookup_command('s').unwrap();
-        assert_eq!(cmd.n_addr, 2);
-        assert_eq!(cmd.args, CommandArgs::Substitute);
-    }
-
-    #[test]
-    fn test_lookup_translate_command() {
-        let cmd = lookup_command('y').unwrap();
-        assert_eq!(cmd.n_addr, 2);
-        assert_eq!(cmd.args, CommandArgs::Transliterate);
     }
 
     #[test]
     fn test_lookup_invalid_command() {
-        let result = lookup_command('Z');
+        let result = get_cmd_spec('Z');
         assert!(result.is_none());
     }
 
@@ -1395,12 +1273,12 @@ mod tests {
         assert_eq!(msg, "input.txt:3:1: error: invalid command 'x'");
     }
 
-    // get_cmd_spec
+    // get_verified_cmd_spec
     #[test]
     fn test_missing_command_character() {
         let lines = ScriptLineProvider::with_active_state("test.sed", 1);
         let line = char_provider_from("");
-        let result = get_cmd_spec(&lines, &line, 0);
+        let result = get_verified_cmd_spec(&lines, &line, 0);
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -1411,7 +1289,7 @@ mod tests {
     fn test_invalid_command_character() {
         let lines = ScriptLineProvider::with_active_state("script.sed", 2);
         let line = char_provider_from("@");
-        let result = get_cmd_spec(&lines, &line, 0);
+        let result = get_verified_cmd_spec(&lines, &line, 0);
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -1422,7 +1300,7 @@ mod tests {
     fn test_too_many_addresses() {
         let lines = ScriptLineProvider::with_active_state("input.sed", 3);
         let line = char_provider_from("q"); // q takes one address
-        let result = get_cmd_spec(&lines, &line, 2);
+        let result = get_verified_cmd_spec(&lines, &line, 2);
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -1435,11 +1313,11 @@ mod tests {
     fn test_valid_command_spec() {
         let lines = ScriptLineProvider::with_active_state("input.sed", 4);
         let line = char_provider_from("a"); // valid command
-        let result = get_cmd_spec(&lines, &line, 1);
+        let result = get_verified_cmd_spec(&lines, &line, 1);
 
         assert!(result.is_ok());
         let spec = result.unwrap();
-        assert_eq!(spec.code, 'a');
+        assert_eq!(spec.n_addr, 1);
     }
 
     // parse_number
@@ -2093,8 +1971,10 @@ mod tests {
     fn test_compile_subst_invalid_delimiter_backslash() {
         let (mut lines, mut chars) = make_providers("s\\foo\\bar\\");
         let mut cmd = Command::default();
+        let mut context = ctx();
 
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
+        let err =
+            compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
         assert!(
             err.to_string()
                 .contains("substitute pattern cannot be delimited")
@@ -2105,8 +1985,10 @@ mod tests {
     fn test_compile_subst_extra_characters_at_end() {
         let (mut lines, mut chars) = make_providers("s/foo/bar/x");
         let mut cmd = Command::default();
+        let mut context = ctx();
 
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
+        let err =
+            compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
 
@@ -2114,8 +1996,9 @@ mod tests {
     fn test_compile_subst_semicolon_indicates_continue() {
         let (mut lines, mut chars) = make_providers("s/foo/bar/;");
         let mut cmd = Command::default();
+        let mut context = ctx();
 
-        compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap();
+        compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
 
         if let CommandData::Substitution(subst) = &cmd.data {
             assert_eq!(subst.replacement.parts.len(), 1);
@@ -2128,8 +2011,9 @@ mod tests {
     fn test_compile_subst_sets_command_data() {
         let (mut lines, mut chars) = make_providers("s/foo/bar/");
         let mut cmd = Command::default();
+        let mut context = ctx();
 
-        compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap();
+        compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Substitution(subst) => {
                 assert_eq!(subst.replacement.parts.len(), 1);
@@ -2145,8 +2029,10 @@ mod tests {
     fn test_compile_subst_invalid_group_reference() {
         let (mut lines, mut chars) = make_providers(r"s/f(o)o/\2/");
         let mut cmd = Command::default();
+        let mut context = ctx();
 
-        let err = compile_subst_command(&mut lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
+        let err =
+            compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
         assert!(err.to_string().contains("invalid reference \\2"));
     }
 
@@ -2337,8 +2223,9 @@ mod tests {
     fn test_compile_label_command() {
         let (mut lines, mut chars) = make_providers(": foo");
         let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
 
-        compile_label_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        compile_label_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Label(label) => {
                 let name = label.clone().unwrap();
@@ -2352,9 +2239,11 @@ mod tests {
     fn test_compile_missing_label_command() {
         let (mut lines, mut chars) = make_providers(": ;");
         let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
 
         cmd.code = ':';
-        let err = compile_label_command(&mut lines, &mut chars, &mut cmd).unwrap_err();
+        let err =
+            compile_label_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
         assert!(err.to_string().contains("empty label"));
     }
 
@@ -2362,9 +2251,10 @@ mod tests {
     fn test_compile_empty_label_command() {
         let (mut lines, mut chars) = make_providers("b ;");
         let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
 
         cmd.code = 'b';
-        compile_label_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        compile_label_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Label(label) => {
                 assert!(label.is_none());
@@ -2560,8 +2450,9 @@ mod tests {
         let mut chars = make_char_provider("a\\");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
 
-        compile_text_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
                 assert_eq!(text, "line1\n");
@@ -2575,8 +2466,9 @@ mod tests {
         let mut chars = make_char_provider("a \\ ");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
 
-        compile_text_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
                 assert_eq!(text, "line1\n");
@@ -2590,8 +2482,9 @@ mod tests {
         let mut chars = make_char_provider("a\\");
         let mut lines = make_line_provider(&["line1\\", "line2"]);
         let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
 
-        compile_text_command(&mut lines, &mut chars, &mut cmd).unwrap();
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
                 assert_eq!(text, "line1\nline2\n");
@@ -2605,8 +2498,9 @@ mod tests {
         let mut chars = make_char_provider("a");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
 
-        let result = compile_text_command(&mut lines, &mut chars, &mut cmd);
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("expects \\ followed by text"));
@@ -2617,8 +2511,9 @@ mod tests {
         let mut chars = make_char_provider("a \\ foo");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
 
-        let result = compile_text_command(&mut lines, &mut chars, &mut cmd);
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("extra characters after \\"));
