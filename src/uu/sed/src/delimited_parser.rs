@@ -91,6 +91,10 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
             line.advance();
             Some('\x07')
         }
+        'b' => {
+            line.advance();
+            Some('\x08')
+        }
         'f' => {
             line.advance();
             Some('\x0c')
