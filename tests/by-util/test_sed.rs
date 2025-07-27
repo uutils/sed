@@ -129,6 +129,23 @@ macro_rules! check_output {
     };
 }
 
+// Run ucmd twice to test POSIX conformance: Once where posix is "--posix"
+// and once where it has the dummy value "--follow-symlinks".
+// This shall be used to test commands that behave differently under POSIX.
+macro_rules! check_output_posix {
+    ($name:ident, [$($args:expr),* $(,)?]) => {
+        #[test]
+        fn $name() {
+            for posix in ["--posix", "--follow-symlinks"] {
+                new_ucmd!()
+                    .args(&[posix $(, $args)*]) // prepend posix, then add args
+                    .succeeds()
+                    .stdout_is_fixture(&format!("output/{}", stringify!($name)));
+            }
+        }
+    };
+}
+
 ////////////////////////////////////////////////////////////
 // Individual command tests
 
@@ -496,7 +513,10 @@ tb"#,
 
 ////////////////////////////////////////////////////////////
 // Text: a, c, i
-check_output!(
+
+// Check both POSIX and GNU parsing routines.
+
+check_output_posix!(
     text_insert_quit,
     [
         "-e",
@@ -509,7 +529,7 @@ hello
     ]
 );
 
-check_output!(
+check_output_posix!(
     text_insert_between_subst,
     [
         "-n",
@@ -525,7 +545,7 @@ s/^/after_i/p
     ]
 );
 
-check_output!(
+check_output_posix!(
     text_append_between_subst,
     [
         "-n",
@@ -542,7 +562,7 @@ s/^/after_a/p
     ]
 );
 
-check_output!(
+check_output_posix!(
     text_append_before_next,
     [
         "-n",
@@ -559,7 +579,7 @@ s/$/$/p
     ]
 );
 
-check_output!(
+check_output_posix!(
     text_change_global,
     [
         "-n",
@@ -572,10 +592,9 @@ hello
     ]
 );
 
-check_output!(
+check_output_posix!(
     text_change_line,
     [
-        "-n",
         "-e",
         r#"
 8c\
@@ -585,10 +604,9 @@ hello
     ]
 );
 
-check_output!(
+check_output_posix!(
     text_change_range,
     [
-        "-n",
         "-e",
         r#"
 3,14c\
@@ -598,11 +616,9 @@ hello
     ]
 );
 
-// SunOS and GNU sed behave differently.   We follow POSIX.
-check_output!(
+check_output_posix!(
     text_change_reverse_range,
     [
-        "-n",
         "-e",
         r#"
 8,3c\
@@ -615,7 +631,7 @@ hello
 check_output!(text_delete, ["d", LINES1]);
 
 // Check that the pattern space is deleted.
-check_output!(
+check_output_posix!(
     text_change_print,
     [
         "-n",
@@ -627,6 +643,15 @@ p
 "#,
         LINES1
     ]
+);
+
+// GNU syntax extensions:
+// Text can follow the initial \.
+// Character escapes are supported.
+// Invalid escapes result in the escaped character.
+check_output!(
+    text_insert_gnu,
+    ["-e", "i\\>\\h\\elll\x08o\\nto\\\nall\\a", LINES1]
 );
 
 ////////////////////////////////////////////////////////////
