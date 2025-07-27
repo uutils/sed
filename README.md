@@ -49,6 +49,9 @@ cargo run --release
 * In addition to `\n`, other escape sequences (octal, hex, C) are supported
   in the strings of the `y` command.
   Under POSIX these yield undefined behavior.
+* The `a`, `c`, and `i` commands do not require an initial backslash,
+  allow text to appear on the same line, and support escape sequences
+  in the specified text.
 * The substitution command replacement group `\0` is a synonym for &.
 * A `Q` command (optionally followed by an exit code) quits immediately.
 * The `q` command can be optionally followed by an exit code.

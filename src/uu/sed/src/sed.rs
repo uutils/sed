@@ -92,7 +92,7 @@ pub fn uu_app() -> Command {
             arg!(-l --length <NUM> "Specify the 'l' command line-wrap length.")
                 .value_parser(clap::value_parser!(u32)),
             arg!(-n --quiet "Suppress automatic printing of pattern space.").aliases(["silent"]),
-            arg!(--posix "Disable all POSIX extensions."),
+            arg!(--posix "Disable non-POSIX extensions."),
             arg!(-s --separate "Consider files as separate rather than as a long stream."),
             arg!(--sandbox "Operate in a sandbox by disabling e/r/w commands."),
             arg!(-u --unbuffered "Load minimal input data and flush output buffers regularly."),

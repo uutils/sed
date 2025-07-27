@@ -1023,15 +1023,101 @@ fn compile_number_command(
 
 /// Compile commands that take text as an argument.
 // Handles a, c, i
+// According to POSIX, these commands expect \ followed by text.
+// As a GNU extension the initial \ can be ommitted, and from then on
+// character escapes are honored.
 fn compile_text_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    line.advance(); // Skip the command character.
+
+    line.eat_spaces(); // Skip any leading whitespace.
+    if context.posix {
+        compile_text_command_posix(lines, line, cmd, context)
+    } else {
+        compile_text_command_gnu(lines, line, cmd, context)
+    }
+}
+
+/// Compile commands that take text as an argument (GNU syntax).
+// Handles a, c, i; after the command and initial whitespace have been consumed.
+// According to POSIX, these commands expect \ followed by text.
+// As a GNU extension the initial \ can be ommitted, and from then on
+// character escapes are honored.
+fn compile_text_command_gnu(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
     _context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
-    line.advance(); // Skip the command character.
+    // True after a \ at the end of a line
+    let mut escaped_newline = false;
 
-    line.eat_spaces(); // Skip any leading whitespace.
+    // Skip optional \.
+    if !line.eol() && line.current() == '\\' {
+        line.advance();
+        escaped_newline = line.eol();
+    }
+
+    // Gather replacement text.  Stop on a non-escaped newline.
+    let mut text = String::new();
+    'text_content: loop {
+        if escaped_newline {
+            match lines.next_line()? {
+                None => {
+                    break 'text_content;
+                }
+                Some(line_string) => {
+                    *line = ScriptCharProvider::new(&line_string);
+                }
+            }
+            escaped_newline = false;
+        }
+
+        // Non-escaped newline
+        if line.eol() {
+            text.push('\n');
+            break 'text_content;
+        }
+
+        if line.current() == '\\' {
+            line.advance();
+
+            if line.eol() {
+                escaped_newline = true;
+                text.push('\n');
+                continue 'text_content;
+            }
+
+            match parse_char_escape(line) {
+                Some(decoded) => text.push(decoded),
+                None => {
+                    // Invalid escapes result in the escaped character.
+                    text.push(line.current());
+                    line.advance();
+                }
+            }
+        } else {
+            text.push(line.current());
+            line.advance();
+        }
+    }
+    cmd.data = CommandData::Text(Cow::Owned(text));
+    Ok(CommandHandling::Continue)
+}
+
+/// Compile commands that take text as an argument (POSIX syntax).
+// Handles a, c, i; after the command and initial whitespace have been consumed.
+// According to POSIX, these commands expect \ followed by text.
+fn compile_text_command_posix(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
     if line.eol() || line.current() != '\\' {
         return compilation_error(
             lines,
@@ -2462,8 +2548,25 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_spaces_single_line_text_command() {
+    fn test_compile_text_command_posix_spaces_single_line() {
         let mut chars = make_char_provider("a \\ ");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
+        context.posix = true;
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "line1\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_text_command_gnu_optional_backslash() {
+        let mut chars = make_char_provider("athere");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
         let mut context = ProcessingContext::default();
@@ -2471,7 +2574,87 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, "line1\n");
+                assert_eq!(text, "there\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_text_command_gnu_optional_backslash_spaces() {
+        let mut chars = make_char_provider("a \t there");
+        let mut lines = make_line_provider(&["line1", "line2"]);
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "there\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_text_command_gnu_optional_backslash_eol_eof() {
+        let mut chars = make_char_provider("a");
+        let mut lines = make_line_provider(&[]);
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_text_command_gnu_optional_backslash_escape_eof() {
+        let mut chars = make_char_provider("a\\");
+        let mut lines = make_line_provider(&[]);
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_text_command_gnu_no_first_escape() {
+        let mut chars = make_char_provider("a\\tom");
+        let mut lines = make_line_provider(&[]);
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, "tom\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_text_command_gnu_char_escapes() {
+        let mut chars = make_char_provider("i\\>\\h\\elll\\bo\\nto\\");
+        let mut lines = make_line_provider(&["all\\a", ""]);
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text, ">helll\x08o\nto\nall\x07\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2494,11 +2677,12 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_text_command_without_backslash() {
+    fn test_compile_text_command_posix_without_backslash() {
         let mut chars = make_char_provider("a");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
         let mut context = ProcessingContext::default();
+        context.posix = true;
 
         let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
         assert!(result.is_err());
@@ -2507,11 +2691,12 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_text_command_with_trailing_chars() {
+    fn test_compile_text_command_posix_with_trailing_chars() {
         let mut chars = make_char_provider("a \\ foo");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
         let mut context = ProcessingContext::default();
+        context.posix = true;
 
         let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
         assert!(result.is_err());
