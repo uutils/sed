@@ -595,7 +595,6 @@ hello
 check_output_posix!(
     text_change_line,
     [
-        "-n",
         "-e",
         r#"
 8c\
@@ -608,7 +607,6 @@ hello
 check_output_posix!(
     text_change_range,
     [
-        "-n",
         "-e",
         r#"
 3,14c\
