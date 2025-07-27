@@ -618,12 +618,9 @@ hello
     ]
 );
 
-// SunOS and GNU sed behave differently. We follow POSIX.
-// TODO: follow GNU and revert under --posix.
 check_output_posix!(
     text_change_reverse_range,
     [
-        "-n",
         "-e",
         r#"
 8,3c\
