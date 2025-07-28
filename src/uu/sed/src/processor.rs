@@ -355,7 +355,7 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
     for elem in &context.append_elements {
         match elem {
             AppendElement::Text(text) => {
-                output.write_str(text.clone())?;
+                output.write_str(&**text)?;
             }
             AppendElement::Path(path) => {
                 output.copy_file(path)?;
@@ -476,7 +476,7 @@ fn process_file(
                     let text = extract_variant!(command, Text);
                     context
                         .append_elements
-                        .push(AppendElement::Text(text.clone().into_owned()));
+                        .push(AppendElement::Text(text.clone()));
                 }
                 'b' => {
                     // Branch to the specified label or end if none is given.

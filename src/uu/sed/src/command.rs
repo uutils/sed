@@ -14,7 +14,6 @@ use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::ScriptLineProvider;
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf; // For file descriptors and equivalent
@@ -74,7 +73,7 @@ pub struct ProcessingContext {
 #[derive(Clone, Debug)]
 /// Elements that shall be appended at the end of each command processing cycle
 pub enum AppendElement {
-    Text(String),  // The specified text string
+    Text(Rc<str>), // The specified text string
     Path(PathBuf), // The contents of the specified file path
 }
 
@@ -322,7 +321,7 @@ pub enum CommandData {
     NamedWriter(Rc<RefCell<NamedWriter>>),      // File output for 'w'
     Number(usize),                              // Number for 'l', 'q', 'Q' (GNU)
     Substitution(Box<Substitution>),            // Substitute command 's'
-    Text(Cow<'static, str>),                    // Text for 'a', 'c', 'i'
+    Text(Rc<str>),                              // Text for 'a', 'c', 'i'
     Transliteration(Box<Transliteration>),      // Transliteration command 'y'
 }
 
