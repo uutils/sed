@@ -1167,13 +1167,8 @@ fn get_verified_cmd_spec(
     }
 
     let ch = line.current();
-    let opt_cmd_spec = get_cmd_spec(ch);
+    let cmd_spec = get_cmd_spec(lines, line, ch)?;
 
-    if opt_cmd_spec.is_none() {
-        return compilation_error(lines, line, format!("invalid command code `{ch}'"));
-    }
-
-    let cmd_spec = opt_cmd_spec.unwrap();
     if n_addr > cmd_spec.n_addr {
         return compilation_error(
             lines,
@@ -1189,70 +1184,74 @@ fn get_verified_cmd_spec(
 }
 
 // Look up a command addresses and handler by its command code.
-fn get_cmd_spec(cmd_code: char) -> Option<CommandSpec> {
+fn get_cmd_spec(
+    lines: &ScriptLineProvider,
+    line: &ScriptCharProvider,
+    cmd_code: char,
+) -> UResult<CommandSpec> {
     match cmd_code {
-        '!' => Some(CommandSpec {
+        '!' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_negation_command,
         }),
-        '=' => Some(CommandSpec {
+        '=' => Ok(CommandSpec {
             n_addr: 1,
             handler: compile_empty_command,
         }),
-        ':' => Some(CommandSpec {
+        ':' => Ok(CommandSpec {
             n_addr: 0,
             handler: compile_label_command,
         }),
-        '{' => Some(CommandSpec {
+        '{' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_block_command,
         }),
-        '}' => Some(CommandSpec {
+        '}' => Ok(CommandSpec {
             n_addr: 0,
             handler: compile_end_group_command,
         }),
-        'a' | 'i' => Some(CommandSpec {
+        'a' | 'i' => Ok(CommandSpec {
             n_addr: 1,
             handler: compile_text_command,
         }),
-        'b' | 't' => Some(CommandSpec {
+        'b' | 't' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_label_command,
         }),
-        'c' => Some(CommandSpec {
+        'c' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_text_command,
         }),
-        'd' | 'D' | 'g' | 'G' | 'h' | 'H' | 'n' | 'N' | 'p' | 'P' | 'x' => Some(CommandSpec {
+        'd' | 'D' | 'g' | 'G' | 'h' | 'H' | 'n' | 'N' | 'p' | 'P' | 'x' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_empty_command,
         }),
-        'l' => Some(CommandSpec {
+        'l' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_number_command,
         }),
         // Q is a GNU extension
-        'q' | 'Q' => Some(CommandSpec {
+        'q' | 'Q' => Ok(CommandSpec {
             n_addr: 1,
             handler: compile_number_command,
         }),
-        'r' => Some(CommandSpec {
+        'r' => Ok(CommandSpec {
             n_addr: 1,
             handler: compile_read_file_command,
         }),
-        's' => Some(CommandSpec {
+        's' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_subst_command,
         }),
-        'w' => Some(CommandSpec {
+        'w' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_write_file_command,
         }),
-        'y' => Some(CommandSpec {
+        'y' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_trans_command,
         }),
-        _ => None,
+        _ => compilation_error(lines, line, format!("invalid command code `{cmd_code}'")),
     }
 }
 
@@ -1288,32 +1287,37 @@ mod tests {
     // get_cmd_spec
     #[test]
     fn test_lookup_empty_command() {
-        let cmd = get_cmd_spec('d').unwrap();
+        let (lines, line) = make_providers("123abc");
+        let cmd = get_cmd_spec(&lines, &line, 'd').unwrap();
         assert_eq!(cmd.n_addr, 2);
     }
 
     #[test]
     fn test_lookup_text_command() {
-        let cmd = get_cmd_spec('a').unwrap();
+        let (lines, line) = make_providers("123abc");
+        let cmd = get_cmd_spec(&lines, &line, 'a').unwrap();
         assert_eq!(cmd.n_addr, 1);
     }
 
     #[test]
     fn test_lookup_nonselect_command() {
-        let cmd = get_cmd_spec('!').unwrap();
+        let (lines, line) = make_providers("123abc");
+        let cmd = get_cmd_spec(&lines, &line, '!').unwrap();
         assert_eq!(cmd.n_addr, 2);
     }
 
     #[test]
     fn test_lookup_endgroup_command() {
-        let cmd = get_cmd_spec('}').unwrap();
+        let (lines, line) = make_providers("123abc");
+        let cmd = get_cmd_spec(&lines, &line, '}').unwrap();
         assert_eq!(cmd.n_addr, 0);
     }
 
     #[test]
     fn test_lookup_invalid_command() {
-        let result = get_cmd_spec('Z');
-        assert!(result.is_none());
+        let (lines, line) = make_providers("123abc");
+        let result = get_cmd_spec(&lines, &line, 'Z');
+        assert!(result.is_err());
     }
 
     // Utility to create a ScriptCharProvider from a &str
