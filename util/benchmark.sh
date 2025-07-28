@@ -81,6 +81,9 @@ bench_run access-log-translit "$PROG y/0123456789/9876543210/ access.log"
 # Multiple substitutions
 bench_run access-log-complex-sub "$PROG -f $SCRIPTS/http-log-redact.sed access.log"
 
+# Text append
+bench_run access-log-append "$PROG athe-line-ends-here access.log"
+
 rm access.log
 
 # Remove \r

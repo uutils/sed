@@ -19,11 +19,11 @@ use crate::named_writer::NamedWriter;
 use crate::script_char_provider::ScriptCharProvider;
 use crate::script_line_provider::{ScriptLineProvider, ScriptValue};
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::mem;
 use std::path::PathBuf;
 use std::rc::Rc;
+
 use terminal_size::{Width, terminal_size};
 use uucore::error::{UResult, USimpleError};
 
@@ -1105,7 +1105,7 @@ fn compile_text_command_gnu(
             line.advance();
         }
     }
-    cmd.data = CommandData::Text(Cow::Owned(text));
+    cmd.data = CommandData::Text(Rc::from(text));
     Ok(CommandHandling::Continue)
 }
 
@@ -1151,7 +1151,7 @@ fn compile_text_command_posix(
             break;
         }
     }
-    cmd.data = CommandData::Text(Cow::Owned(text));
+    cmd.data = CommandData::Text(Rc::from(text));
     Ok(CommandHandling::Continue)
 }
 
@@ -2545,7 +2545,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, "line1\n");
+                assert_eq!(text.to_string(), "line1\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2562,7 +2562,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, "line1\n");
+                assert_eq!(text.to_string(), "line1\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2578,7 +2578,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, "there\n");
+                assert_eq!(text.to_string(), "there\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2594,7 +2594,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, "there\n");
+                assert_eq!(text.to_string(), "there\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2610,7 +2610,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, "\n");
+                assert_eq!(text.to_string(), "\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2626,7 +2626,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, "");
+                assert_eq!(text.to_string(), "");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2642,7 +2642,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, "tom\n");
+                assert_eq!(text.to_string(), "tom\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2658,7 +2658,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, ">helll\x08o\nto\nall\x07\n");
+                assert_eq!(text.to_string(), ">helll\x08o\nto\nall\x07\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2674,7 +2674,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text, "line1\nline2\n");
+                assert_eq!(text.to_string(), "line1\nline2\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
