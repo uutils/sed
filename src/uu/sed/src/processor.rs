@@ -660,14 +660,15 @@ fn process_file(
     }
 
     // Handle any N command remains.
-    if context.separate && !context.quiet {
-        if let Some(action) = context.input_action.take() {
-            let mut pending = action.prepend;
-            pending.push('\n');
-            output.write_str(pending)?;
-            if context.unbuffered {
-                output.flush()?;
-            }
+    if context.separate
+        && !context.quiet
+        && let Some(action) = context.input_action.take()
+    {
+        let mut pending = action.prepend;
+        pending.push('\n');
+        output.write_str(pending)?;
+        if context.unbuffered {
+            output.flush()?;
         }
     }
 
@@ -698,12 +699,14 @@ pub fn process_all_files(
         process_file(&commands, &mut reader, output, context)?;
 
         // Handle any N command remains.
-        if context.last_file && !context.separate && !context.quiet {
-            if let Some(action) = context.input_action.take() {
-                let mut pending = action.prepend;
-                pending.push('\n');
-                output.write_str(pending)?;
-            }
+        if context.last_file
+            && !context.separate
+            && !context.quiet
+            && let Some(action) = context.input_action.take()
+        {
+            let mut pending = action.prepend;
+            pending.push('\n');
+            output.write_str(pending)?;
         }
 
         in_place.end()?;
