@@ -407,7 +407,7 @@ impl LineReader {
 
     /// Return the next line, if available and also the availability
     /// of another one, or None at end of file.
-    pub fn get_line(&mut self) -> io::Result<Option<(IOChunk, bool)>> {
+    pub fn get_line(&mut self) -> io::Result<Option<(IOChunk<'_>, bool)>> {
         match self {
             #[cfg(unix)]
             LineReader::MmapInput { cursor, .. } => {
