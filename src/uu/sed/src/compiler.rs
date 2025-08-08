@@ -103,24 +103,24 @@ fn patch_block_endings(head: Option<Rc<RefCell<Command>>>) {
             let splice_target = own_next.clone().or(parent_next.clone());
 
             // If it has a sub-block, recurse and then patch its tail
-            if let CommandData::BranchTarget(Some(ref sub_head)) = cmd.data {
-                if cmd.code == '{' {
-                    // 1) recurse into the sub-chain, passing splice_target
-                    patch_block_endings_to_parent(Some(sub_head.clone()), splice_target.clone());
+            if let CommandData::BranchTarget(Some(ref sub_head)) = cmd.data
+                && cmd.code == '{'
+            {
+                // 1) recurse into the sub-chain, passing splice_target
+                patch_block_endings_to_parent(Some(sub_head.clone()), splice_target.clone());
 
-                    // 2) find the tail of that sub-chain
-                    let mut tail = sub_head.clone();
-                    loop {
-                        let next_in_sub = tail.borrow().next.clone();
-                        match next_in_sub {
-                            Some(n) => tail = n,
-                            None => break,
-                        }
+                // 2) find the tail of that sub-chain
+                let mut tail = sub_head.clone();
+                loop {
+                    let next_in_sub = tail.borrow().next.clone();
+                    match next_in_sub {
+                        Some(n) => tail = n,
+                        None => break,
                     }
-
-                    // 3) splice the tail’s `.next` to splice_target
-                    tail.borrow_mut().next = splice_target.clone();
                 }
+
+                // 3) splice the tail’s `.next` to splice_target
+                tail.borrow_mut().next = splice_target.clone();
             }
 
             // drop the borrow before moving on
@@ -154,13 +154,13 @@ fn populate_label_map(
             _ => None,
         };
 
-        if let Some(label) = maybe_label {
-            if cmd.code == ':' {
-                if context.label_to_command_map.contains_key(&label) {
-                    return semantic_error(&cmd.location, format!("duplicate label `{label}'"));
-                }
-                context.label_to_command_map.insert(label, rc_cmd.clone());
+        if let Some(label) = maybe_label
+            && cmd.code == ':'
+        {
+            if context.label_to_command_map.contains_key(&label) {
+                return semantic_error(&cmd.location, format!("duplicate label `{label}'"));
             }
+            context.label_to_command_map.insert(label, rc_cmd.clone());
         }
 
         cur = cmd.next.clone();
@@ -292,22 +292,23 @@ fn compile_address_range(
     let mut cmd = cmd.borrow_mut();
 
     line.eat_spaces();
-    if !line.eol() && is_address_char(line.current()) {
-        if let Ok(addr1) = compile_address(lines, line, context) {
-            cmd.addr1 = Some(addr1);
-            n_addr += 1;
-        }
+    if !line.eol()
+        && is_address_char(line.current())
+        && let Ok(addr1) = compile_address(lines, line, context)
+    {
+        cmd.addr1 = Some(addr1);
+        n_addr += 1;
     }
 
     line.eat_spaces();
     if n_addr == 1 && !line.eol() && line.current() == ',' {
         line.advance();
         line.eat_spaces();
-        if !line.eol() {
-            if let Ok(addr2) = compile_address(lines, line, context) {
-                cmd.addr2 = Some(addr2);
-                n_addr += 1;
-            }
+        if !line.eol()
+            && let Ok(addr2) = compile_address(lines, line, context)
+        {
+            cmd.addr2 = Some(addr2);
+            n_addr += 1;
         }
     }
 
@@ -709,17 +710,17 @@ fn compile_subst_command(
     subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
 
     // Catch invalid group references at compile time, if possible.
-    if let Some(regex) = &subst.regex {
-        if subst.replacement.max_group_number > regex.captures_len() - 1 {
-            return compilation_error(
-                lines,
-                line,
-                format!(
-                    "invalid reference \\{} on `s' command's RHS",
-                    subst.replacement.max_group_number
-                ),
-            );
-        }
+    if let Some(regex) = &subst.regex
+        && subst.replacement.max_group_number > regex.captures_len() - 1
+    {
+        return compilation_error(
+            lines,
+            line,
+            format!(
+                "invalid reference \\{} on `s' command's RHS",
+                subst.replacement.max_group_number
+            ),
+        );
     }
 
     cmd.data = CommandData::Substitution(subst);
