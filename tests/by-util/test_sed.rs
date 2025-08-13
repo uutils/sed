@@ -155,6 +155,12 @@ const LINES2: &str = "input/lines2";
 const NO_NEW_LINE: &str = "input/no-new-line.txt";
 
 ////////////////////////////////////////////////////////////
+// Comments
+check_output!(comment, ["-n", "-e", "4p;# comment", LINES1]);
+check_output!(comment_silent, ["-e", "#n", "-e", "4p", LINES1]);
+check_output!(comment_no_silent, ["-e", "4p;#n comment", LINES1]);
+
+////////////////////////////////////////////////////////////
 // Address ranges: One and two, numeric and pattern
 check_output!(addr_one_line, ["-n", "-e", "4p", LINES1]);
 check_output!(addr_straddle, ["-n", "-e", "20p", LINES1, LINES2]);

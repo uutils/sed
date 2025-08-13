@@ -78,7 +78,6 @@ pub fn compile(
     }
     patch_block_endings(result.clone());
 
-    // TODO: setup append & match structures
     Ok(result)
 }
 
@@ -229,8 +228,25 @@ fn compile_sequence(
 
     loop {
         line.eat_spaces();
+
+        // According to POSIX: "If the first two characters in the script are
+        // "#n", the default output shall be suppressed".
+        if !line.eol()
+            && line.current() == '#'
+            && lines.get_line_number() == 1
+            && line.get_pos() == 0
+        {
+            line.advance();
+            if !line.eol() && line.current() == 'n' {
+                context.quiet = true;
+            }
+            // Ignore rest of line
+            while !line.eol() {
+                line.advance();
+            }
+        }
+
         if line.eol() || line.current() == '#' {
-            // TODO: set context.quiet for StringVal starting with #n
             match lines.next_line()? {
                 None => {
                     return Ok(head);
