@@ -706,10 +706,7 @@ fn compile_subst_command(
 
     let pattern = parse_regex(lines, line)?;
 
-    let mut subst = Box::new(Substitution {
-        line_number: lines.get_line_number(),
-        ..Default::default()
-    });
+    let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line)?;
     compile_subst_flags(lines, line, &mut subst)?;
