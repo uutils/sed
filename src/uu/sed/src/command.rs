@@ -206,13 +206,12 @@ impl ReplacementTemplate {
 #[derive(Debug, Default)]
 /// Substitution command
 pub struct Substitution {
-    pub occurrence: usize, // Which occurrence to substitute
-    pub print_flag: bool,  // True if 'p' flag
-    pub ignore_case: bool, // True if 'I' flag
+    pub regex: Option<Regex>,                         // Regular expression
+    pub replacement: ReplacementTemplate,             // Specified broken-down replacement
+    pub occurrence: usize,                            // Which occurrence to substitute
+    pub print_flag: bool,                             // True if 'p' flag
+    pub ignore_case: bool,                            // True if 'I' flag
     pub write_file: Option<Rc<RefCell<NamedWriter>>>, // Writer to file if 'w' flag is used
-    pub regex: Option<Regex>, // Regular expression
-    pub line_number: usize, // Line number
-    pub replacement: ReplacementTemplate, // Specified broken-down replacement
 }
 
 /// The block of the first and most common Unicode characters:
