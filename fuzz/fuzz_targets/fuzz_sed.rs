@@ -157,7 +157,7 @@ fn generate_address(rng: &mut ThreadRng) -> String {
                     // Regex pattern
                     format!("/{}/", generate_pattern(rng))
                 }
-                _ => String::new(),
+                _ => unreachable!(),
             }
         }
         2 => {
