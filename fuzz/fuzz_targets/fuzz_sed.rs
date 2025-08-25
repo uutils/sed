@@ -184,7 +184,7 @@ fn generate_address(rng: &mut ThreadRng) -> String {
                 format!("{start},{end}")
             }
         }
-        _ => String::new(),
+        _ => unreachable!(),
     }
 }
 
