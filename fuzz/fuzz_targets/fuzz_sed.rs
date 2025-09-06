@@ -5,13 +5,12 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use rand::prelude::*;
+use rand::rng;
 use std::ffi::OsString;
 use uu_sed::uumain;
-mod fuzz_common;
-use crate::fuzz_common::{
+use uufuzz::{
     CommandResult, compare_result, generate_and_run_uumain, generate_random_string, run_gnu_cmd,
 };
-use rand::rng;
 
 static CMD_PATH: &str = "sed";
 
