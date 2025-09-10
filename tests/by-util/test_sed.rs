@@ -16,8 +16,6 @@ use assert_fs::fixture::{FileWriteStr, PathChild};
 
 use tempfile::NamedTempFile;
 use uutests::new_ucmd;
-use uutests::util::TestScenario;
-use uutests::util_name;
 
 ////////////////////////////////////////////////////////////
 // Test application's invocation

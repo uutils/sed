@@ -51,7 +51,7 @@ sysinfo = "0.37"
 tempfile = "3.10.1"
 textwrap = { version = "0.16.1", features = ["terminal_size"] }
 terminal_size = "0.4.2"
-uucore = { version = "0.1.0", features = ["libc"] }
+uucore = { version = "0.2.2", features = ["libc"] }
 xattr = "1.3.1"
 
 
@@ -72,7 +72,6 @@ sysinfo = { workspace = true }
 terminal_size = { workspace = true }
 textwrap = { workspace = true }
 uucore = { workspace = true }
-uutests = "0.1.0"
 
 [dev-dependencies]
 chrono = { workspace = true }
@@ -82,6 +81,7 @@ rand = { workspace = true }
 regex = { workspace = true }
 tempfile = { workspace = true }
 uucore = { workspace = true, features = ["entries", "process", "signals"] }
+uutests = "0.2.2"
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }
