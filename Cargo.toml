@@ -72,7 +72,6 @@ sysinfo = { workspace = true }
 terminal_size = { workspace = true }
 textwrap = { workspace = true }
 uucore = { workspace = true }
-uutests = "0.2.2"
 
 [dev-dependencies]
 chrono = { workspace = true }
@@ -82,6 +81,7 @@ rand = { workspace = true }
 regex = { workspace = true }
 tempfile = { workspace = true }
 uucore = { workspace = true, features = ["entries", "process", "signals"] }
+uutests = "0.2.2"
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }
