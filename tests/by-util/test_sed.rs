@@ -93,6 +93,21 @@ fn test_no_script_file() {
     }
 }
 
+/// Test correct functioning of copy_file_range.
+#[test]
+fn test_multiple_input_files() {
+    new_ucmd!()
+        .args(&[
+            "-e",
+            "",
+            "input/dots-64k.txt",
+            "input/no-new-line.txt",
+            "input/dots-64k.txt",
+        ])
+        .succeeds()
+        .stdout_is_fixture("output/multiple_input_files");
+}
+
 #[test]
 fn test_delete_stdin() {
     for fixture in INPUT_FILES {
@@ -111,6 +126,20 @@ fn test_delete_file() {
             .args(&["-e", "d", fixture])
             .succeeds()
             .no_stdout();
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn test_special_file() {
+    for fixture in INPUT_FILES {
+        // To test path avoiding copy_file_range
+        let devnull = fs::File::create("/dev/null").unwrap();
+
+        new_ucmd!()
+            .args(&["-e", "", fixture])
+            .set_stdout(devnull)
+            .succeeds();
     }
 }
 
