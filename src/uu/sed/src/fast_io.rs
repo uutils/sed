@@ -117,7 +117,7 @@ impl ReadLineCursor {
     }
 
     /// If a line is available, return it, its \n termination,
-    /// and next line availability, itherwise return None.
+    /// and next line availability, otherwise return None.
     fn get_line(&mut self) -> io::Result<Option<(String, bool, bool)>> {
         self.buffer.clear();
         // read_line *includes* the '\n' if present
@@ -137,7 +137,7 @@ impl ReadLineCursor {
     }
 }
 
-/// As chunk of data that is input and can be output, often very efficiently
+/// A chunk of data that is input and can be output, often very efficiently
 #[derive(Debug, PartialEq, Eq)]
 pub struct IOChunk<'a> {
     utf8_verified: Cell<bool>, // True if the contents are valid UTF-8
