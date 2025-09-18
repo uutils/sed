@@ -27,28 +27,33 @@ use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::marker::PhantomData;
 
 #[cfg(unix)]
-use std::os::unix::io::AsRawFd;
-
-use std::path::PathBuf;
-use std::str;
+use std::os::fd::RawFd;
 
 #[cfg(unix)]
-use uucore::libc::{c_void, write};
+use std::os::unix::io::AsRawFd;
 
+use std::str;
+
+use std::path::PathBuf;
 use uucore::error::UError;
 
 #[cfg(unix)]
 use uucore::error::USimpleError;
 
+#[cfg(unix)]
+use uucore::libc;
+
 // Define two cursors for iterating over lines:
 // - MmapLineCursor based on mmap(2),
-// - ReadLineCursorbased on BufReader.
+// - ReadLineCursor based on BufReader.
 
 /// Cursor for zero-copy iteration over mmap’d file.
 #[cfg(unix)]
 pub struct MmapLineCursor<'a> {
-    data: &'a [u8],
-    pos: usize,
+    _file: File,         // Mmapped file; keeps file open for fast copy
+    fast_copy: FastCopy, // Data for fast file copy I/O
+    data: &'a [u8],      // Mmapped data
+    pos: usize,          // Position within the data
 }
 
 #[cfg(unix)]
@@ -61,8 +66,13 @@ pub struct NextMmapLine<'a> {
 
 #[cfg(unix)]
 impl<'a> MmapLineCursor<'a> {
-    fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
+    fn new(file: File, data: &'a [u8]) -> Self {
+        Self {
+            fast_copy: FastCopy::new(&file),
+            _file: file,
+            data,
+            pos: 0,
+        }
     }
 
     /// Return the next line, if available, or None.
@@ -254,18 +264,17 @@ impl<'a> IOChunk<'a> {
         match &self.content {
             IOChunkContent::Owned { .. } => Ok(()), // already owned
             #[cfg(unix)]
-            IOChunkContent::MmapInput { content, full_span } => {
-                match std::str::from_utf8(content) {
-                    Ok(valid_str) => {
-                        let has_newline = full_span.last().copied() == Some(b'\n');
-                        self.content =
-                            IOChunkContent::new_owned(valid_str.to_string(), has_newline);
-                        self.utf8_verified.set(true);
-                        Ok(())
-                    }
-                    Err(e) => Err(USimpleError::new(2, e.to_string())),
+            IOChunkContent::MmapInput {
+                content, full_span, ..
+            } => match std::str::from_utf8(content) {
+                Ok(valid_str) => {
+                    let has_newline = full_span.last().copied() == Some(b'\n');
+                    self.content = IOChunkContent::new_owned(valid_str.to_string(), has_newline);
+                    self.utf8_verified.set(true);
+                    Ok(())
                 }
-            }
+                Err(e) => Err(USimpleError::new(2, e.to_string())),
+            },
         }
     }
 
@@ -293,6 +302,8 @@ impl<'a> IOChunk<'a> {
 enum IOChunkContent<'a> {
     #[cfg(unix)]
     MmapInput {
+        fast_copy: FastCopy, // Data for fast file copy I/O
+        base: *const u8,     // Mmap start address
         content: &'a [u8],   // Line without newline
         full_span: &'a [u8], // Line including original newline, if any
     },
@@ -343,24 +354,74 @@ impl IOChunkContent<'_> {
     }
 }
 
+/// Information required for performing I/O using fast file copy
+/// operations, such as copy_file_range(2).
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct FastCopy {
+    fd: i32,           // Raw file descriptor
+    is_regular: bool,  // True if this is a regular file
+    block_size: usize, // Filesystem block size
+}
+
+#[cfg(unix)]
+impl FastCopy {
+    /// Construct with an object on which as_raw_fd() can be called.
+    pub fn new<T: AsRawFd + ?Sized>(f: &T) -> Self {
+        let fd = f.as_raw_fd();
+
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+
+        let ret = unsafe { libc::fstat(fd, &mut st) };
+        if ret == -1 {
+            // All fstat errors are programmer rather user faults
+            // so panic is appropriate.
+            let err = std::io::Error::last_os_error();
+            panic!("fstat failed on fd {}: {}", fd, err);
+        }
+
+        let ftype = st.st_mode & libc::S_IFMT;
+
+        Self {
+            fd,
+            is_regular: ftype == libc::S_IFREG,
+            block_size: st.st_blksize as usize,
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+impl Default for FastCopy {
+    fn default() -> Self {
+        FastCopy {
+            fd: -1,
+            is_regular: false,
+            block_size: 0,
+        }
+    }
+}
+
 /// Unified reader that uses mmap when possible, falls back to buffered reading.
-pub enum LineReader {
+pub enum LineReader<'a> {
     #[cfg(unix)]
     MmapInput {
         mapped_file: Mmap, // A handle that can derive the mapped file slice
-        cursor: MmapLineCursor<'static>,
+        cursor: MmapLineCursor<'a>,
     },
     ReadInput(ReadLineCursor),
+    #[cfg(not(unix))]
+    _Phantom(std::marker::PhantomData<&'a ()>),
 }
 
 /// Return a LineReader that uses the ReadInput method fot the specified file.
-fn line_reader_read_input(file: File) -> io::Result<LineReader> {
+fn line_reader_read_input(file: File) -> io::Result<LineReader<'static>> {
     let boxed: Box<dyn Read> = Box::new(file);
     let reader = BufReader::new(boxed);
     Ok(LineReader::ReadInput(ReadLineCursor::new(reader)))
 }
 
-impl LineReader {
+impl<'a> LineReader<'a> {
     /// Open the specified file for line input.
     // Use "-" to read from the standard input.
     pub fn open(path: &PathBuf) -> io::Result<Self> {
@@ -381,7 +442,7 @@ impl LineReader {
                     let slice: &'static [u8] = unsafe {
                         std::slice::from_raw_parts(mapped_file.as_ptr(), mapped_file.len())
                     };
-                    let cursor = MmapLineCursor::new(slice);
+                    let cursor = MmapLineCursor::new(file, slice);
                     Ok(LineReader::MmapInput {
                         mapped_file,
                         cursor,
@@ -411,14 +472,21 @@ impl LineReader {
         match self {
             #[cfg(unix)]
             LineReader::MmapInput { cursor, .. } => {
+                // Obtain fields to prevent borrowing issues.
+                let fast_copy = cursor.fast_copy.clone();
+                let base = cursor.data.as_ptr();
                 if let Some(NextMmapLine {
                     content,
                     full_span,
                     is_last_line,
                 }) = cursor.get_line()?
                 {
-                    let chunk =
-                        IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+                    let chunk = IOChunk::from_content(IOChunkContent::MmapInput {
+                        fast_copy,
+                        base,
+                        content,
+                        full_span,
+                    });
 
                     Ok(Some((chunk, is_last_line)))
                 } else {
@@ -435,6 +503,9 @@ impl LineReader {
                     Ok(None)
                 }
             }
+
+            #[cfg(not(unix))]
+            LineReader::_Phantom(_) => unreachable!("_Phantom should never be constructed"),
         }
     }
 }
@@ -450,27 +521,35 @@ pub trait OutputWrite: Write {}
 #[cfg(not(unix))]
 impl<T: Write> OutputWrite for T {}
 
+/// An output data chunk from the mmapped file
+/// Data elements allow output to be performed through write(2)
+/// or through copy_file_range(2).
+#[cfg(unix)]
+#[derive(Clone)]
+struct MmapOutput {
+    in_fast_copy: FastCopy, // Data for fast file copy I/O
+    base_ptr: *const u8,    // Base of the entire mmapped region
+    out_ptr: *const u8,     // Start of the output data chunk
+    len: usize,             // Output data chunk size
+}
+
 /// Abstraction for outputting data, potentially from the mmapped file
-/// Outputs from mmapped data are coallesced and written via a write(2)
-/// system call without any copying if worthwhile.
+/// Outputs from mmapped data are coallesced and written via the Linux
+/// copy_file_range(2) system call without any copying, if possible
+/// and worthwhile.  As a fallback write(2) is used, which requires
+/// the OS to copy data from the mmapped region to the output file
+/// page cache.
 /// All other output is buffered and writen via BufWriter.
 pub struct OutputBuffer {
     out: BufWriter<Box<dyn OutputWrite + 'static>>, // Where to write
     #[cfg(unix)]
-    mmap_ptr: Option<(*const u8, usize)>, // Start and len of chunk to write
+    fast_copy: FastCopy,            // Data for fast file copy ops
+    #[cfg(unix)]
+    max_pending_write: usize,       // Max bytes to keep before flushing
+    #[cfg(unix)]
+    mmap_chunk: Option<MmapOutput>, // Chunk to write
     #[cfg(test)]
     writes_issued: usize,           // Number of issued write(2) calls
-}
-
-/// Wrapper that issues the write(2) system call
-#[cfg(unix)]
-fn write_syscall(fd: i32, ptr: *const u8, len: usize) -> io::Result<()> {
-    let ret = unsafe { write(fd, ptr as *const c_void, len) };
-    if ret < 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
 }
 
 /// Threshold to use buffered writes for output
@@ -482,19 +561,43 @@ fn write_syscall(fd: i32, ptr: *const u8, len: usize) -> io::Result<()> {
 #[cfg(unix)]
 const MIN_DIRECT_WRITE: usize = 4 * 1024;
 
-/// The maximum size of a pending write buffer
-// Once more than 64k accumulate, issue a write to allow the OS
-// and downstream pipes to handle the output processing in parallel
-// with our processing.
+/// Maximum size of a pending write buffer for files
+// Once more than the specified bytes accumulate, issue a write or
+// a copy_file_range(2).  This is kept high to reduce the number of
+// system calls and (where supported) file extents.
 #[cfg(unix)]
-const MAX_PENDING_WRITE: usize = 64 * 1024;
+const MAX_PENDING_WRITE_FILE: usize = 1024 * 1024;
+
+/// Maximum size of a pending write buffer for non-files (likely pipes)
+// Once more than the specified bytes accumulate, issue a write.
+// This is set to the common size of Linux pipe buffer to maximize
+// throughput and liveness across the pipeline.
+#[cfg(unix)]
+const MAX_PENDING_WRITE_NON_FILE: usize = 64 * 1024;
 
 impl OutputBuffer {
+    #[cfg(not(unix))]
     pub fn new(w: Box<dyn OutputWrite + 'static>) -> Self {
         Self {
             out: BufWriter::new(w),
-            #[cfg(unix)]
-            mmap_ptr: None,
+            #[cfg(test)]
+            writes_issued: 0,
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn new(w: Box<dyn OutputWrite + 'static>) -> Self {
+        let fast_copy = FastCopy::new(&*w);
+        let max_pending_write = if fast_copy.is_regular {
+            MAX_PENDING_WRITE_FILE
+        } else {
+            MAX_PENDING_WRITE_NON_FILE
+        };
+        Self {
+            out: BufWriter::new(w),
+            fast_copy,
+            max_pending_write,
+            mmap_chunk: None,
             #[cfg(test)]
             writes_issued: 0,
         }
@@ -544,20 +647,33 @@ impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output
     pub fn write_chunk(&mut self, chunk: &IOChunk) -> io::Result<()> {
         match &chunk.content {
-            IOChunkContent::MmapInput { full_span, .. } => {
+            IOChunkContent::MmapInput {
+                full_span,
+                fast_copy,
+                base,
+                ..
+            } => {
                 let ptr = full_span.as_ptr();
                 let len = full_span.len();
 
-                if let Some((p, l)) = self.mmap_ptr {
+                if let Some(MmapOutput {
+                    out_ptr: p, len: l, ..
+                }) = self.mmap_chunk.as_mut()
+                {
                     // Coalesce if adjacent
-                    if unsafe { p.add(l) } == ptr && l < MAX_PENDING_WRITE {
-                        self.mmap_ptr = Some((p, l + len));
+                    if unsafe { p.add(*l) } == ptr && *l < self.max_pending_write {
+                        *l += len;
                         return Ok(());
                     } else {
                         self.flush_mmap()?; // not contiguous
                     }
                 }
-                self.mmap_ptr = Some((ptr, len));
+                self.mmap_chunk = Some(MmapOutput {
+                    in_fast_copy: fast_copy.clone(),
+                    base_ptr: *base,
+                    out_ptr: ptr,
+                    len,
+                });
                 Ok(())
             }
 
@@ -579,20 +695,30 @@ impl OutputBuffer {
     // Flush any pending mmap data
     #[cfg(unix)]
     fn flush_mmap(&mut self) -> io::Result<()> {
-        if let Some((ptr, len)) = self.mmap_ptr.take() {
-            if len < MIN_DIRECT_WRITE {
+        if let Some(chunk) = self.mmap_chunk.take() {
+            if chunk.len < MIN_DIRECT_WRITE {
                 // SAFELY treat as &[u8] and write to buffered writer
-                let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+                let slice = unsafe { std::slice::from_raw_parts(chunk.out_ptr, chunk.len) };
                 return self.out.write_all(slice);
             } else {
                 // Large enough: write directly using zero-copy
-                let fd = self.out.get_ref().as_raw_fd();
                 self.out.flush()?; // sync any buffered data
                 #[cfg(test)]
                 {
                     self.writes_issued += 1;
                 }
-                return write_syscall(fd, ptr, len);
+                return if chunk.in_fast_copy.is_regular && self.fast_copy.is_regular {
+                    portable_copy_file_range(
+                        chunk.out_ptr,
+                        chunk.in_fast_copy.fd,
+                        unsafe { chunk.out_ptr.offset_from(chunk.base_ptr) } as i64,
+                        self.fast_copy.fd,
+                        chunk.len,
+                        chunk.in_fast_copy.block_size.min(self.fast_copy.block_size),
+                    )
+                } else {
+                    reliable_write(self.fast_copy.fd, chunk.out_ptr, chunk.len)
+                };
             }
         }
         Ok(())
@@ -630,6 +756,156 @@ impl OutputBuffer {
     }
 }
 
+/// Wrapper that issues the write(2) system calls via write_all
+// This takes care of partial writes and EAGAIN, EWOULDBLOCK, EINTR.
+#[cfg(unix)]
+fn reliable_write(fd: i32, ptr: *const u8, len: usize) -> std::io::Result<()> {
+    // A thin Write-compatible wrapper around a raw file descriptor
+    // This allows us to issue and utilize the write_all implementatin.
+    struct FdWriter(RawFd);
+
+    impl Write for FdWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let ret =
+                unsafe { libc::write(self.0, buf.as_ptr() as *const libc::c_void, buf.len()) };
+            if ret < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(ret as usize)
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = FdWriter(fd);
+    let buf: &[u8] = unsafe { std::slice::from_raw_parts(ptr, len) };
+    writer.write_all(buf)
+}
+
+/// Copy efficiently len data from the input to the output file.
+/// Fall back to write(2) if the platform doesn't support copy_file_range(2).
+#[cfg(unix)]
+#[allow(unused_variables)]
+fn portable_copy_file_range(
+    in_ptr: *const u8,
+    in_fd: i32,
+    in_off: libc::off_t,
+    out_fd: i32,
+    len: usize,
+    block_size: usize,
+) -> std::io::Result<()> {
+    if len == 0 {
+        return Ok(());
+    }
+
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        aligned_copy_file_range(in_ptr, in_fd, in_off, out_fd, len, block_size)
+    }
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    {
+        reliable_write(out_fd, in_ptr, len)
+    }
+}
+
+/// Copy efficiently len data from the input to the output file.
+/// Handle partial copies and fall back to write(2) if the
+/// file system or options don't support copy_file_range(2).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn reliable_copy_file_range(
+    in_ptr: *const u8,
+    in_fd: i32,
+    mut in_off: libc::off_t,
+    out_fd: i32,
+    mut len: usize,
+) -> std::io::Result<()> {
+    while len > 0 {
+        let in_off_ptr: *mut i64 = &mut in_off;
+        let ret = unsafe {
+            libc::copy_file_range(
+                in_fd,
+                in_off_ptr,
+                out_fd,
+                std::ptr::null_mut(), // Use and update output offset
+                len,
+                0,
+            )
+        };
+        if ret < 0 {
+            let err = io::Error::last_os_error();
+            return match err.raw_os_error() {
+                Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP) | Some(libc::EXDEV) => {
+                    // Fallback to write(2).
+                    reliable_write(out_fd, in_ptr, len)
+                }
+                _ => Err(err),
+            };
+        } else if ret == 0 {
+            // EOF reached
+            break;
+        } else {
+            len -= ret as usize;
+        }
+    }
+    Ok(())
+}
+
+/// Copy efficiently len data from the input to the output file.
+/// Try to call copy_file_range(2) on block-aligned data, so
+/// as to help the filesystem maintain cross-file extents.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn aligned_copy_file_range(
+    mut in_ptr: *const u8,
+    in_fd: i32,
+    mut in_off: libc::off_t,
+    out_fd: i32,
+    mut len: usize,
+    block_size: usize,
+) -> std::io::Result<()> {
+    // 1. Get current output offset.
+    let res = unsafe { libc::lseek(out_fd, 0, libc::SEEK_CUR) as i64 };
+    if res < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let out_off = res as usize;
+
+    // Obtain head alignment.
+    // Bytes to end of block:
+    let remainder = in_off as usize % block_size;
+    // Bytes to write (block_size becomes 0):
+    let head_align = (block_size - remainder) % block_size;
+
+    if !(out_off + head_align).is_multiple_of(block_size) {
+        // No hope of alignment, so just copy everything.
+        return reliable_copy_file_range(in_ptr, in_fd, in_off, out_fd, len);
+    }
+
+    if head_align > 0 {
+        // Align the two files on a block boundary.
+        let head_len = head_align.min(len);
+        reliable_write(out_fd, in_ptr, head_len)?;
+        in_ptr = unsafe { in_ptr.add(head_len) };
+        in_off += head_len as i64;
+        len -= head_len;
+    }
+
+    // Copy aligned blocks
+    let aligned_len = len - (len % block_size);
+    let _ = reliable_copy_file_range(in_ptr, in_fd, in_off, out_fd, aligned_len);
+    len -= aligned_len;
+
+    // Copy tail if needed
+    if len > 0 {
+        in_ptr = unsafe { in_ptr.add(aligned_len) };
+        reliable_write(out_fd, in_ptr, len)?;
+    }
+
+    Ok(())
+}
+
 // Usage example (never compiled)
 #[cfg(any())]
 pub fn main() -> io::Result<()> {
@@ -657,6 +933,8 @@ mod tests {
     #[cfg(unix)]
     use std::io::{self, Write};
     use tempfile::NamedTempFile;
+    #[cfg(unix)]
+    use tempfile::tempfile;
 
     /// Helper: produce a 4k-byte Vec of `'.'`s ending in `'\n'`.
     #[cfg(unix)]
@@ -665,6 +943,19 @@ mod tests {
         buf.extend(std::iter::repeat(b'.').take(4095));
         buf.push(b'\n');
         buf
+    }
+
+    #[cfg(unix)]
+    pub fn new_content_mmap_input<'a>(
+        content: &'a [u8],
+        full_span: &'a [u8],
+    ) -> IOChunkContent<'a> {
+        IOChunkContent::MmapInput {
+            fast_copy: FastCopy::default(),
+            base: std::ptr::null(),
+            content,
+            full_span,
+        }
     }
 
     #[test]
@@ -931,8 +1222,9 @@ mod tests {
         let mut input = NamedTempFile::new()?;
         write!(input, "first line\nsecond line\n")?;
         let dot_line = make_dot_line_4k();
-        // Write 64k + 16k to ensure one flush when writing
-        for _i in 0..20 {
+        // Create more than MAX... to ensure one flush when writing
+        let nline_in_file = MAX_PENDING_WRITE_FILE / 4096 + 4;
+        for _i in 0..nline_in_file {
             input.write_all(&dot_line)?;
         }
         input.flush()?;
@@ -948,12 +1240,12 @@ mod tests {
 
         // Wrap it in your OutputBuffer and run the loop:
         let mut out = OutputBuffer::new(Box::new(out_file));
-        let mut nline = 0;
+        let mut nline_written = 0;
         while let Some((chunk, _last_line)) = reader.get_line()? {
             out.write_chunk(&chunk)?;
-            nline += 1;
+            nline_written += 1;
         }
-        assert_eq!(nline, 22);
+        assert_eq!(nline_written, nline_in_file + 2);
 
         out.flush()?;
         assert_eq!(out.writes_issued, 2);
@@ -1126,7 +1418,7 @@ mod tests {
     fn test_mmap_newline_terminated() {
         let content = b"line";
         let full_span = b"line\n";
-        let chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        let chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
         assert!(chunk.is_newline_terminated());
     }
 
@@ -1135,7 +1427,7 @@ mod tests {
     fn test_mmap_not_newline_terminated() {
         let content = b"line";
         let full_span = b"line";
-        let chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        let chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
         assert!(!chunk.is_newline_terminated());
     }
 
@@ -1144,7 +1436,7 @@ mod tests {
     fn test_mmap_empty() {
         let content = b"";
         let full_span = b"";
-        let chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        let chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
         assert!(!chunk.is_newline_terminated());
     }
 
@@ -1178,7 +1470,7 @@ mod tests {
         let content = b"mmap string";
         let full_span = b"mmap string\n";
 
-        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
 
         let result = chunk.ensure_owned();
         assert!(result.is_ok());
@@ -1202,7 +1494,7 @@ mod tests {
         let content = b"no newline";
         let full_span = b"no newline";
 
-        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
 
         let result = chunk.ensure_owned();
         assert!(result.is_ok());
@@ -1226,7 +1518,7 @@ mod tests {
         let content = b"bad\xFFutf8";
         let full_span = b"bad\xFFutf8\n";
 
-        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
 
         let result = chunk.ensure_owned();
         assert!(result.is_err());
@@ -1255,7 +1547,7 @@ mod tests {
     fn test_fields_mut_on_mmap_input_valid_utf8() {
         let content = b"foo";
         let full_span = b"foo\n";
-        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
 
         {
             let (s, _) = chunk.fields_mut().unwrap();
@@ -1270,7 +1562,7 @@ mod tests {
     fn test_fields_mut_on_utf8_multibyte() {
         let content = "Ζωντανά!".as_bytes();
         let full_span = "Ζωντανά!\n".as_bytes();
-        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
 
         let (s, _) = chunk.fields_mut().unwrap();
         s.push_str(" Δεδομένα");
@@ -1283,10 +1575,35 @@ mod tests {
     fn test_fields_mut_invalid_utf8() {
         let content = b"abc\xFF"; // invalid UTF-8
         let full_span = b"abc\xFF\n";
-        let mut chunk = IOChunk::from_content(IOChunkContent::MmapInput { content, full_span });
+        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
 
         let result = chunk.fields_mut();
         assert!(result.is_err());
         assert!(format!("{}", result.unwrap_err()).contains("invalid utf-8"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fastcopy_regular_file() {
+        let mut file = tempfile().expect("create temp file");
+        writeln!(file, "hello").unwrap();
+
+        let fc = FastCopy::new(&file);
+
+        assert!(fc.is_regular, "expected regular file");
+        assert!(fc.block_size > 0, "block size should be > 0");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fastcopy_non_regular_devnull() {
+        let file = File::open("/dev/null").expect("open /dev/null");
+
+        let fc = FastCopy::new(&file);
+
+        assert!(
+            !fc.is_regular,
+            "expected /dev/null to be reported as non-regular"
+        );
     }
 }
