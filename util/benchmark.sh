@@ -22,7 +22,7 @@ SCRIPTS=tests/fixtures/sed/script
 # Run hyperfine with the specified name and command and collect the results.
 bench_run()
 {
-  if hyperfine --command-name "$1" --warmup 2 --export-csv out.csv "$2" ; then
+  if hyperfine --command-name "$1" --warmup 2 --export-csv out.csv --output ./out.txt "$2" ; then
     # Output the results sans-heading.
     sed 1d out.csv >>"$OUT"
   else
@@ -30,7 +30,7 @@ bench_run()
     echo "$1,,,,,,," >>"$OUT"
   fi
 
-  rm out.csv
+  rm out.csv out.txt
 }
 
 # Shared heading
