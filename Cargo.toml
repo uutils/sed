@@ -60,7 +60,7 @@ assert_fs = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 clap_mangen = { workspace = true }
-ctor = "0.5.0"
+ctor = "0.6.0"
 fancy-regex =  { workspace = true }
 memchr = { workspace = true }
 memmap2.workspace = true
