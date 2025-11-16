@@ -1043,7 +1043,7 @@ dependencies = [
  "regex",
  "tempfile",
  "terminal_size",
- "uucore",
+ "uucore 0.3.0",
 ]
 
 [[package]]
@@ -1052,6 +1052,29 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9ca78fd510306bcb8c1c2a37142bc661679d19a53140804493e27107421bff1"
 dependencies = [
+ "bstr",
+ "clap",
+ "fluent",
+ "fluent-bundle",
+ "fluent-syntax",
+ "libc",
+ "nix",
+ "number_prefix",
+ "os_display",
+ "phf",
+ "procfs",
+ "thiserror",
+ "unic-langid",
+ "uucore_procs 0.3.0",
+ "wild",
+]
+
+[[package]]
+name = "uucore"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2003164a38a7f39da1de103a70fa66b745f572f0045ec261481539516c0a8a0e"
+dependencies = [
  "bigdecimal",
  "bstr",
  "clap",
@@ -1059,7 +1082,6 @@ dependencies = [
  "fluent-bundle",
  "fluent-syntax",
  "glob",
- "libc",
  "nix",
  "num-traits",
  "number_prefix",
@@ -1068,7 +1090,7 @@ dependencies = [
  "procfs",
  "thiserror",
  "unic-langid",
- "uucore_procs",
+ "uucore_procs 0.4.0",
  "wild",
 ]
 
@@ -1083,7 +1105,7 @@ dependencies = [
  "similar",
  "tempfile",
  "uu_sed",
- "uucore",
+ "uucore 0.3.0",
  "uufuzz",
 ]
 
@@ -1098,17 +1120,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "uufuzz"
-version = "0.3.0"
+name = "uucore_procs"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d49013f64c60c1d6a8c7ce48b8eb7bdccd949b44c6ac52337cf164387b2ba1f2"
+checksum = "c76f0308f7810d915246a39748e7f5d64e43e6bb9d6c8107224f9d741aefc375"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "uufuzz"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "307a1bdccdebc644f26a31e02d54cc09ae1544022aac06469130090e327d2d84"
 dependencies = [
  "console",
  "libc",
  "rand",
  "similar",
  "tempfile",
- "uucore",
+ "uucore 0.4.0",
 ]
 
 [[package]]
