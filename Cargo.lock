@@ -1033,7 +1033,7 @@ dependencies = [
  "terminal_size",
  "textwrap",
  "uu_sed",
- "uucore 0.3.0",
+ "uucore",
  "uutests",
  "xattr",
 ]
@@ -1304,30 +1304,7 @@ dependencies = [
  "regex",
  "tempfile",
  "terminal_size",
- "uucore 0.3.0",
-]
-
-[[package]]
-name = "uucore"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9ca78fd510306bcb8c1c2a37142bc661679d19a53140804493e27107421bff1"
-dependencies = [
- "bstr",
- "clap",
- "fluent",
- "fluent-bundle",
- "fluent-syntax",
- "libc",
- "nix",
- "number_prefix",
- "os_display",
- "phf",
- "procfs",
- "thiserror",
- "unic-langid",
- "uucore_procs 0.3.0",
- "wild",
+ "uucore",
 ]
 
 [[package]]
@@ -1352,18 +1329,8 @@ dependencies = [
  "thiserror",
  "time",
  "unic-langid",
- "uucore_procs 0.4.0",
+ "uucore_procs",
  "wild",
-]
-
-[[package]]
-name = "uucore_procs"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "096f1c8be312cf470c8cd2bfea80d881a9358a4307f62c204e0d08b90a9da5d7"
-dependencies = [
- "proc-macro2",
- "quote",
 ]
 
 [[package]]
@@ -1390,7 +1357,7 @@ dependencies = [
  "regex",
  "rlimit",
  "tempfile",
- "uucore 0.4.0",
+ "uucore",
  "xattr",
 ]
 
