@@ -21,11 +21,10 @@ and can run correctly the two complex scripts of its integration tests:
 
 The performance of this Rust implementation is now better than the GNU and FreeBSD implementations for most benchmarked cases.
 
-Further work aims to 
-adjust buffering on terminal output to match current implementations,
-implement more GNU extensions, and
-improve performance where possible.
-
+Further work aims to:
+* Adjust buffering on terminal output to match current implementations,
+* Implement more GNU extensions,
+* Improve performance where possible.
 
 ## Installation
 
