@@ -8,16 +8,16 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{
+use crate::sed::command::{
     Address, AddressType, AddressValue, Command, CommandData, ProcessingContext, ReplacementPart,
     ReplacementTemplate, Substitution, Transliteration,
 };
-use crate::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
-use crate::error_handling::{ScriptLocation, compilation_error, semantic_error};
-use crate::fast_regex::Regex;
-use crate::named_writer::NamedWriter;
-use crate::script_char_provider::ScriptCharProvider;
-use crate::script_line_provider::{ScriptLineProvider, ScriptValue};
+use crate::sed::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
+use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
+use crate::sed::fast_regex::Regex;
+use crate::sed::named_writer::NamedWriter;
+use crate::sed::script_char_provider::ScriptCharProvider;
+use crate::sed::script_line_provider::{ScriptLineProvider, ScriptValue};
 
 use std::cell::RefCell;
 use std::mem;
@@ -1272,7 +1272,7 @@ fn get_cmd_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fast_io::IOChunk;
+    use crate::sed::fast_io::IOChunk;
 
     // Return an empty line provider and a char provider for the specified str.
     fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {

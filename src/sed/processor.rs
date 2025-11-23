@@ -8,15 +8,15 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::command::{
+use crate::sed::command::{
     Address, AddressType, AddressValue, AppendElement, Command, CommandData, InputAction,
     ProcessingContext, Transliteration,
 };
-use crate::error_handling::{ScriptLocation, input_runtime_error};
-use crate::fast_io::{IOChunk, LineReader, OutputBuffer};
-use crate::fast_regex::Regex;
-use crate::in_place::InPlace;
-use crate::named_writer;
+use crate::sed::error_handling::{ScriptLocation, input_runtime_error};
+use crate::sed::fast_io::{IOChunk, LineReader, OutputBuffer};
+use crate::sed::fast_regex::Regex;
+use crate::sed::in_place::InPlace;
+use crate::sed::named_writer;
 
 use std::borrow::Cow;
 use std::cell::RefCell;

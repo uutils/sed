@@ -20,10 +20,10 @@ pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;
 
-use crate::command::{ProcessingContext, StringSpace};
-use crate::compiler::compile;
-use crate::processor::process_all_files;
-use crate::script_line_provider::ScriptValue;
+use crate::sed::command::{ProcessingContext, StringSpace};
+use crate::sed::compiler::compile;
+use crate::sed::processor::process_all_files;
+use crate::sed::script_line_provider::ScriptValue;
 use clap::{Arg, ArgMatches, Command, arg};
 use std::collections::HashMap;
 use std::path::PathBuf;

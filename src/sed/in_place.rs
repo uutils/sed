@@ -21,8 +21,8 @@ use tempfile::NamedTempFile;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UIoError, UResult, USimpleError};
 
-use crate::command::ProcessingContext;
-use crate::fast_io::OutputBuffer;
+use crate::sed::command::ProcessingContext;
+use crate::sed::fast_io::OutputBuffer;
 
 /// Context for in-place editing
 pub struct InPlace {

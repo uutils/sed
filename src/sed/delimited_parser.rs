@@ -8,9 +8,9 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::error_handling::compilation_error;
-use crate::script_char_provider::ScriptCharProvider;
-use crate::script_line_provider::ScriptLineProvider;
+use crate::sed::error_handling::compilation_error;
+use crate::sed::script_char_provider::ScriptCharProvider;
+use crate::sed::script_line_provider::ScriptLineProvider;
 
 use std::char;
 use uucore::error::UResult;

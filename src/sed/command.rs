@@ -8,11 +8,11 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::error_handling::{ScriptLocation, runtime_error};
-use crate::fast_regex::{Captures, Match, Regex};
-use crate::named_writer::NamedWriter;
-use crate::script_char_provider::ScriptCharProvider;
-use crate::script_line_provider::ScriptLineProvider;
+use crate::sed::error_handling::{ScriptLocation, runtime_error};
+use crate::sed::fast_regex::{Captures, Match, Regex};
+use crate::sed::named_writer::NamedWriter;
+use crate::sed::script_char_provider::ScriptCharProvider;
+use crate::sed::script_line_provider::ScriptLineProvider;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -343,7 +343,7 @@ pub struct InputAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fast_io::IOChunk;
+    use crate::sed::fast_io::IOChunk;
 
     // Return the captures for the RE applied to the specified string
     fn caps_for<'a>(re: &str, chunk: &'a mut IOChunk) -> Captures<'a> {

@@ -23,7 +23,7 @@ use regex::bytes::{
 use std::error::Error;
 use uucore::error::{UResult, USimpleError};
 
-use crate::fast_io::IOChunk;
+use crate::sed::fast_io::IOChunk;
 
 /// REs requiring the fancy_regex capabilities rather than the
 /// faster regex::bytes engine

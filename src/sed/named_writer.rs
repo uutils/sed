@@ -8,7 +8,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::error_handling::{ScriptLocation, runtime_error};
+use crate::sed::error_handling::{ScriptLocation, runtime_error};
 
 use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
