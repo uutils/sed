@@ -38,6 +38,13 @@ cd sed
 cargo build --release
 cargo run --release
 ```
+
+To call the binary `sed`, create a symlink like:
+
+```bash
+ln -s target/release/sedapp sed
+```
+
 ## Extensions and incompatibilities
 ### Supported GNU extensions
 * Command-line arguments can be specified in long (`--`) form.
