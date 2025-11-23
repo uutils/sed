@@ -358,7 +358,7 @@ mod tests {
     // s/foo//
     fn test_empty_template() {
         let template = ReplacementTemplate::default();
-        let input = &mut IOChunk::from_str("foo");
+        let input = &mut IOChunk::new_from_str("foo");
         let caps = caps_for("foo", input);
         let cmd = Command::default();
 
@@ -370,7 +370,7 @@ mod tests {
     // s/abc/hello/
     fn test_literal_only() {
         let template = ReplacementTemplate::new(vec![ReplacementPart::Literal("hello".into())]);
-        let input = &mut IOChunk::from_str("abc");
+        let input = &mut IOChunk::new_from_str("abc");
         let caps = caps_for("abc", input);
         let cmd = Command::default();
 
@@ -385,7 +385,7 @@ mod tests {
             ReplacementPart::Literal("got: ".into()),
             ReplacementPart::WholeMatch,
         ]);
-        let input = &mut IOChunk::from_str("foo42");
+        let input = &mut IOChunk::new_from_str("foo42");
         let caps = caps_for(r"foo\d+", input);
         let cmd = Command::default();
 
@@ -400,7 +400,7 @@ mod tests {
             ReplacementPart::Literal("number: ".into()),
             ReplacementPart::Group(1),
         ]);
-        let input = &mut IOChunk::from_str("foo42");
+        let input = &mut IOChunk::new_from_str("foo42");
         let caps = caps_for(r"foo(\d+)", input);
         let cmd = Command::default();
 
@@ -417,7 +417,7 @@ mod tests {
             ReplacementPart::Literal(", value: ".into()),
             ReplacementPart::Group(2),
         ]);
-        let input = &mut IOChunk::from_str("x:123");
+        let input = &mut IOChunk::new_from_str("x:123");
         let caps = caps_for(r"(\w+):(\d+)", input);
         let cmd = Command::default();
 
@@ -434,7 +434,7 @@ mod tests {
             ReplacementPart::Literal(", value: ".into()),
             ReplacementPart::Group(3),
         ]);
-        let input = &mut IOChunk::from_str("x:123");
+        let input = &mut IOChunk::new_from_str("x:123");
         let caps = caps_for(r"(\w+):(\d+)", input);
         let cmd = Command::default();
 

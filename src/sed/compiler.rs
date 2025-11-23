@@ -1463,8 +1463,8 @@ mod tests {
         let regex = compile_regex(&lines, &chars, "abc", &ctx(), false)
             .unwrap()
             .expect("regex should be present");
-        assert!(regex.is_match(&mut IOChunk::from_str("abc")).unwrap());
-        assert!(!regex.is_match(&mut IOChunk::from_str("ABC")).unwrap());
+        assert!(regex.is_match(&mut IOChunk::new_from_str("abc")).unwrap());
+        assert!(!regex.is_match(&mut IOChunk::new_from_str("ABC")).unwrap());
     }
 
     #[test]
@@ -1473,9 +1473,9 @@ mod tests {
         let regex = compile_regex(&lines, &chars, "abc", &ctx(), true)
             .unwrap()
             .expect("regex should be present");
-        assert!(regex.is_match(&mut IOChunk::from_str("abc")).unwrap());
-        assert!(regex.is_match(&mut IOChunk::from_str("ABC")).unwrap());
-        assert!(regex.is_match(&mut IOChunk::from_str("AbC")).unwrap());
+        assert!(regex.is_match(&mut IOChunk::new_from_str("abc")).unwrap());
+        assert!(regex.is_match(&mut IOChunk::new_from_str("ABC")).unwrap());
+        assert!(regex.is_match(&mut IOChunk::new_from_str("AbC")).unwrap());
     }
 
     #[test]
@@ -1523,7 +1523,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(re.is_match(&mut IOChunk::from_str("hello")).unwrap());
+            assert!(re.is_match(&mut IOChunk::new_from_str("hello")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1535,7 +1535,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(re.is_match(&mut IOChunk::from_str("hello")).unwrap());
+            assert!(re.is_match(&mut IOChunk::new_from_str("hello")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1547,7 +1547,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(!re.is_match(&mut IOChunk::from_str("helio")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::new_from_str("helio")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1559,7 +1559,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(re.is_match(&mut IOChunk::from_str("hello")).unwrap());
+            assert!(re.is_match(&mut IOChunk::new_from_str("hello")).unwrap());
         } else {
             panic!("expected Regex address value");
         }
@@ -1571,7 +1571,7 @@ mod tests {
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr.atype, AddressType::Re));
         if let AddressValue::Regex(Some(re)) = addr.value {
-            assert!(re.is_match(&mut IOChunk::from_str("HELLO")).unwrap()); // case-insensitive
+            assert!(re.is_match(&mut IOChunk::new_from_str("HELLO")).unwrap()); // case-insensitive
         } else {
             panic!("expected Regex address value");
         }
@@ -1662,8 +1662,8 @@ mod tests {
             AddressType::Re
         ));
         if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match(&mut IOChunk::from_str("foo")).unwrap());
-            assert!(!re.is_match(&mut IOChunk::from_str("bar")).unwrap());
+            assert!(re.is_match(&mut IOChunk::new_from_str("foo")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::new_from_str("bar")).unwrap());
         } else {
             panic!("expected a regex address");
         };
@@ -1682,8 +1682,8 @@ mod tests {
             AddressType::Re
         ));
         if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match(&mut IOChunk::from_str("foo")).unwrap());
-            assert!(!re.is_match(&mut IOChunk::from_str("bar")).unwrap());
+            assert!(re.is_match(&mut IOChunk::new_from_str("foo")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::new_from_str("bar")).unwrap());
         } else {
             panic!("expected a regex address");
         }
@@ -1693,8 +1693,8 @@ mod tests {
             AddressType::Re
         ));
         if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr2.as_ref().unwrap().value {
-            assert!(re.is_match(&mut IOChunk::from_str("bar")).unwrap());
-            assert!(!re.is_match(&mut IOChunk::from_str("foo")).unwrap());
+            assert!(re.is_match(&mut IOChunk::new_from_str("bar")).unwrap());
+            assert!(!re.is_match(&mut IOChunk::new_from_str("foo")).unwrap());
         } else {
             panic!("expected a regex address");
         };
@@ -1712,8 +1712,8 @@ mod tests {
             AddressType::Re
         ));
         if let AddressValue::Regex(Some(re)) = &cmd.borrow().addr1.as_ref().unwrap().value {
-            assert!(re.is_match(&mut IOChunk::from_str("FOO")).unwrap());
-            assert!(re.is_match(&mut IOChunk::from_str("foo")).unwrap());
+            assert!(re.is_match(&mut IOChunk::new_from_str("FOO")).unwrap());
+            assert!(re.is_match(&mut IOChunk::new_from_str("foo")).unwrap());
         } else {
             panic!("expected a regex address with case-insensitive match");
         };
@@ -2222,7 +2222,7 @@ mod tests {
     fn test_flat_chain() {
         let a = command_with_code('a');
         let b = command_with_code('b');
-        let head = link_commands(vec![a.clone(), b.clone()]);
+        let head = link_commands(vec![a, b]);
 
         patch_block_endings(head.clone());
 
@@ -2238,11 +2238,11 @@ mod tests {
         let y = command_with_code('y');
         let b = command_with_code('b');
 
-        let head = link_commands(vec![a.clone(), block.clone(), b.clone()]);
-        let sub_head = link_commands(vec![x.clone(), y.clone()]);
+        let head = link_commands(vec![a.clone(), block.clone(), b]);
+        let sub_head = link_commands(vec![x, y]);
         block.borrow_mut().data = CommandData::BranchTarget(sub_head.clone());
 
-        patch_block_endings(head.clone());
+        patch_block_endings(head);
 
         // Expect x -> y -> b
         assert_eq!(collect_codes(sub_head), vec!['x', 'y', 'b']);
@@ -2281,9 +2281,9 @@ mod tests {
         let outer_block = command_with_code('{');
         let inner_block = command_with_code('{');
 
-        let head = link_commands(vec![a.clone(), outer_block.clone(), b.clone()]);
-        let outer = link_commands(vec![m.clone(), inner_block.clone(), n.clone()]);
-        let inner = link_commands(vec![x.clone(), y.clone()]);
+        let head = link_commands(vec![a, outer_block.clone(), b]);
+        let outer = link_commands(vec![m, inner_block.clone(), n]);
+        let inner = link_commands(vec![x, y]);
         outer_block.borrow_mut().data = CommandData::BranchTarget(outer.clone());
         inner_block.borrow_mut().data = CommandData::BranchTarget(inner.clone());
 
@@ -2309,9 +2309,9 @@ mod tests {
         let outer_block = command_with_code('{');
         let inner_block = command_with_code('{');
 
-        let head = link_commands(vec![a.clone(), outer_block.clone(), b.clone()]);
+        let head = link_commands(vec![a, outer_block.clone(), b]);
         let outer = link_commands(vec![inner_block.clone()]);
-        let inner = link_commands(vec![x.clone()]);
+        let inner = link_commands(vec![x]);
         outer_block.borrow_mut().data = CommandData::BranchTarget(outer.clone());
         inner_block.borrow_mut().data = CommandData::BranchTarget(inner.clone());
 
@@ -2395,7 +2395,7 @@ mod tests {
         let block = command_with_data(CommandData::BranchTarget(Some(nested.clone())));
         let mut context = ProcessingContext::default();
 
-        populate_label_map(Some(block.clone()), &mut context).unwrap();
+        populate_label_map(Some(block), &mut context).unwrap();
 
         assert_eq!(context.label_to_command_map.len(), 1);
         assert!(context.label_to_command_map.contains_key("inside"));
@@ -2408,7 +2408,7 @@ mod tests {
         a.borrow_mut().code = ':';
         let b = command_with_data(CommandData::Label(Some("b".to_string())));
         b.borrow_mut().code = ':';
-        let head = link_commands(vec![a.clone(), b.clone()]);
+        let head = link_commands(vec![a, b]);
 
         let mut context = ProcessingContext::default();
         populate_label_map(head, &mut context).unwrap();
@@ -2422,7 +2422,7 @@ mod tests {
     fn test_no_labels() {
         let a = command_with_data(CommandData::None);
         let b = command_with_data(CommandData::None);
-        let head = link_commands(vec![a.clone(), b.clone()]);
+        let head = link_commands(vec![a, b]);
 
         let mut context = ProcessingContext::default();
         populate_label_map(head, &mut context).unwrap();
@@ -2435,7 +2435,7 @@ mod tests {
         let cmd = command_with_data(CommandData::Label(None));
         let mut context = ProcessingContext::default();
 
-        populate_label_map(Some(cmd.clone()), &mut context).unwrap();
+        populate_label_map(Some(cmd), &mut context).unwrap();
 
         // The map should remain empty since the label is None
         assert_eq!(context.label_to_command_map.len(), 0);
@@ -2449,7 +2449,7 @@ mod tests {
         let a2 = command_with_data(CommandData::Label(Some("dup".to_string())));
         a2.borrow_mut().code = ':';
 
-        let head = link_commands(vec![a1.clone(), a2.clone()]);
+        let head = link_commands(vec![a1, a2]);
         let mut context = ProcessingContext::default();
 
         let result = populate_label_map(head, &mut context);
@@ -2472,7 +2472,7 @@ mod tests {
         let mut context = ProcessingContext::default();
 
         populate_label_map(head.clone(), &mut context).unwrap();
-        let result = resolve_branch_targets(head.clone(), &mut context);
+        let result = resolve_branch_targets(head, &mut context);
         assert!(result.is_ok());
 
         match &branch.borrow().data {
@@ -2489,7 +2489,7 @@ mod tests {
         branch.borrow_mut().code = 't';
 
         let mut context = ProcessingContext::default();
-        let result = resolve_branch_targets(Some(branch.clone()), &mut context);
+        let result = resolve_branch_targets(Some(branch), &mut context);
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -2539,7 +2539,7 @@ mod tests {
 
         let mut context = ProcessingContext::default();
         populate_label_map(Some(label.clone()), &mut context).unwrap();
-        let result = resolve_branch_targets(head.clone(), &mut context);
+        let result = resolve_branch_targets(head, &mut context);
 
         assert!(result.is_ok());
         match &branch.borrow().data {
@@ -2570,8 +2570,10 @@ mod tests {
         let mut chars = make_char_provider("a \\ ");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-        context.posix = true;
+        let mut context = ProcessingContext {
+            posix: true,
+            ..Default::default()
+        };
 
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
@@ -2699,8 +2701,10 @@ mod tests {
         let mut chars = make_char_provider("a");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-        context.posix = true;
+        let mut context = ProcessingContext {
+            posix: true,
+            ..Default::default()
+        };
 
         let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
         assert!(result.is_err());
@@ -2713,8 +2717,10 @@ mod tests {
         let mut chars = make_char_provider("a \\ foo");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-        context.posix = true;
+        let mut context = ProcessingContext {
+            posix: true,
+            ..Default::default()
+        };
 
         let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
         assert!(result.is_err());

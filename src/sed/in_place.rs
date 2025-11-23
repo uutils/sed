@@ -217,7 +217,7 @@ mod tests {
 
         let mut inplace = InPlace::new(ctx);
         let buf = inplace.begin(file.path()).unwrap();
-        write!(buf, "updated\n").unwrap();
+        writeln!(buf, "updated").unwrap();
         inplace.end().unwrap();
 
         assert_eq!(read_file(file.path()), "updated\n");
@@ -236,7 +236,7 @@ mod tests {
 
         let mut inplace = InPlace::new(ctx);
         let buf = inplace.begin(file.path()).unwrap();
-        write!(buf, "new content\n").unwrap();
+        writeln!(buf, "new content").unwrap();
         inplace.end().unwrap();
 
         assert_eq!(read_file(file.path()), "new content\n");
@@ -259,7 +259,7 @@ mod tests {
 
         let mut inplace = InPlace::new(ctx);
         let buf = inplace.begin(link.path()).unwrap();
-        write!(buf, "changed\n").unwrap();
+        writeln!(buf, "changed").unwrap();
         inplace.end().unwrap();
 
         assert_eq!(read_file(real.path()), "changed\n");
@@ -282,7 +282,7 @@ mod tests {
 
         let mut inplace = InPlace::new(ctx);
         let buf = inplace.begin(link.path()).unwrap();
-        write!(buf, "linked\n").unwrap();
+        writeln!(buf, "linked").unwrap();
         inplace.end().unwrap();
 
         // real file should remain untouched

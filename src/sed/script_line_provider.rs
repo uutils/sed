@@ -169,6 +169,21 @@ impl fmt::Debug for State {
 }
 
 #[cfg(test)]
+impl ScriptLineProvider {
+    pub fn with_active_state(input_name: &str, line_number: usize) -> Self {
+        Self {
+            sources: vec![],
+            state: State::Active {
+                input_name: input_name.to_string(),
+                line_number,
+                index: 0,
+                reader: Box::new(BufReader::new(io::stdin())),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -218,7 +233,7 @@ mod tests {
             ScriptValue::PathVal(temp_file.path().to_path_buf()),
             ScriptValue::StringVal("script line 1".to_string()),
             ScriptValue::PathVal(temp_file.path().to_path_buf()),
-            ScriptValue::StringVal("".to_string()),
+            ScriptValue::StringVal(String::new()),
             ScriptValue::PathVal(temp_file2.path().to_path_buf()),
             ScriptValue::StringVal("other script line 1".to_string()),
         ];
@@ -272,21 +287,6 @@ mod tests {
             assert_eq!(provider.get_input_name(), "<script argument 2>");
         } else {
             panic!("Expected a line");
-        }
-    }
-}
-
-#[cfg(test)]
-impl ScriptLineProvider {
-    pub fn with_active_state(input_name: &str, line_number: usize) -> Self {
-        Self {
-            sources: vec![],
-            state: State::Active {
-                input_name: input_name.to_string(),
-                line_number,
-                index: 0,
-                reader: Box::new(BufReader::new(io::stdin())),
-            },
         }
     }
 }
