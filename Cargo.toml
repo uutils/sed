@@ -67,7 +67,6 @@ once_cell = { workspace = true }
 phf = { workspace = true }
 predicates = { workspace = true }
 regex = { workspace = true }
-# sed module is now part of the main crate
 sysinfo = { workspace = true }
 tempfile = { workspace = true }
 terminal_size = { workspace = true }
