@@ -1032,7 +1032,6 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "textwrap",
- "uu_sed",
  "uucore",
  "uutests",
  "xattr",
@@ -1289,23 +1288,6 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
-
-[[package]]
-name = "uu_sed"
-version = "0.0.1"
-dependencies = [
- "assert_fs",
- "clap",
- "fancy-regex",
- "memchr",
- "memmap2",
- "once_cell",
- "predicates",
- "regex",
- "tempfile",
- "terminal_size",
- "uucore",
-]
 
 [[package]]
 name = "uucore"

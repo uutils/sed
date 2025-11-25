@@ -8,11 +8,11 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::error_handling::{ScriptLocation, runtime_error};
-use crate::fast_regex::{Captures, Match, Regex};
-use crate::named_writer::NamedWriter;
-use crate::script_char_provider::ScriptCharProvider;
-use crate::script_line_provider::ScriptLineProvider;
+use crate::sed::error_handling::{ScriptLocation, runtime_error};
+use crate::sed::fast_regex::{Captures, Match, Regex};
+use crate::sed::named_writer::NamedWriter;
+use crate::sed::script_char_provider::ScriptCharProvider;
+use crate::sed::script_line_provider::ScriptLineProvider;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -343,7 +343,7 @@ pub struct InputAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fast_io::IOChunk;
+    use crate::sed::fast_io::IOChunk;
 
     // Return the captures for the RE applied to the specified string
     fn caps_for<'a>(re: &str, chunk: &'a mut IOChunk) -> Captures<'a> {
@@ -358,7 +358,7 @@ mod tests {
     // s/foo//
     fn test_empty_template() {
         let template = ReplacementTemplate::default();
-        let input = &mut IOChunk::from_str("foo");
+        let input = &mut IOChunk::new_from_str("foo");
         let caps = caps_for("foo", input);
         let cmd = Command::default();
 
@@ -370,7 +370,7 @@ mod tests {
     // s/abc/hello/
     fn test_literal_only() {
         let template = ReplacementTemplate::new(vec![ReplacementPart::Literal("hello".into())]);
-        let input = &mut IOChunk::from_str("abc");
+        let input = &mut IOChunk::new_from_str("abc");
         let caps = caps_for("abc", input);
         let cmd = Command::default();
 
@@ -385,7 +385,7 @@ mod tests {
             ReplacementPart::Literal("got: ".into()),
             ReplacementPart::WholeMatch,
         ]);
-        let input = &mut IOChunk::from_str("foo42");
+        let input = &mut IOChunk::new_from_str("foo42");
         let caps = caps_for(r"foo\d+", input);
         let cmd = Command::default();
 
@@ -400,7 +400,7 @@ mod tests {
             ReplacementPart::Literal("number: ".into()),
             ReplacementPart::Group(1),
         ]);
-        let input = &mut IOChunk::from_str("foo42");
+        let input = &mut IOChunk::new_from_str("foo42");
         let caps = caps_for(r"foo(\d+)", input);
         let cmd = Command::default();
 
@@ -417,7 +417,7 @@ mod tests {
             ReplacementPart::Literal(", value: ".into()),
             ReplacementPart::Group(2),
         ]);
-        let input = &mut IOChunk::from_str("x:123");
+        let input = &mut IOChunk::new_from_str("x:123");
         let caps = caps_for(r"(\w+):(\d+)", input);
         let cmd = Command::default();
 
@@ -434,7 +434,7 @@ mod tests {
             ReplacementPart::Literal(", value: ".into()),
             ReplacementPart::Group(3),
         ]);
-        let input = &mut IOChunk::from_str("x:123");
+        let input = &mut IOChunk::new_from_str("x:123");
         let caps = caps_for(r"(\w+):(\d+)", input);
         let cmd = Command::default();
 

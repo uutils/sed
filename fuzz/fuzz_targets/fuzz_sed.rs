@@ -7,7 +7,7 @@ use libfuzzer_sys::fuzz_target;
 use rand::prelude::*;
 use rand::rng;
 use std::ffi::OsString;
-use uu_sed::uumain;
+use sed::sed::uumain;
 use uufuzz::{
     CommandResult, compare_result, generate_and_run_uumain, generate_random_string, run_gnu_cmd,
 };

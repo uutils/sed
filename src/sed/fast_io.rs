@@ -204,7 +204,7 @@ impl<'a> IOChunk<'a> {
 
     #[cfg(test)]
     /// Create an Owned newline-terminated IOChunk from a string.
-    pub fn from_str(s: &str) -> Self {
+    pub fn new_from_str(s: &str) -> Self {
         IOChunk {
             content: IOChunkContent::new_owned(s.to_string(), true),
             utf8_verified: Cell::new(false),
@@ -987,7 +987,7 @@ mod tests {
     #[cfg(unix)]
     fn make_dot_line_4k() -> Vec<u8> {
         let mut buf = Vec::with_capacity(4096);
-        buf.extend(std::iter::repeat(b'.').take(4095));
+        buf.extend(std::iter::repeat_n(b'.', 4095));
         buf.push(b'\n');
         buf
     }
@@ -1453,7 +1453,7 @@ mod tests {
 
     #[test]
     fn test_owned_newline_terminated_empty() {
-        let chunk = IOChunk::from_content(IOChunkContent::new_owned("".to_string(), true));
+        let chunk = IOChunk::from_content(IOChunkContent::new_owned(String::new(), true));
         assert!(chunk.is_newline_terminated());
         assert!(chunk.is_empty());
     }

@@ -51,8 +51,10 @@ pub fn main() {
     .unwrap();
 
     let mut phf_map = phf_codegen::OrderedMap::<&str>::new();
+    let crate_name = env::var("CARGO_PKG_NAME").unwrap();
     for krate in &crates {
-        let map_value = format!("({krate}::uumain, {krate}::uu_app)");
+        // Use the package name to reference modules in the main crate from binaries
+        let map_value = format!("({crate_name}::{krate}::uumain, {crate_name}::{krate}::uu_app)");
         phf_map.entry(krate, map_value);
     }
     write!(mf, "{}", phf_map.build()).unwrap();
