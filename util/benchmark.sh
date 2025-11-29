@@ -40,7 +40,7 @@ echo 'command,mean,stddev,median,user,system,min,max' >"$OUT"
 awk 'BEGIN { for (i = 0; i < 50000000; i++) { print i } }' > lines.txt
 
 # No operation
-bench_run no-op-short "$PROG '' lines.txt"
+bench_run no-op-short "$PROG "'"" lines.txt'
 
 # Log file processing
 
@@ -58,7 +58,7 @@ create_access_log()
 create_access_log 5000000
 
 # No operation
-bench_run access-log-no-op "$PROG '' access.log"
+bench_run access-log-no-op "$PROG "'"" access.log'
 
 # No substitution
 bench_run access-log-no-subst "$PROG s/Chrome/Chromium/ access.log"
@@ -93,9 +93,10 @@ awk 'BEGIN {
   }
 }' > legacy_input.txt
 
-bench_run remove-cr "$PROG 's/\r$//' legacy_input.txt"
+echo 's/\r$//' >script.sed
+bench_run remove-cr "$PROG -f script.sed legacy_input.txt"
 
-rm legacy_input.txt
+rm -f legacy_input.txt script.sed
 
 # Genomic data cleanup
 
@@ -106,10 +107,10 @@ awk 'BEGIN {
   }
 }' > genome.tsv
 
-CMD='/^#/d; s/\t\./\tNA/g; s/\.$/NA/'
-bench_run genome-subst "$PROG '$CMD' genome.tsv"
+echo '/^#/d; s/\t\./\tNA/g; s/\.$/NA/' >script.sed
+bench_run genome-subst "$PROG -f script.sed genome.tsv"
 
-rm -f genome.tsv
+rm -f genome.tsv script.sed
 
 # Number fixups: remove thousands separator, change , into .
 awk 'BEGIN {
@@ -122,10 +123,10 @@ awk 'BEGIN {
   }
 }' > finance.csv
 
-CMD='s/\([0-9]\)\.\([0-9]\)/\1\2/g;s/\([0-9]\),\([0-9]\)/\1.\2/g'
-bench_run number-fix "$PROG '$CMD' finance.csv"
+echo 's/\([0-9]\)\.\([0-9]\)/\1\2/g;s/\([0-9]\),\([0-9]\)/\1.\2/g' >script.sed
+bench_run number-fix "$PROG -f script.sed finance.csv"
 
-rm -f finance.csv
+rm -f finance.csv script.sed
 
 # Long script compilation
 for i in $(seq 1 99) ; do
