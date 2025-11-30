@@ -27,44 +27,12 @@ use crate::sed::fast_io::IOChunk;
 
 /// REs requiring the fancy_regex capabilities rather than the
 /// faster regex::bytes engine
-// Consider . as one character that requires fancy_regex,
-// because it can match more than one byte when matching a
-// two or more byte Unicode UTF-8 representation.
-// It is an RE . rather than a literal one in the following
-// example sitations.
-// .        First character of the line
-// [^\\].   Second character after non \
-//
-//   \*.    A consumed backslash anywhere on the line
-//   \\.    An escaped backslash anywhere on the line
-//   xx.    A non-escaped sequence anywhere on the line
-// But the following are literal dots and can be captured by bytes:
-// \.       escaped at the beginning of the line
-//   x\.    escaped after a non escaped \ anywhere on the line
-//
-// The following RE captures these situations.
-static NEEDS_FANCY_RE: Lazy<RustRegex> = Lazy::new(|| {
-    regex::Regex::new(
-        r"(?x) # Turn on verbose mode
-          (                       # An ASCII-incompatible RE
-            ( ^                   # Non-escaped: i.e. at BOL
-              | ^[^\\]            # or after a BOL non \
-              | [^\\] {2}         # or after two non \ characters
-              | \\.               # or after a consumed or escaped \
-            )
-            (                     # A potentially incompatible match
-              \.                  # . matches any Unicode character
-              | \[\^              # Bracketed -ve character class
-              | \(\?i             # (Unicode) case insensitive
-              | \\[WwDdSsBbPp]    # Unicode classes
-              | \\[0-9]           # Back-references need fancy
-            )
-          )
-          | [^\x01-\x7f]          # Any non-ASCII character
-        ",
-    )
-    .unwrap()
-});
+// False positives only result in a small performance pessimization,
+// so this is just a maximally sensitive, good-enough approximation.
+// For example, r"\\1" and r"[\1]" will match, whereas only a number
+// after an odd number of backslashes and outside a character class
+// should match.
+static NEEDS_FANCY_RE: Lazy<RustRegex> = Lazy::new(|| regex::Regex::new(r"\\[1-9]").unwrap());
 
 /// All characters signifying that the match must be handled by an RE
 /// rather than by plain string pattern matching.
@@ -476,40 +444,13 @@ mod tests {
     #[test]
     fn test_needs_fancy_re_matches() {
         let should_match = [
-            // Unicode classes BOL
-            r"\p{L}+", // Unicode letter class
-            r"\W",     // \W is Unicode-aware.
-            r"\S+",    // \S is Unicode-aware.
-            r"\d",     // \d includes all Unicode digits.
-            // Unicode classes non-BOL
-            r"x\p{L}+", // Unicode letter class
-            r"x\W",     // \W is Unicode-aware.
-            r"x\S+",    // \S is Unicode-aware.
-            r"x\d",     // \d includes all Unicode digits.
-            // .
-            r".",
-            r"x.",
-            r"xx.",
-            // Consumed \
-            r"\*.",
-            r"x\*.",
-            // Escaped \
-            r"\\.",
-            r"x\\.",
-            // Inline flags
-            r"(?i)abc",  // Unicode case-insensitive
-            r"x(?i)abc", // Unicode case-insensitive
             r"(\w+):\1", // back-reference \1
-            // Non-ASCII literals
-            "naïve", // Contains literal non-ASCII.
-            "café",  // Contains literal non-ASCII.
         ];
 
         for pat in &should_match {
             assert!(
                 NEEDS_FANCY_RE.is_match(pat),
-                "Expected NEEDS_FANCY_RE to match: {:?}",
-                pat
+                "Expected NEEDS_FANCY_RE to match: {pat:?}"
             );
         }
     }
@@ -517,11 +458,8 @@ mod tests {
     #[test]
     fn test_needs_fancy_re_does_not_match() {
         let should_not_match = [
-            r"\.",     // Escaped . at BOL
-            r"x\.",    // Escaped . at non BOL
-            r"\[^x]",  // Escaped character class
-            r"\(?i\)", // Escaped case insesitive flag
-            r"\\w",    // Escaped Unicode class
+            r"\ 1", // Non-adjacent
+            r"\0",  // Only \[1-9]
             // Simple ASCII
             r"foo",
             r"foo|bar",
@@ -531,8 +469,7 @@ mod tests {
         for pat in &should_not_match {
             assert!(
                 !NEEDS_FANCY_RE.is_match(pat),
-                "Expected NEEDS_FANCY_RE to NOT match: {:?}",
-                pat
+                "Expected NEEDS_FANCY_RE to NOT match: {pat:?}"
             );
         }
     }
@@ -558,8 +495,7 @@ mod tests {
         for pat in &should_match {
             assert!(
                 NEEDS_RE.is_match(pat),
-                "Expected NEEDS_RE to match: {:?}",
-                pat
+                "Expected NEEDS_RE to match: {pat:?}"
             );
         }
     }
@@ -579,8 +515,7 @@ mod tests {
         for pat in &should_not_match {
             assert!(
                 !NEEDS_RE.is_match(pat),
-                "Expected NEEDS_RE to NOT match: {:?}",
-                pat
+                "Expected NEEDS_RE to NOT match: {pat:?}"
             );
         }
     }
@@ -594,7 +529,7 @@ mod tests {
 
     #[test]
     fn assert_fancy() {
-        let re = Regex::new(r"\d").unwrap();
+        let re = Regex::new(r"(.)\1").unwrap();
         assert!(matches!(re, Regex::Fancy(_)));
     }
 
@@ -609,8 +544,7 @@ mod tests {
         let err = Regex::new("(").unwrap_err().to_string();
         assert!(
             err.contains("unclosed group") || err.contains("error parsing"),
-            "Unexpected error: {}",
-            err
+            "Unexpected error: {err:?}"
         );
     }
 

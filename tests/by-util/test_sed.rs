@@ -295,6 +295,21 @@ check_output!(subst_re_reuse, ["-e", r"2s//M/;1s/l/L/", LINES1]);
 check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
 check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
 
+// Check appropriate selection and behavior of fast_Regex matcher
+// Literal matcher
+check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
+check_output!(subst_literal_end, ["-e", r"s/2$/TWO/", LINES1]);
+check_output!(subst_literal, ["-e", r"s/_/-/", LINES1]);
+
+// Fancy matcher
+check_output!(subst_backref, ["-e", r"s/l\(.\)_\1/same-number/", LINES1]);
+
+// Bytes matcher with Unicode
+check_output!(subst_greek, ["-e", r"s/[α-ω]/G/g", "input/unicode"]);
+check_output!(subst_any_unicode, ["-e", r"s/.$/:-)/", "input/unicode"]);
+check_output!(subst_lcase, ["-e", r"s/κ/*/gi", "input/unicode"]);
+check_output!(subst_word, ["-E", "-e", r"s/\w+/WORD/g", "input/unicode"]);
+
 #[test]
 fn subst_write_file() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
