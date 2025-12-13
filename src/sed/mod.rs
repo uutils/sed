@@ -24,7 +24,7 @@ use crate::sed::command::{ProcessingContext, StringSpace};
 use crate::sed::compiler::compile;
 use crate::sed::processor::process_all_files;
 use crate::sed::script_line_provider::ScriptValue;
-use clap::{Arg, ArgMatches, Command, arg};
+use clap::{Arg, ArgMatches, Command, arg, crate_version};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
@@ -47,6 +47,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 #[allow(clippy::cognitive_complexity)]
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
+        .version(crate_version!())
         .about(ABOUT)
         .override_usage(format_usage(USAGE))
         .infer_long_args(true)
