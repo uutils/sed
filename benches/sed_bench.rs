@@ -16,7 +16,7 @@ use uucore::benchmark::{create_test_file, run_util_function};
 fn no_op_short(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..50_000_000 {
+    for i in 0..10_000_000 {
         data.extend_from_slice(format!("{}\n", i).as_bytes());
     }
     let file_path = create_test_file(&data, temp_dir.path());
@@ -53,7 +53,7 @@ fn access_log_no_op(bencher: Bencher) {
 fn access_log_no_subst(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..5_000_000 {
+    for i in 0..1_000_000 {
         let line = format!(
             "192.168.{}.{} - - [01/Jan/2024:00:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 1234 \"-\" \"Mozilla/5.0\"\n",
             (i / 256) % 256,
@@ -77,7 +77,7 @@ fn access_log_no_subst(bencher: Bencher) {
 fn access_log_subst(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..5_000_000 {
+    for i in 0..1_000_000 {
         let line = format!(
             "192.168.{}.{} - - [01/Jan/2024:00:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 1234 \"-\" \"Mozilla/5.0\"\n",
             (i / 256) % 256,
@@ -101,7 +101,7 @@ fn access_log_subst(bencher: Bencher) {
 fn access_log_no_del(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..5_000_000 {
+    for i in 0..1_000_000 {
         let line = format!(
             "192.168.{}.{} - - [01/Jan/2024:00:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 1234 \"-\" \"Mozilla/5.0\"\n",
             (i / 256) % 256,
@@ -122,7 +122,7 @@ fn access_log_no_del(bencher: Bencher) {
 fn access_log_all_del(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..5_000_000 {
+    for i in 0..1_000_000 {
         let line = format!(
             "192.168.{}.{} - - [01/Jan/2024:00:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 1234 \"-\" \"Mozilla/5.0\"\n",
             (i / 256) % 256,
@@ -143,7 +143,7 @@ fn access_log_all_del(bencher: Bencher) {
 fn access_log_translit(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..50_000 {
+    for i in 0..500_000 {
         let line = format!(
             "192.168.{}.{} - - [01/Jan/2024:00:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 1234 \"-\" \"Mozilla/5.0\"\n",
             (i / 256) % 256,
@@ -167,7 +167,7 @@ fn access_log_translit(bencher: Bencher) {
 fn access_log_append(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..50_000 {
+    for i in 0..2_000_000 {
         let line = format!(
             "192.168.{}.{} - - [01/Jan/2024:00:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 1234 \"-\" \"Mozilla/5.0\"\n",
             (i / 256) % 256,
@@ -191,7 +191,7 @@ fn access_log_append(bencher: Bencher) {
 fn remove_cr(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..1_500_000 {
+    for i in 0..500_000 {
         let line = format!("line {} with windows endings\r\n", i);
         data.extend_from_slice(line.as_bytes());
     }
@@ -208,7 +208,7 @@ fn remove_cr(bencher: Bencher) {
 fn genome_subst(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..1_000_000 {
+    for i in 0..100_000 {
         let chr = format!("chr{}", 1 + i % 22);
         let line = format!(
             "{}\t{}\t{}\t.\t{}\t.\t.\n",
@@ -235,7 +235,7 @@ fn genome_subst(bencher: Bencher) {
 fn number_fix(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
-    for i in 0..700_000 {
+    for i in 0..100_000 {
         let euros = i % 10000;
         let cents = i % 100;
         let thousands = euros / 1000;

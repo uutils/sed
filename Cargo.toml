@@ -106,6 +106,10 @@ name = "uudoc"
 path = "src/bin/uudoc.rs"
 required-features = ["uudoc"]
 
+[[bench]]
+name = "sed_bench"
+harness = false
+
 # The default release profile. It contains all optimizations, without
 # sacrificing debug info. With this profile (like in the standard
 # release profile), the debug info and the stack traces will still be available.
