@@ -1032,7 +1032,7 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "textwrap",
- "uucore",
+ "uucore 0.4.0",
  "uutests",
  "xattr",
 ]
@@ -1297,11 +1297,9 @@ checksum = "2003164a38a7f39da1de103a70fa66b745f572f0045ec261481539516c0a8a0e"
 dependencies = [
  "bstr",
  "clap",
- "dns-lookup",
  "fluent",
  "fluent-bundle",
  "fluent-syntax",
- "jiff",
  "libc",
  "nix",
  "number_prefix",
@@ -1309,9 +1307,31 @@ dependencies = [
  "phf",
  "procfs",
  "thiserror",
+ "unic-langid",
+ "uucore_procs 0.4.0",
+ "wild",
+]
+
+[[package]]
+name = "uucore"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5eddd390f3fdef74f104a948559e6de29203f60f8f563c8c9f528cd4c88ee78"
+dependencies = [
+ "clap",
+ "dns-lookup",
+ "fluent",
+ "fluent-bundle",
+ "fluent-syntax",
+ "jiff",
+ "libc",
+ "nix",
+ "os_display",
+ "phf",
+ "thiserror",
  "time",
  "unic-langid",
- "uucore_procs",
+ "uucore_procs 0.5.0",
  "wild",
 ]
 
@@ -1326,10 +1346,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "uutests"
-version = "0.4.0"
+name = "uucore_procs"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c46a1280b9aa25715b918f1d5fb52da79f7664fba3477b276b6475f4e207dda"
+checksum = "47148309a1f7a989d165dabbbc7f2bf156d7ff6affe7d69c1c5bfb822e663ae6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "uutests"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29a84842bcddea9787b70feefc8a4aad9be182225b13b5ad7ee04bdb601673c6"
 dependencies = [
  "ctor",
  "libc",
@@ -1339,7 +1369,7 @@ dependencies = [
  "regex",
  "rlimit",
  "tempfile",
- "uucore",
+ "uucore 0.5.0",
  "xattr",
 ]
 
