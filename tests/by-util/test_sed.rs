@@ -25,6 +25,22 @@ fn test_invalid_arg() {
 }
 
 #[test]
+fn test_version() {
+    let short = new_ucmd!()
+        .arg("-V")
+        .succeeds()
+        .no_stderr()
+        .stdout_str()
+        .to_owned();
+
+    new_ucmd!()
+        .arg("--version")
+        .succeeds()
+        .no_stderr()
+        .stdout_is(short);
+}
+
+#[test]
 fn test_debug() {
     new_ucmd!().args(&["--debug", ""]).succeeds();
 }
