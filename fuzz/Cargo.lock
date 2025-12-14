@@ -366,9 +366,9 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf04c5ec15464ace8355a7b440a33aece288993475556d461154d7a62ad9947c"
+checksum = "72cf461f865c862bb7dc573f643dd6a2b6842f7c30b07882b56bd148cc2761b8"
 dependencies = [
  "bit-set",
  "regex-automata",
@@ -977,7 +977,7 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "textwrap",
- "uucore",
+ "uucore 0.4.0",
 ]
 
 [[package]]
@@ -1201,23 +1201,43 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2003164a38a7f39da1de103a70fa66b745f572f0045ec261481539516c0a8a0e"
 dependencies = [
- "bigdecimal",
  "bstr",
  "clap",
  "fluent",
  "fluent-bundle",
  "fluent-syntax",
- "glob",
  "libc",
  "nix",
- "num-traits",
  "number_prefix",
  "os_display",
  "phf",
  "procfs",
  "thiserror",
  "unic-langid",
- "uucore_procs",
+ "uucore_procs 0.4.0",
+ "wild",
+]
+
+[[package]]
+name = "uucore"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5eddd390f3fdef74f104a948559e6de29203f60f8f563c8c9f528cd4c88ee78"
+dependencies = [
+ "bigdecimal",
+ "clap",
+ "fluent",
+ "fluent-bundle",
+ "fluent-syntax",
+ "glob",
+ "nix",
+ "num-traits",
+ "os_display",
+ "phf",
+ "procfs",
+ "thiserror",
+ "unic-langid",
+ "uucore_procs 0.5.0",
  "wild",
 ]
 
@@ -1232,7 +1252,7 @@ dependencies = [
  "sed",
  "similar",
  "tempfile",
- "uucore",
+ "uucore 0.4.0",
  "uufuzz",
 ]
 
@@ -1247,17 +1267,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "uufuzz"
-version = "0.4.0"
+name = "uucore_procs"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "307a1bdccdebc644f26a31e02d54cc09ae1544022aac06469130090e327d2d84"
+checksum = "47148309a1f7a989d165dabbbc7f2bf156d7ff6affe7d69c1c5bfb822e663ae6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "uufuzz"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4eee42f33e8c5e6d371c6bb29e3749ee4f135bc038f49b8e4519592e0f9988"
 dependencies = [
  "console",
  "libc",
  "rand",
  "similar",
  "tempfile",
- "uucore",
+ "uucore 0.5.0",
 ]
 
 [[package]]
