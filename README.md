@@ -39,11 +39,7 @@ cargo build --release
 cargo run --release
 ```
 
-To call the binary `sed`, create a symlink like:
-
-```bash
-ln -s target/release/sedapp sed
-```
+The binary is named `sed` in `target/release/sed`.
 
 ## Extensions and incompatibilities
 ### Supported GNU extensions
