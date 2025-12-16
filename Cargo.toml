@@ -23,7 +23,6 @@ build = "build.rs"
 
 [features]
 default = ["feat_common_core"]
-uudoc = []
 
 feat_common_core = ["sed"]
 sed = []
@@ -101,11 +100,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "sed"
 path = "src/bin/sed.rs"
-
-[[bin]]
-name = "uudoc"
-path = "src/bin/uudoc.rs"
-required-features = ["uudoc"]
 
 [[bench]]
 name = "sed_bench"
