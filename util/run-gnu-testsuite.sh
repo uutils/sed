@@ -20,6 +20,7 @@ set -o pipefail
 
 # Configuration
 RUST_SED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GNU_TESTSUITE_DIR_ORIG="${GNU_TESTSUITE_DIR:-}"
 GNU_TESTSUITE_DIR="${GNU_TESTSUITE_DIR:-${RUST_SED_DIR}/../gnu.sed/testsuite}"
 VERBOSE=false
 QUIET=false
@@ -89,34 +90,50 @@ generate_json_output() {
     cd "$RUST_SED_DIR"
 
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local detailed_json=""
+    local rust_version=$(cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r '.packages[0].version // "unknown"')
 
-    # Build detailed results array
+    # Build tests array safely using jq
+    local tests_json="[]"
     if [[ ${#DETAILED_RESULTS[@]} -gt 0 ]]; then
-        detailed_json=$(printf "%s," "${DETAILED_RESULTS[@]}")
-        detailed_json="[${detailed_json%,}]"  # Remove trailing comma and wrap in array
-    else
-        detailed_json="[]"
+        # Create a temporary file with one JSON object per line
+        local temp_file=$(mktemp)
+        printf "%s\n" "${DETAILED_RESULTS[@]}" > "$temp_file"
+
+
+        tests_json=$(jq -s '.' < "$temp_file" 2>/dev/null)
+        if [[ $? -ne 0 ]]; then
+            echo "ERROR: Failed to parse JSON from temp file"
+            tests_json="[]"
+        fi
+        rm -f "$temp_file"
     fi
 
-    # Generate JSON output
-    cat > "$JSON_OUTPUT_FILE" << EOF
-{
-  "timestamp": "$timestamp",
-  "summary": {
-    "total": $TOTAL_TESTS,
-    "passed": $PASSED_TESTS,
-    "failed": $FAILED_TESTS,
-    "skipped": $SKIPPED_TESTS,
-    "duration_seconds": $duration
-  },
-  "environment": {
-    "rust_sed_version": "$(cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r '.packages[0].version // "unknown"')",
-    "gnu_testsuite_dir": "$GNU_TESTSUITE_DIR",
-  },
-  "tests": $detailed_json
-}
-EOF
+    # Generate JSON output using jq for safety
+    jq -n \
+        --arg timestamp "$timestamp" \
+        --argjson total "$TOTAL_TESTS" \
+        --argjson passed "$PASSED_TESTS" \
+        --argjson failed "$FAILED_TESTS" \
+        --argjson skipped "$SKIPPED_TESTS" \
+        --argjson duration "$duration" \
+        --arg rust_version "$rust_version" \
+        --arg gnu_testsuite_dir "$GNU_TESTSUITE_DIR" \
+        --argjson tests "$tests_json" \
+        '{
+            timestamp: $timestamp,
+            summary: {
+                total: $total,
+                passed: $passed,
+                failed: $failed,
+                skipped: $skipped,
+                duration_seconds: $duration
+            },
+            environment: {
+                rust_sed_version: $rust_version,
+                gnu_testsuite_dir: $gnu_testsuite_dir
+            },
+            tests: $tests
+        }' > "$JSON_OUTPUT_FILE"
 
     log_info "JSON results written to: $JSON_OUTPUT_FILE"
 }
@@ -242,12 +259,16 @@ run_sed_test() {
 
     # Store detailed results for JSON output
     if [[ -n "$JSON_OUTPUT_FILE" ]]; then
-        # Use printf and od to properly escape all control characters and special characters for JSON
-        local escaped_test_name=$(printf '%s' "$test_name" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ' | tr '\r' ' ' | tr '\t' ' ')
-        local escaped_sed_script=$(printf '%s' "$sed_script" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ' | tr '\r' ' ' | tr '\t' ' ')
-        local escaped_error=$(printf '%s' "$error_message" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ' | tr '\r' ' ' | tr '\t' ' ')
+        # Create JSON object using jq to ensure proper escaping and structure
+        local json_obj
+        json_obj=$(jq -n \
+            --arg name "$test_name" \
+            --arg status "$test_status" \
+            --arg script "$sed_script" \
+            --arg error "$error_message" \
+            '{name: $name, status: $status, script: $script, error: $error}')
 
-        DETAILED_RESULTS+=("{\"name\":\"$escaped_test_name\",\"status\":\"$test_status\",\"script\":\"$escaped_sed_script\",\"error\":\"$escaped_error\"}")
+        DETAILED_RESULTS+=("$json_obj")
     fi
 
     # Cleanup test directory
@@ -333,7 +354,30 @@ run_gnu_testsuite_tests() {
 
     # 3. Extract simple tests from shell scripts
     local shell_count=0
-    for shell_file in "$GNU_TESTSUITE_DIR"/*.sh; do
+
+    # Use array to collect shell files via find (more reliable than glob)
+    local shell_files=()
+    # Use temporary file approach to avoid process substitution issues in CI
+    local temp_file_list
+    temp_file_list=$(mktemp)
+    trap 'rm -f "$temp_file_list"' EXIT
+
+    # Find shell files and store in temporary file - we need to go back to RUST_SED_DIR
+    local original_dir="$(pwd)"
+    cd "$RUST_SED_DIR" || { echo "ERROR: Cannot cd to RUST_SED_DIR"; return 1; }
+    # Get absolute paths so they work from any directory
+    find "$(pwd)/$GNU_TESTSUITE_DIR" -name "*.sh" 2>/dev/null > "$temp_file_list"
+    cd "$original_dir"
+
+
+    # Read the file list into array
+    while IFS= read -r shell_file; do
+        [[ -n "$shell_file" ]] && shell_files+=("$shell_file")
+    done < "$temp_file_list"
+
+    rm -f "$temp_file_list"
+
+    for shell_file in "${shell_files[@]}"; do
         if [[ -f "$shell_file" && $shell_count -lt 50 ]]; then  # Process more test files
             local basename
             basename=$(basename "$shell_file" .sh)
