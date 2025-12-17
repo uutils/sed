@@ -41,6 +41,33 @@ cargo run --release
 
 The binary is named `sed` in `target/release/sed`.
 
+## Testing
+
+### GNU sed Compatibility Testing
+
+Test compatibility against GNU sed using the comprehensive testsuite (47+ tests, ~10% pass rate):
+
+```bash
+# Clone GNU sed testsuite (one time setup)
+git clone https://github.com/mirror/sed.git ../gnu.sed
+
+# Run compatibility tests
+./util/run-gnu-testsuite.sh
+
+# Generate JSON results for CI
+./util/run-gnu-testsuite.sh --json-output results.json
+```
+
+The testsuite extracts test cases from the GNU sed repository and tests them against expected outputs.
+
+See [GNU_TESTSUITE_SETUP.md](GNU_TESTSUITE_SETUP.md) for detailed setup instructions.
+
+### Unit Tests
+
+```bash
+cargo test
+```
+
 ## Extensions and incompatibilities
 ### Supported GNU extensions
 * Command-line arguments can be specified in long (`--`) form.
