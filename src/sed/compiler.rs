@@ -2051,13 +2051,15 @@ mod tests {
 
     #[test]
     fn test_compile_subst_flag_w_with_filename() {
-        let (lines, mut chars) = make_providers("w out.txt");
+        let tmp_dir = tempfile::tempdir().expect("failed to create tmp folder");
+        let out = tmp_dir.path().join("out.txt");
+        let (lines, mut chars) = make_providers(&format!("w {}", out.display()));
         let mut subst = Substitution::default();
 
         compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
         assert_eq!(
             subst.write_file.as_ref().map(|w| w.borrow().path.clone()),
-            Some(std::path::PathBuf::from("out.txt"))
+            Some(out)
         );
     }
 
