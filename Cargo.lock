@@ -1133,7 +1133,6 @@ dependencies = [
  "libc",
  "memchr",
  "memmap2",
- "once_cell",
  "phf",
  "phf_codegen",
  "predicates",

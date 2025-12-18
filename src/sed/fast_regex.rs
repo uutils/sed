@@ -15,12 +15,12 @@ use fancy_regex::{
     CaptureMatches as FancyCaptureMatches, Captures as FancyCaptures, Regex as FancyRegex,
 };
 use memchr::memmem;
-use once_cell::sync::Lazy;
 use regex::Regex as RustRegex;
 use regex::bytes::{
     CaptureMatches as ByteCaptureMatches, Captures as ByteCaptures, Regex as ByteRegex,
 };
 use std::error::Error;
+use std::sync::LazyLock;
 use uucore::error::{UResult, USimpleError};
 
 use crate::sed::fast_io::IOChunk;
@@ -32,7 +32,8 @@ use crate::sed::fast_io::IOChunk;
 // For example, r"\\1" and r"[\1]" will match, whereas only a number
 // after an odd number of backslashes and outside a character class
 // should match.
-static NEEDS_FANCY_RE: Lazy<RustRegex> = Lazy::new(|| regex::Regex::new(r"\\[1-9]").unwrap());
+static NEEDS_FANCY_RE: LazyLock<RustRegex> =
+    LazyLock::new(|| regex::Regex::new(r"\\[1-9]").unwrap());
 
 /// All characters signifying that the match must be handled by an RE
 /// rather than by plain string pattern matching.
@@ -41,7 +42,7 @@ static NEEDS_FANCY_RE: Lazy<RustRegex> = Lazy::new(|| regex::Regex::new(r"\\[1-9
 // matching, because Regex always constructs an automaton and needs
 // to handle state transitions, whereas plain string matching can
 // use tailored CPU string or vectored instructions.
-static NEEDS_RE: Lazy<RustRegex> = Lazy::new(|| {
+static NEEDS_RE: LazyLock<RustRegex> = LazyLock::new(|| {
     regex::Regex::new(
         r"(?x) # Turn on verbose mode
           ( ^                   # Non-escaped: i.e. at BOL
