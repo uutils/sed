@@ -60,8 +60,6 @@ git clone https://github.com/mirror/sed.git ../gnu.sed
 
 The testsuite extracts test cases from the GNU sed repository and tests them against expected outputs.
 
-See [GNU_TESTSUITE_SETUP.md](GNU_TESTSUITE_SETUP.md) for detailed setup instructions.
-
 ### Unit Tests
 
 ```bash
