@@ -28,7 +28,7 @@ jobs:
     steps:
     #### Get the code, setup cache
     - name: Checkout code (sed)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         path: 'sed'
         persist-credentials: false
@@ -40,7 +40,7 @@ jobs:
       with:
         workspaces: "./sed -> target"
     - name: Checkout code (GNU sed testsuite)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: 'mirror/sed'
         path: 'gnu.sed'
@@ -120,7 +120,7 @@ jobs:
         outputs TEST_SUMMARY_FILE
 
     - name: Checkout code (sed)
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         path: 'sed'
         persist-credentials: false
