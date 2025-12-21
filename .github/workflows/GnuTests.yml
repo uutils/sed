@@ -1,0 +1,224 @@
+name: GnuTests
+
+# Run GNU sed testsuite against the Rust sed implementation
+# This workflow extracts and runs tests from the GNU sed testsuite to ensure compatibility
+
+on:
+  pull_request:
+  push:
+    branches:
+      - '*'
+
+permissions:
+  contents: read
+
+# End the current execution if there is a new changeset in the PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+  TEST_FULL_SUMMARY_FILE: 'sed-gnu-full-result.json'
+
+jobs:
+  native:
+    name: Run GNU sed testsuite
+    runs-on: ubuntu-24.04
+    steps:
+    #### Get the code, setup cache
+    - name: Checkout code (sed)
+      uses: actions/checkout@v4
+      with:
+        path: 'sed'
+        persist-credentials: false
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
+        components: rustfmt
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: "./sed -> target"
+    - name: Checkout code (GNU sed testsuite)
+      uses: actions/checkout@v4
+      with:
+        repository: 'mirror/sed'
+        path: 'gnu.sed'
+        ref: 'master'
+        persist-credentials: false
+
+    #### Build environment setup
+    - name: Install dependencies
+      shell: bash
+      run: |
+        ## Install dependencies for sed testing (no need to build GNU sed)
+        sudo apt-get update
+        sudo apt-get install -y jq perl
+
+    ### Build
+    - name: Build Rust sed binary
+      shell: bash
+      run: |
+        ## Build Rust sed binary
+        cd 'sed'
+        cargo build --release
+
+    ### Run tests
+    - name: Run GNU sed testsuite
+      shell: bash
+      run: |
+        ## Run GNU sed testsuite using our script
+        cd 'sed'
+        # Set GNU testsuite directory
+        export GNU_TESTSUITE_DIR="../gnu.sed/testsuite"
+        # Run tests with JSON output
+        ./util/run-gnu-testsuite.sh --json-output "${{ env.TEST_FULL_SUMMARY_FILE }}" || true
+
+    ### Upload artifacts
+    - name: Check for JSON results file
+      shell: bash
+      run: |
+        echo "Checking for JSON results file..."
+        ls -la sed/ || true
+        ls -la sed/${{ env.TEST_FULL_SUMMARY_FILE }} || echo "JSON file not found at sed/${{ env.TEST_FULL_SUMMARY_FILE }}"
+        ls -la ${{ env.TEST_FULL_SUMMARY_FILE }} || echo "JSON file not found at ${{ env.TEST_FULL_SUMMARY_FILE }}"
+        find . -name "*json*" -type f || echo "No JSON files found"
+
+    - name: Upload full json results
+      uses: actions/upload-artifact@v4
+      with:
+        name: sed-gnu-full-result
+        path: sed/${{ env.TEST_FULL_SUMMARY_FILE }}
+        if-no-files-found: warn
+
+    - name: Upload test logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-logs
+        path: |
+          sed/test-logs/*.log
+          sed/test-results/*.json
+
+  aggregate:
+    needs: [native]
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    name: Aggregate GNU test results
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Initialize workflow variables
+      id: vars
+      shell: bash
+      run: |
+        ## VARs setup
+        outputs() { step_id="${{ github.action }}"; for var in "$@" ; do echo steps.${step_id}.outputs.${var}="${!var}"; echo "${var}=${!var}" >> $GITHUB_OUTPUT; done; }
+
+        TEST_SUMMARY_FILE='sed-gnu-result.json'
+        outputs TEST_SUMMARY_FILE
+
+    - name: Checkout code (sed)
+      uses: actions/checkout@v4
+      with:
+        path: 'sed'
+        persist-credentials: false
+
+    - name: Retrieve reference artifacts
+      uses: dawidd6/action-download-artifact@v3
+      continue-on-error: true
+      with:
+        workflow: GnuTests.yml
+        branch: "${{ env.DEFAULT_BRANCH }}"
+        workflow_conclusion: completed
+        path: "reference"
+        if_no_artifact_found: warn
+
+    - name: Download full json results
+      uses: actions/download-artifact@v4
+      with:
+        name: sed-gnu-full-result
+        path: results
+
+    - name: Extract/summarize testing info
+      id: summary
+      shell: bash
+      run: |
+        ## Extract/summarize testing info
+        outputs() { step_id="${{ github.action }}"; for var in "$@" ; do echo steps.${step_id}.outputs.${var}="${!var}"; echo "${var}=${!var}" >> $GITHUB_OUTPUT; done; }
+
+        # Check if results directory exists and has JSON files
+        json_count=0
+        if [[ -d "results" ]]; then
+          json_count=$(find results -name "*.json" | wc -l)
+        fi
+
+        if [[ "$json_count" -lt 1 ]]; then
+          echo "::error ::Failed to download results json files; failing early"
+          echo "::error ::Contents of results directory:"
+          ls -lR results || echo "::error ::Results directory does not exist"
+          exit 1
+        fi
+
+        # Extract summary from JSON results
+        RESULT_FILE="results/${{ env.TEST_FULL_SUMMARY_FILE }}"
+        if [[ -f "$RESULT_FILE" ]]; then
+          TOTAL=$(jq -r '.summary.total // 0' "$RESULT_FILE")
+          PASS=$(jq -r '.summary.passed // 0' "$RESULT_FILE")
+          FAIL=$(jq -r '.summary.failed // 0' "$RESULT_FILE")
+          SKIP=$(jq -r '.summary.skipped // 0' "$RESULT_FILE")
+          ERROR=0  # Our format doesn't distinguish errors from failures
+        else
+          echo "::error ::Result file $RESULT_FILE not found"
+          echo "::error ::Available files in results:"
+          find results -type f || true
+          TOTAL=0; PASS=0; FAIL=0; SKIP=0; ERROR=0
+        fi
+
+        output="GNU sed tests summary = TOTAL: $TOTAL / PASS: $PASS / FAIL: $FAIL / SKIP: $SKIP"
+        echo "${output}"
+
+        if [[ "$FAIL" -gt 0 ]]; then
+          echo "::warning ::${output}"
+        fi
+
+        jq -n \
+              --arg date "$(date --rfc-email)" \
+              --arg sha "$GITHUB_SHA" \
+              --arg total "$TOTAL" \
+              --arg pass "$PASS" \
+              --arg skip "$SKIP" \
+              --arg fail "$FAIL" \
+              --arg error "$ERROR" \
+              '{($date): { sha: $sha, total: $total, pass: $pass, skip: $skip, fail: $fail, error: $error }}' > '${{ steps.vars.outputs.TEST_SUMMARY_FILE }}'
+
+        HASH=$(sha1sum '${{ steps.vars.outputs.TEST_SUMMARY_FILE }}' | cut --delim=" " -f 1)
+        outputs HASH TOTAL PASS FAIL SKIP
+
+    - name: Upload SHA1/ID of 'test-summary'
+      uses: actions/upload-artifact@v4
+      with:
+        name: "${{ steps.summary.outputs.HASH }}"
+        path: "${{ steps.vars.outputs.TEST_SUMMARY_FILE }}"
+
+    - name: Upload test results summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-summary
+        path: "${{ steps.vars.outputs.TEST_SUMMARY_FILE }}"
+
+    - name: Report test results
+      shell: bash
+      run: |
+        ## Report final results
+        echo "::notice ::GNU sed testsuite results:"
+        echo "::notice ::  Total tests: ${{ steps.summary.outputs.TOTAL }}"
+        echo "::notice ::  Passed: ${{ steps.summary.outputs.PASS }}"
+        echo "::notice ::  Failed: ${{ steps.summary.outputs.FAIL }}"
+        echo "::notice ::  Skipped: ${{ steps.summary.outputs.SKIP }}"
+
+        if [[ "${{ steps.summary.outputs.FAIL }}" -gt 0 ]]; then
+          PASS_RATE=$(( ${{ steps.summary.outputs.PASS }} * 100 / (${{ steps.summary.outputs.PASS }} + ${{ steps.summary.outputs.FAIL }}) ))
+          echo "::notice ::  Pass rate: ${PASS_RATE}%"
+        fi
