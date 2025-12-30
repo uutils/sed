@@ -14,6 +14,7 @@ use std::io::{Read, Write};
 #[cfg(unix)]
 use assert_fs::fixture::{FileWriteStr, PathChild};
 
+use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use uutests::new_ucmd;
 
@@ -986,6 +987,42 @@ check_output!(pi, ["-f", "script/math.sed", "input/pi"]);
 
 // Solve the Towers of Hanoi puzzle
 check_output!(hanoi, ["-f", "script/hanoi.sed", "input/hanoi"]);
+
+////////////////////////////////////////////////////////////
+// Long-running scripts
+// Test with cargo test -- --ignored
+
+// Check the output of Bach's prelude in C major from WTC book I.
+// Run with cargo test test_bach_prelude_matches -- --ignored.
+#[test]
+#[ignore] // Slow; produces 5.8 MB of raw audio.
+fn test_bach_prelude_matches() {
+    let res = new_ucmd!()
+        .args(&["-E", "-f", "script/bach.sed"])
+        .pipe_in("\n")
+        .succeeds();
+
+    // Compare SHA-256 output against GNU sed output.
+    let mut hasher = Sha256::new();
+    hasher.update(res.stdout());
+    let digest = hasher.finalize();
+
+    let got = hex::encode(digest);
+    assert_eq!(
+        got,
+        "c4e50d6791a60692745e958dc48d43a40bccea2ce5cea31b7125a40604cc3219"
+    );
+}
+
+// Draw the Mandelbrot set.
+#[ignore] // Slow; takes > 15" on an i7 CPU
+#[test]
+fn test_mandelbrod() {
+    new_ucmd!()
+        .args(&["-En", "-f", "script/mandelbrot.sed", "input/newline"])
+        .succeeds()
+        .stdout_is_fixture("output/mandelbrot");
+}
 
 ////////////////////////////////////////////////////////////
 // Error handling
