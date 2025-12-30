@@ -988,6 +988,10 @@ check_output!(pi, ["-f", "script/math.sed", "input/pi"]);
 // Solve the Towers of Hanoi puzzle
 check_output!(hanoi, ["-f", "script/hanoi.sed", "input/hanoi"]);
 
+////////////////////////////////////////////////////////////
+// Long-running scripts
+// Test with cargo test -- --ignored
+
 // Check the output of Bach's prelude in C major from WTC book I.
 // Run with cargo test test_bach_prelude_matches -- --ignored.
 #[test]
@@ -1008,6 +1012,16 @@ fn test_bach_prelude_matches() {
         got,
         "c4e50d6791a60692745e958dc48d43a40bccea2ce5cea31b7125a40604cc3219"
     );
+}
+
+// Draw the Mandelbrot set.
+#[ignore] // Slow; takes > 15" on an i7 CPU
+#[test]
+fn test_mandelbrod() {
+    new_ucmd!()
+        .args(&["-En", "-f", "script/mandelbrot.sed", "input/newline"])
+        .succeeds()
+        .stdout_is_fixture("output/mandelbrot");
 }
 
 ////////////////////////////////////////////////////////////
