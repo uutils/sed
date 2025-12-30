@@ -17,7 +17,7 @@ fn no_op_short(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
     for i in 0..10_000_000 {
-        data.extend_from_slice(format!("{}\n", i).as_bytes());
+        data.extend_from_slice(format!("{i}\n").as_bytes());
     }
     let file_path = create_test_file(&data, temp_dir.path());
     let file_path_str = file_path.to_str().unwrap();
@@ -192,7 +192,7 @@ fn remove_cr(bencher: Bencher) {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut data = Vec::new();
     for i in 0..500_000 {
-        let line = format!("line {} with windows endings\r\n", i);
+        let line = format!("line {i} with windows endings\r\n");
         data.extend_from_slice(line.as_bytes());
     }
     let file_path = create_test_file(&data, temp_dir.path());
@@ -240,7 +240,7 @@ fn number_fix(bencher: Bencher) {
         let cents = i % 100;
         let thousands = euros / 1000;
         let remainder = euros % 1000;
-        let line = format!("{}.{:03},{:02}\n", thousands, remainder, cents);
+        let line = format!("{thousands}.{remainder:03},{cents:02}\n");
         data.extend_from_slice(line.as_bytes());
     }
     let file_path = create_test_file(&data, temp_dir.path());
