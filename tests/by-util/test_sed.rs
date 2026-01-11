@@ -1128,3 +1128,45 @@ fn test_print_command_adds_newline() {
         .succeeds()
         .stdout_is("foo\nfoo");
 }
+
+////////////////////////////////////////////////////////////
+// Test for delete command preventing automatic pattern printing
+#[test]
+fn test_delete_command_prevents_automatic_printing() {
+    // Test 'd' command - delete line 2
+    new_ucmd!()
+        .args(&["2d"])
+        .pipe_in("line1\nline2\nline3")
+        .succeeds()
+        .stdout_is("line1\nline3");
+}
+
+#[test]
+fn test_delete_range_prevents_automatic_printing() {
+    // Test 'd' command on range - delete lines 2-3
+    new_ucmd!()
+        .args(&["2,3d"])
+        .pipe_in("line1\nline2\nline3\nline4")
+        .succeeds()
+        .stdout_is("line1\nline4");
+}
+
+#[test]
+fn test_change_command_prevents_automatic_printing() {
+    // Test 'c' command - change line 2
+    new_ucmd!()
+        .args(&["2c\\replaced"])
+        .pipe_in("line1\nline2\nline3")
+        .succeeds()
+        .stdout_is("line1\nreplaced\nline3");
+}
+
+#[test]
+fn test_uppercase_delete_prevents_automatic_printing() {
+    // Test 'D' command - delete up to newline and restart
+    new_ucmd!()
+        .args(&["-e", "N", "-e", "D"])
+        .pipe_in("line1\nline2\nline3")
+        .succeeds()
+        .stdout_is("line3\n");
+}

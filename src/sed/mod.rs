@@ -218,6 +218,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         label_to_command_map: HashMap::new(),
         substitution_made: false,
         append_elements: Vec::new(),
+        pattern_deleted: false,
     }
 }
 
