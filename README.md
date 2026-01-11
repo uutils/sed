@@ -80,6 +80,7 @@ cargo test
 * The `a`, `c`, and `i` commands do not require an initial backslash,
   allow text to appear on the same line, and support escape sequences
   in the specified text.
+* The `a`, `i`, `=`, `l`, `q` and `r` commands support address range. Usage of the POSIX flag with this extension is invalid.
 * The substitution command replacement group `\0` is a synonym for &.
 * A `Q` command (optionally followed by an exit code) quits immediately.
 * The `q` command can be optionally followed by an exit code.

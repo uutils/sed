@@ -49,6 +49,7 @@ type CommandHandler = fn(
 #[derive(Debug, Clone, Copy)]
 struct CommandSpec {
     n_addr: usize,           // Number of supported addresses
+    n_addr_posix: usize,     // Number of supported addresses in POSIX mode (only 1)
     handler: CommandHandler, // Argument-specific command compilation handler
 }
 
@@ -285,14 +286,14 @@ fn compile_sequence(
         let mut cmd = Rc::new(RefCell::new(Command::at_position(lines, line)));
         let n_addr = compile_address_range(lines, line, &mut cmd, context)?;
         line.eat_spaces();
-        let mut cmd_spec = get_verified_cmd_spec(lines, line, n_addr)?;
+        let mut cmd_spec = get_verified_cmd_spec(lines, line, n_addr, context)?;
 
         // Compile the command according to its specification.
         let mut cmd_mut = cmd.borrow_mut();
         cmd_mut.code = line.current();
         match (cmd_spec.handler)(lines, line, &mut cmd_mut, context)? {
             CommandHandling::GetNext => {
-                cmd_spec = get_verified_cmd_spec(lines, line, n_addr)?;
+                cmd_spec = get_verified_cmd_spec(lines, line, n_addr, context)?;
                 cmd_mut.code = line.current();
                 (cmd_spec.handler)(lines, line, &mut cmd_mut, context)?;
             }
@@ -1118,7 +1119,6 @@ fn compile_text_command(
     context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     line.advance(); // Skip the command character.
-
     line.eat_spaces(); // Skip any leading whitespace.
     if context.posix {
         compile_text_command_posix(lines, line, cmd, context)
@@ -1246,6 +1246,7 @@ fn get_verified_cmd_spec(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
     n_addr: usize,
+    context: &ProcessingContext,
 ) -> UResult<CommandSpec> {
     if line.eol() {
         return compilation_error(lines, line, "command expected");
@@ -1253,6 +1254,10 @@ fn get_verified_cmd_spec(
 
     let ch = line.current();
     let cmd_spec = get_cmd_spec(lines, line, ch)?;
+
+    if context.posix && n_addr > cmd_spec.n_addr_posix {
+        return compilation_error(lines, line, "command only uses one address");
+    }
 
     if n_addr > cmd_spec.n_addr {
         return compilation_error(
@@ -1277,63 +1282,78 @@ fn get_cmd_spec(
     match cmd_code {
         '!' => Ok(CommandSpec {
             n_addr: 2,
+            n_addr_posix: 2,
             handler: compile_negation_command,
         }),
         '=' => Ok(CommandSpec {
-            n_addr: 1,
+            n_addr: 2,
+            n_addr_posix: 1,
             handler: compile_empty_command,
         }),
         ':' => Ok(CommandSpec {
             n_addr: 0,
+            n_addr_posix: 2,
             handler: compile_label_command,
         }),
         '{' => Ok(CommandSpec {
             n_addr: 2,
+            n_addr_posix: 2,
             handler: compile_block_command,
         }),
         '}' => Ok(CommandSpec {
             n_addr: 0,
+            n_addr_posix: 2,
             handler: compile_end_group_command,
         }),
         'a' | 'i' => Ok(CommandSpec {
-            n_addr: 1,
+            n_addr: 2,
+            n_addr_posix: 1,
             handler: compile_text_command,
         }),
         'b' | 't' => Ok(CommandSpec {
             n_addr: 2,
+            n_addr_posix: 2,
             handler: compile_label_command,
         }),
         'c' => Ok(CommandSpec {
             n_addr: 2,
+            n_addr_posix: 2,
             handler: compile_text_command,
         }),
         'd' | 'D' | 'g' | 'G' | 'h' | 'H' | 'n' | 'N' | 'p' | 'P' | 'x' => Ok(CommandSpec {
             n_addr: 2,
+            n_addr_posix: 2,
             handler: compile_empty_command,
         }),
         'l' => Ok(CommandSpec {
             n_addr: 2,
+            n_addr_posix: 1,
             handler: compile_number_command,
         }),
         // Q is a GNU extension
         'q' | 'Q' => Ok(CommandSpec {
             n_addr: 1,
+            n_addr_posix: 1,
             handler: compile_number_command,
         }),
         'r' => Ok(CommandSpec {
             n_addr: 1,
+            n_addr_posix: 1,
             handler: compile_read_file_command,
         }),
         's' => Ok(CommandSpec {
             n_addr: 2,
+            n_addr_posix: 2,
             handler: compile_subst_command,
         }),
         'w' => Ok(CommandSpec {
             n_addr: 2,
+            n_addr_posix: 2,
             handler: compile_write_file_command,
         }),
         'y' => Ok(CommandSpec {
             n_addr: 2,
+            n_addr_posix: 2,
             handler: compile_trans_command,
         }),
         _ => compilation_error(lines, line, format!("invalid command code `{cmd_code}'")),
@@ -1381,7 +1401,7 @@ mod tests {
     fn test_lookup_text_command() {
         let (lines, line) = make_providers("123abc");
         let cmd = get_cmd_spec(&lines, &line, 'a').unwrap();
-        assert_eq!(cmd.n_addr, 1);
+        assert_eq!(cmd.n_addr_posix, 1);
     }
 
     #[test]
@@ -1453,7 +1473,7 @@ mod tests {
     fn test_missing_command_character() {
         let lines = ScriptLineProvider::with_active_state("test.sed", 1);
         let line = char_provider_from("");
-        let result = get_verified_cmd_spec(&lines, &line, 0);
+        let result = get_verified_cmd_spec(&lines, &line, 0, &ctx());
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -1464,7 +1484,7 @@ mod tests {
     fn test_invalid_command_character() {
         let lines = ScriptLineProvider::with_active_state("script.sed", 2);
         let line = char_provider_from("@");
-        let result = get_verified_cmd_spec(&lines, &line, 0);
+        let result = get_verified_cmd_spec(&lines, &line, 0, &ctx());
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -1475,7 +1495,7 @@ mod tests {
     fn test_too_many_addresses() {
         let lines = ScriptLineProvider::with_active_state("input.sed", 3);
         let line = char_provider_from("q"); // q takes one address
-        let result = get_verified_cmd_spec(&lines, &line, 2);
+        let result = get_verified_cmd_spec(&lines, &line, 2, &ctx());
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
@@ -1488,11 +1508,26 @@ mod tests {
     fn test_valid_command_spec() {
         let lines = ScriptLineProvider::with_active_state("input.sed", 4);
         let line = char_provider_from("a"); // valid command
-        let result = get_verified_cmd_spec(&lines, &line, 1);
-
+        let result = get_verified_cmd_spec(&lines, &line, 2, &ctx());
         assert!(result.is_ok());
         let spec = result.unwrap();
-        assert_eq!(spec.n_addr, 1);
+        assert_eq!(spec.n_addr, 2);
+    }
+
+    #[test]
+    fn test_address_range_with_posix_invalid() {
+        let lines = ScriptLineProvider::with_active_state("input.sed", 1);
+        let line = char_provider_from("i"); // valid command
+
+        let context = ProcessingContext {
+            posix: true,
+            ..Default::default()
+        };
+
+        let result = get_verified_cmd_spec(&lines, &line, 2, &context);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("input.sed:1:1: error: command only uses one address"));
     }
 
     // parse_number
