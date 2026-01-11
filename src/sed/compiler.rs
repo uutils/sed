@@ -1209,7 +1209,7 @@ fn get_cmd_spec(
             handler: compile_negation_command,
         }),
         '=' => Ok(CommandSpec {
-            n_addr: 1,
+            n_addr: 2,
             handler: compile_empty_command,
         }),
         ':' => Ok(CommandSpec {
