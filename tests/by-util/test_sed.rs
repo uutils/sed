@@ -1117,3 +1117,14 @@ fn test_missing_address_re() {
         .code_is(2)
         .stderr_is("sed: <script argument 1>:2:3: 'input/lines1':1 error: no previous regular expression\n");
 }
+
+////////////////////////////////////////////////////////////
+// Test for issue #143: Missing newline in output with `-e p`
+#[test]
+fn test_print_command_adds_newline() {
+    new_ucmd!()
+        .args(&["-e", "p"])
+        .pipe_in("foo")
+        .succeeds()
+        .stdout_is("foo\nfoo");
+}
