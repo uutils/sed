@@ -107,7 +107,8 @@ class TestCompareTestResults(unittest.TestCase):
 
         # Check output content
         output_content = output_file.read_text()
-        self.assertIn("Test result changes from main branch:", output_content)
+        self.assertIn("Test results comparison:", output_content)
+        self.assertIn("Changes from main branch:", output_content)
         self.assertIn("TOTAL: +2", output_content)
         self.assertIn("PASSED: -2", output_content)
         self.assertIn("FAILED: +3", output_content)

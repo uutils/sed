@@ -87,9 +87,15 @@ def compare_results(current_file, reference_file, ignore_file=None, output_file=
     # Prepare output message
     output_lines = []
 
+    # Show current vs reference numbers for debugging
+    output_lines.append("Test results comparison:")
+    output_lines.append(f"  Current:   TOTAL: {current_summary.get('total', 0)} / PASSED: {current_summary.get('passed', 0)} / FAILED: {current_summary.get('failed', 0)} / SKIPPED: {current_summary.get('skipped', 0)}")
+    output_lines.append(f"  Reference: TOTAL: {reference_summary.get('total', 0)} / PASSED: {reference_summary.get('passed', 0)} / FAILED: {reference_summary.get('failed', 0)} / SKIPPED: {reference_summary.get('skipped', 0)}")
+    output_lines.append("")
+
     # Summary of changes
     if pass_diff != 0 or fail_diff != 0 or total_diff != 0:
-        output_lines.append("Test result changes from main branch:")
+        output_lines.append("Changes from main branch:")
         output_lines.append(f"  TOTAL: {total_diff:+d}")
         output_lines.append(f"  PASSED: {pass_diff:+d}")
         output_lines.append(f"  FAILED: {fail_diff:+d}")
