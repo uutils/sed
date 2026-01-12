@@ -581,6 +581,32 @@ tb"#,
 
 // Check both POSIX and GNU parsing routines.
 
+
+check_output_posix!(
+    text_simple_insert,
+    [
+        "-e",
+        r#"
+2,4i\
+extra
+"#,
+        LINES1
+    ]
+);
+
+check_output_posix!(
+    text_simple_append,
+    [
+        "-e",
+        r#"
+2,4a\
+extra
+"#,
+        LINES1
+    ]
+);
+
+
 check_output_posix!(
     text_insert_quit,
     [
