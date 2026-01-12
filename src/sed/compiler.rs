@@ -1225,7 +1225,7 @@ fn get_cmd_spec(
             handler: compile_end_group_command,
         }),
         'a' | 'i' => Ok(CommandSpec {
-            n_addr: 1,
+            n_addr: 2,
             handler: compile_text_command,
         }),
         'b' | 't' => Ok(CommandSpec {
