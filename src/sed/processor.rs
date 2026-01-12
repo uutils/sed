@@ -629,7 +629,7 @@ fn process_file(
                     writer.borrow_mut().write_line(pattern.as_str()?)?;
                 }
                 'x' => {
-                    // Exchange the contents of the pattern and hold spaces;
+                    // Exchange the contents of the pattern and hold spaces.
                     let (pat_content, pat_has_newline) = pattern.fields_mut()?;
                     // Only swap newlines if hold content is not empty or hold does have a newline.
                     if !context.hold.content.is_empty() || context.hold.has_newline {
