@@ -629,8 +629,12 @@ fn process_file(
                     writer.borrow_mut().write_line(pattern.as_str()?)?;
                 }
                 'x' => {
-                    // Exchange the contents of the pattern and hold spaces; do not swap newlines.
-                    let (pat_content, _) = pattern.fields_mut()?;
+                    // Exchange the contents of the pattern and hold spaces;
+                    let (pat_content, pat_has_newline) = pattern.fields_mut()?;
+                    // Only swap newlines if hold content is not empty or hold does have a newline.
+                    if !context.hold.content.is_empty() || context.hold.has_newline {
+                        std::mem::swap(pat_has_newline, &mut context.hold.has_newline);
+                    }
                     std::mem::swap(pat_content, &mut context.hold.content);
                 }
                 'y' => {
