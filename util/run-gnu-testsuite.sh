@@ -221,6 +221,7 @@ run_sed_test() {
     local input_text="$3"
     local expected_output="$4"
     local flags="$5"
+    local interpret_escapes="${6:-true}"  # Default to true for basic tests
 
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
 
@@ -232,8 +233,13 @@ run_sed_test() {
     cd "$test_dir"
 
     # Write input to file
-    echo -n "$input_text" > input.txt
-    echo -n "$expected_output" > expected.txt
+    if [[ "$interpret_escapes" == "true" ]]; then
+        echo -e "$input_text" > input.txt
+        echo -e "$expected_output" > expected.txt
+    else
+        echo -n "$input_text" > input.txt
+        echo -n "$expected_output" > expected.txt
+    fi
 
     # Run Rust sed
     local rust_exit_code=0
@@ -241,7 +247,11 @@ run_sed_test() {
     if [[ -n "$flags" ]]; then
         rust_output=$("$RUST_SED_BIN" "$flags" "$sed_script" input.txt 2>/dev/null) || rust_exit_code=$?
     else
-        rust_output=$(echo -n "$input_text" | "$RUST_SED_BIN" "$sed_script" 2>/dev/null) || rust_exit_code=$?
+        if [[ "$interpret_escapes" == "true" ]]; then
+            rust_output=$(echo -e "$input_text" | "$RUST_SED_BIN" "$sed_script" 2>/dev/null) || rust_exit_code=$?
+        else
+            rust_output=$(echo -n "$input_text" | "$RUST_SED_BIN" "$sed_script" 2>/dev/null) || rust_exit_code=$?
+        fi
     fi
 
     local test_result=""
@@ -249,14 +259,20 @@ run_sed_test() {
     local error_message=""
 
     # Compare with expected output
-    if [[ "$rust_output" == "$expected_output" && $rust_exit_code -eq 0 ]]; then
+    local expected_interpreted
+    if [[ "$interpret_escapes" == "true" ]]; then
+        expected_interpreted=$(echo -e "$expected_output")
+    else
+        expected_interpreted="$expected_output"
+    fi
+    if [[ "$rust_output" == "$expected_interpreted" && $rust_exit_code -eq 0 ]]; then
         log_success "$test_name"
         PASSED_TESTS=$((PASSED_TESTS + 1))
         test_status="PASS"
     else
         log_error "$test_name"
         if [[ "$VERBOSE" == "true" ]]; then
-            echo "  | Expected: '$expected_output'"
+            echo "  | Expected: '$expected_interpreted'"
             echo "  | Got: '$rust_output' (exit: $rust_exit_code)"
         fi
         FAILED_TESTS=$((FAILED_TESTS + 1))
@@ -301,7 +317,7 @@ run_basic_tests() {
     run_sed_test "delete_range" "2,3d" "line1\nline2\nline3\nline4" "line1\nline4"
 
     # Print command
-    run_sed_test "print_line" "-n 2p" "line1\nline2\nline3" "line2" "-n"
+    run_sed_test "print_line" "2p" "line1\nline2\nline3" "line2" "-n"
 
     # Append and insert
     run_sed_test "append" "2a\\inserted" "line1\nline2\nline3" "line1\nline2\ninserted\nline3"
@@ -309,7 +325,7 @@ run_basic_tests() {
 
     # Character classes
     run_sed_test "digit_class" "s/[0-9]/X/g" "abc123def" "abcXXXdef"
-    run_sed_test "word_class" "s/[a-z]/X/g" "Hello123" "XXXXX123"
+    run_sed_test "word_class" "s/[a-z]/X/g" "Hello123" "HXXXX123"
 }
 
 # Run tests from specific GNU testsuite files that have .inp/.good/.sed triplets
@@ -334,7 +350,7 @@ run_gnu_testsuite_tests() {
                 expected_content=$(cat "$good_file")
 
                 log_verbose "Found complete triplet: $basename"
-                run_sed_test "${basename}_triplet" "$sed_file" "$input_content" "$expected_content" "-f"
+                run_sed_test "${basename}_triplet" "-f $sed_file" "$input_content" "$expected_content" "-f" "false"
                 tests_found=$((tests_found + 1))
             fi
         fi
@@ -427,7 +443,7 @@ extract_sed_commands_from_script() {
                 local expected_content
                 input_content=$(cat "$input_file")
                 expected_content=$(cat "$expected_file")
-                run_sed_test "${basename}_extracted" "$sed_script" "$input_content" "$expected_content"
+                run_sed_test "${basename}_extracted" "$sed_script" "$input_content" "$expected_content" "" "false"
             fi
         fi
     done < "$script_file"
@@ -457,7 +473,7 @@ extract_simple_tests_from_script() {
             local input_text="${BASH_REMATCH[1]}"
             local sed_script="${BASH_REMATCH[2]}"
             if [[ -n "$input_text" && -n "$sed_script" && ${#sed_script} -lt 80 ]]; then
-                run_sed_test "${basename}_echo_${extracted_count}" "$sed_script" "$input_text" "" ""
+                run_sed_test "${basename}_echo_${extracted_count}" "$sed_script" "$input_text" "" "" "false"
                 extracted_count=$((extracted_count + 1))
                 continue
             fi
@@ -467,7 +483,7 @@ extract_simple_tests_from_script() {
         if [[ $line =~ sed[[:space:]]+-e[[:space:]]+[\'\"]([^\'\"]+)[\'\"] ]] && [[ $extracted_count -lt 2 ]]; then
             local sed_script="${BASH_REMATCH[1]}"
             if [[ -n "$sed_script" && ${#sed_script} -lt 80 ]]; then
-                run_sed_test "${basename}_dash_e_${extracted_count}" "$sed_script" "line1\nline2\nline3" "" ""
+                run_sed_test "${basename}_dash_e_${extracted_count}" "$sed_script" "line1\nline2\nline3" "" "" "true"
                 extracted_count=$((extracted_count + 1))
                 continue
             fi
@@ -480,7 +496,7 @@ extract_simple_tests_from_script() {
             if [[ -n "$pattern" && ${#pattern} -lt 30 ]]; then
                 local input_text="This is $pattern in text"
                 local sed_script="s/$pattern/$replacement/"
-                run_sed_test "${basename}_subst_${extracted_count}" "$sed_script" "$input_text" "" ""
+                run_sed_test "${basename}_subst_${extracted_count}" "$sed_script" "$input_text" "" "" "true"
                 extracted_count=$((extracted_count + 1))
                 continue
             fi
@@ -497,7 +513,7 @@ extract_simple_tests_from_script() {
                         continue
                         ;;
                     *)
-                        run_sed_test "${basename}_cmd_${extracted_count}" "$sed_script" "test\ndata\nline" "" ""
+                        run_sed_test "${basename}_cmd_${extracted_count}" "$sed_script" "test\ndata\nline" "" "" "true"
                         extracted_count=$((extracted_count + 1))
                         ;;
                 esac
@@ -511,7 +527,7 @@ extract_simple_tests_from_script() {
             if [[ -n "$input_text" && -n "$sed_script" && ${#sed_script} -lt 60 ]]; then
                 # Convert \n to actual newlines
                 input_text=$(echo -e "$input_text")
-                run_sed_test "${basename}_printf_${extracted_count}" "$sed_script" "$input_text" "" ""
+                run_sed_test "${basename}_printf_${extracted_count}" "$sed_script" "$input_text" "" "" "false"
                 extracted_count=$((extracted_count + 1))
                 continue
             fi
