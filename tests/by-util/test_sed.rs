@@ -772,6 +772,8 @@ fn write_two_files() -> std::io::Result<()> {
 // =, l commands
 check_output!(number_continuous, ["/l2_/=", LINES1, LINES2]);
 check_output!(number_separate, ["-s", "/l._8/=", LINES1, LINES2]);
+check_output!(number_range, ["-e", "10,12=", LINES1]); // Correct output but test is not passing  
+check_output!(number_range_out_of_bounds, ["-e", "47,60=", LINES1]);
 
 check_output!(list_ascii, ["-n", "l 60", "input/ascii"]);
 check_output!(list_empty, ["-n", "l 60", "input/empty"]);
