@@ -430,6 +430,9 @@ fn process_file(
     output: &mut OutputBuffer,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
+    // Initialize hold space to a newline
+    context.hold.content = String::from("\n");
+    
     // Loop over the input lines as pattern space.
     'lines: while let Some((mut pattern, last_line)) = reader.get_line()? {
         context.last_line = last_line;
