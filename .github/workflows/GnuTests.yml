@@ -208,7 +208,61 @@ jobs:
         name: test-summary
         path: "${{ steps.vars.outputs.TEST_SUMMARY_FILE }}"
 
+    - name: Compare test failures VS reference
+      shell: bash
+      run: |
+        ## Compare test failures VS reference using JSON files
+        REF_SUMMARY_FILE='reference/sed-gnu-full-result/sed-gnu-full-result.json'
+        CURRENT_SUMMARY_FILE="results/${{ env.TEST_FULL_SUMMARY_FILE }}"
+        REPO_DEFAULT_BRANCH='${{ env.DEFAULT_BRANCH }}'
+
+        # Path to ignore file for intermittent issues
+        IGNORE_INTERMITTENT="sed/.github/workflows/ignore-intermittent.txt"
+
+        # Set up comment directory
+        COMMENT_DIR="reference/comment"
+        mkdir -p ${COMMENT_DIR}
+        echo ${{ github.event.number }} > ${COMMENT_DIR}/NR
+        COMMENT_LOG="${COMMENT_DIR}/result.txt"
+
+        COMPARISON_RESULT=0
+        if test -f "${CURRENT_SUMMARY_FILE}"; then
+          if test -f "${REF_SUMMARY_FILE}"; then
+            echo "Reference summary SHA1/ID: $(sha1sum -- "${REF_SUMMARY_FILE}")"
+            echo "Current summary SHA1/ID: $(sha1sum -- "${CURRENT_SUMMARY_FILE}")"
+
+            python3 sed/util/compare_test_results.py \
+              --ignore-file "${IGNORE_INTERMITTENT}" \
+              --output "${COMMENT_LOG}" \
+              "${CURRENT_SUMMARY_FILE}" "${REF_SUMMARY_FILE}"
+
+            COMPARISON_RESULT=$?
+          else
+            echo "::warning ::Skipping test comparison; no prior reference summary is available at '${REF_SUMMARY_FILE}'."
+          fi
+        else
+          echo "::error ::Failed to find summary of test results (missing '${CURRENT_SUMMARY_FILE}'); failing early"
+          exit 1
+        fi
+
+        if [ ${COMPARISON_RESULT} -eq 1 ]; then
+          echo "ONLY_INTERMITTENT=false" >> $GITHUB_ENV
+          echo "::error ::Found new non-intermittent test failures"
+          exit 1
+        else
+          echo "ONLY_INTERMITTENT=true" >> $GITHUB_ENV
+          echo "::notice ::No new test failures detected"
+        fi
+    
+    - name: Upload comparison log (for GnuComment workflow)
+      if: success() || failure()
+      uses: actions/upload-artifact@v6
+      with:
+        name: comment
+        path: reference/comment/
+
     - name: Report test results
+      if: success() || failure()
       shell: bash
       run: |
         ## Report final results

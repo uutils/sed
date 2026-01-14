@@ -172,6 +172,13 @@ done
 
 # Validate environment
 GNU_TESTSUITE_AVAILABLE=true
+
+# Convert GNU_TESTSUITE_DIR to absolute path if it's relative
+# This is critical because the script changes directories during test execution
+if [[ -d "$GNU_TESTSUITE_DIR" ]]; then
+    GNU_TESTSUITE_DIR="$(cd "$GNU_TESTSUITE_DIR" && pwd)"
+fi
+
 if [[ ! -d "$GNU_TESTSUITE_DIR" ]]; then
     log_warning "GNU sed testsuite not found at: $GNU_TESTSUITE_DIR"
     log_warning "To get the full GNU sed testsuite, clone it with:"
@@ -327,7 +334,7 @@ run_gnu_testsuite_tests() {
                 expected_content=$(cat "$good_file")
 
                 log_verbose "Found complete triplet: $basename"
-                run_sed_test "${basename}_triplet" "-f $sed_file" "$input_content" "$expected_content" "-f"
+                run_sed_test "${basename}_triplet" "$sed_file" "$input_content" "$expected_content" "-f"
                 tests_found=$((tests_found + 1))
             fi
         fi
@@ -362,12 +369,9 @@ run_gnu_testsuite_tests() {
     temp_file_list=$(mktemp)
     trap 'rm -f "$temp_file_list"' EXIT
 
-    # Find shell files and store in temporary file - we need to go back to RUST_SED_DIR
-    local original_dir="$(pwd)"
-    cd "$RUST_SED_DIR" || { echo "ERROR: Cannot cd to RUST_SED_DIR"; return 1; }
-    # Get absolute paths so they work from any directory
-    find "$(pwd)/$GNU_TESTSUITE_DIR" -name "*.sh" 2>/dev/null > "$temp_file_list"
-    cd "$original_dir"
+    # Find shell files and store in temporary file
+    # GNU_TESTSUITE_DIR is already an absolute path, so use it directly
+    find "$GNU_TESTSUITE_DIR" -name "*.sh" 2>/dev/null > "$temp_file_list"
 
 
     # Read the file list into array
@@ -440,7 +444,7 @@ extract_simple_tests_from_script() {
 
     # Look for various sed command patterns in the GNU testsuite
     while IFS= read -r line; do
-        if [[ $extracted_count -ge 3 ]]; then  # Limit extractions per file
+        if [[ $extracted_count -ge 5 ]]; then  # Limit extractions per file
             break
         fi
 
@@ -508,6 +512,27 @@ extract_simple_tests_from_script() {
                 # Convert \n to actual newlines
                 input_text=$(echo -e "$input_text")
                 run_sed_test "${basename}_printf_${extracted_count}" "$sed_script" "$input_text" "" ""
+                extracted_count=$((extracted_count + 1))
+                continue
+            fi
+        fi
+
+        # Pattern 6: sed 'script' input_file > output (file-based format common in GNU tests)
+        if [[ $line =~ ^[[:space:]]*sed[[:space:]]+[\'\"]([^\'\"]+)[\'\"][[:space:]]+[a-zA-Z0-9_-]+[[:space:]]*\> ]]; then
+            local sed_script="${BASH_REMATCH[1]}"
+            if [[ -n "$sed_script" && ${#sed_script} -lt 80 && ! $sed_script =~ \$\{ ]]; then
+                # Use generic test input for file-based tests
+                run_sed_test "${basename}_file_${extracted_count}" "$sed_script" "line1\nline2\nline3\ntest data" "" ""
+                extracted_count=$((extracted_count + 1))
+                continue
+            fi
+        fi
+
+        # Pattern 7: sed -n 'script' (with -n flag)
+        if [[ $line =~ sed[[:space:]]+-n[[:space:]]+[\'\"]([^\'\"]+)[\'\"] ]]; then
+            local sed_script="${BASH_REMATCH[1]}"
+            if [[ -n "$sed_script" && ${#sed_script} -lt 80 ]]; then
+                run_sed_test "${basename}_n_${extracted_count}" "$sed_script" "line1\nline2\nline3" "" "-n"
                 extracted_count=$((extracted_count + 1))
                 continue
             fi

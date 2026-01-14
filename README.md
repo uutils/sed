@@ -112,6 +112,13 @@ cargo test
 * Labels are parsed for alphanumeric characters. The BSD version parses them
   until the end of the line, preventing ; to be used as a separator.
 
+## GNU test suite compatibility
+
+Below is the evolution of how many GNU tests uutils passes.
+
+![Evolution over time](https://github.com/uutils/sed-tracking/blob/main/gnu-results.svg?raw=true)
+
+
 ## License
 
 sed is licensed under the MIT License - see the `LICENSE` file for details

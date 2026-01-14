@@ -1,0 +1,7 @@
+# List of intermittent test names to ignore in result comparisons
+# Format: one test name per line, lines starting with # are comments
+#
+# Add test names that are known to be flaky or environment-dependent
+# Example:
+# basic_substitution
+# line_address_test
