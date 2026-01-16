@@ -435,6 +435,7 @@ fn process_file(
         context.last_line = last_line;
         context.line_number += 1;
         context.substitution_made = false;
+        context.pattern_deleted = false;
         // Set the script command from which to start.
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
@@ -494,6 +495,7 @@ fn process_file(
                     // At range end replace pattern space with text and
                     // start the next cycle.
                     pattern.clear();
+                    context.pattern_deleted = true;
                     if command.addr2.is_none() || context.last_address || context.last_line {
                         let text = extract_variant!(command, Text);
                         output.write_str(text.as_ref())?;
@@ -503,6 +505,7 @@ fn process_file(
                 'd' => {
                     // Delete the pattern space and start the next cycle.
                     pattern.clear();
+                    context.pattern_deleted = true;
                     break;
                 }
                 'D' => {
@@ -515,6 +518,7 @@ fn process_file(
                     } else {
                         // Same as d
                         pattern.clear();
+                        context.pattern_deleted = true;
                         break;
                     }
                 }
@@ -652,7 +656,7 @@ fn process_file(
             current = command.next.clone();
         }
 
-        if !context.quiet {
+        if !context.quiet && !context.pattern_deleted {
             write_chunk(output, context, &pattern)?;
         }
 

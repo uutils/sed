@@ -68,6 +68,8 @@ pub struct ProcessingContext {
     pub substitution_made: bool,
     /// Elements to append at the end of each command processing cycle
     pub append_elements: Vec<AppendElement>,
+    /// True if a delete command was executed (prevents automatic printing)
+    pub pattern_deleted: bool,
 }
 
 #[derive(Clone, Debug)]
