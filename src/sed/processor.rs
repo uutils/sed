@@ -40,6 +40,7 @@ macro_rules! extract_variant {
 /// Return true if the passed address matches the current I/O context.
 fn match_address(
     addr: &Address,
+    reader: &mut LineReader,
     pattern: &mut IOChunk,
     context: &mut ProcessingContext,
     location: &ScriptLocation,
@@ -71,7 +72,7 @@ fn match_address(
         // The FreeBSD version checked for subsequent empty files, but this
         // can lead to destructive reads (e.g. from named pipes),
         // and is probably an overkill.
-        AddressType::Last => Ok(context.last_line && (context.last_file || context.separate)),
+        AddressType::Last => Ok(reader.last_line()? && (context.last_file || context.separate)),
 
         _ => panic!("invalid address type in match_address"),
     }
@@ -81,6 +82,7 @@ fn match_address(
 /// Return true if the command applies to the given pattern.
 fn applies(
     command: &mut Command,
+    reader: &mut LineReader,
     pattern: &mut IOChunk,
     context: &mut ProcessingContext,
 ) -> UResult<bool> {
@@ -104,7 +106,7 @@ fn applies(
                     }
                 }
                 _ => {
-                    if match_address(addr2, pattern, context, &command.location)? {
+                    if match_address(addr2, reader, pattern, context, &command.location)? {
                         command.start_line = None;
                         context.last_address = true;
                         Ok(true)
@@ -125,7 +127,7 @@ fn applies(
                 }
             }
         } else if let Some(addr1) = &command.addr1 {
-            if match_address(addr1, pattern, context, &command.location)? {
+            if match_address(addr1, reader, pattern, context, &command.location)? {
                 match addr2.atype {
                     AddressType::Line => {
                         if let AddressValue::LineNumber(n) = addr2.value {
@@ -155,7 +157,13 @@ fn applies(
             Ok(false)
         }
     } else if let Some(addr1) = &command.addr1 {
-        Ok(match_address(addr1, pattern, context, &command.location)?)
+        Ok(match_address(
+            addr1,
+            reader,
+            pattern,
+            context,
+            &command.location,
+        )?)
     } else {
         Ok(false)
     };
@@ -431,8 +439,7 @@ fn process_file(
     context: &mut ProcessingContext,
 ) -> UResult<()> {
     // Loop over the input lines as pattern space.
-    'lines: while let Some((mut pattern, last_line)) = reader.get_line()? {
-        context.last_line = last_line;
+    'lines: while let Some(mut pattern) = reader.get_line()? {
         context.line_number += 1;
         context.substitution_made = false;
         // Set the script command from which to start.
@@ -455,7 +462,7 @@ fn process_file(
         while let Some(command_rc) = current.clone() {
             let mut command = command_rc.borrow_mut();
 
-            if !applies(&mut command, &mut pattern, context)? {
+            if !applies(&mut command, reader, &mut pattern, context)? {
                 // Advance to next command
                 current = command.next.clone();
                 continue;
@@ -494,7 +501,7 @@ fn process_file(
                     // At range end replace pattern space with text and
                     // start the next cycle.
                     pattern.clear();
-                    if command.addr2.is_none() || context.last_address || context.last_line {
+                    if command.addr2.is_none() || context.last_address || reader.last_line()? {
                         let text = extract_variant!(command, Text);
                         output.write_str(text.as_ref())?;
                     }
