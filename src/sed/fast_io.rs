@@ -61,7 +61,6 @@ pub struct MmapLineCursor<'a> {
 pub struct NextMmapLine<'a> {
     pub content: &'a [u8],
     pub full_span: &'a [u8],
-    pub is_last_line: bool,
 }
 
 #[cfg(unix)]
@@ -76,7 +75,7 @@ impl<'a> MmapLineCursor<'a> {
     }
 
     /// Return the next line, if available, or None.
-    fn get_line(&mut self) -> io::Result<Option<NextMmapLine<'_>>> {
+    fn get_line(&mut self) -> io::Result<Option<NextMmapLine<'a>>> {
         if self.pos >= self.data.len() {
             return Ok(None);
         }
@@ -101,12 +100,12 @@ impl<'a> MmapLineCursor<'a> {
             full_span
         };
 
-        let is_last_line = self.pos >= self.data.len();
-        Ok(Some(NextMmapLine {
-            content,
-            full_span,
-            is_last_line,
-        }))
+        Ok(Some(NextMmapLine { content, full_span }))
+    }
+
+    /// Return true if the previously returned line was the last one.
+    fn last_line(&mut self) -> io::Result<bool> {
+        Ok(self.pos >= self.data.len())
     }
 }
 
@@ -126,9 +125,8 @@ impl ReadLineCursor {
         }
     }
 
-    /// If a line is available, return it, its \n termination,
-    /// and next line availability, otherwise return None.
-    fn get_line(&mut self) -> io::Result<Option<(String, bool, bool)>> {
+    /// If a line is available, return it and its \n termination.
+    fn get_line(&mut self) -> io::Result<Option<(String, bool)>> {
         self.buffer.clear();
         // read_line *includes* the '\n' if present
         let bytes_read = self.reader.read_line(&mut self.buffer)?;
@@ -142,8 +140,14 @@ impl ReadLineCursor {
             self.buffer.pop();
         }
         let line = std::mem::take(&mut self.buffer);
-        let is_last_line = self.reader.fill_buf()?.is_empty();
-        Ok(Some((line, has_newline, is_last_line)))
+        Ok(Some((line, has_newline)))
+    }
+
+    /// Return true if the previously returned line was the last one.
+    fn last_line(&mut self) -> io::Result<bool> {
+        // FIXME(rust-lang#86423): Replace with BufRead::has_data_left()
+        // when/if method becomes stable.
+        Ok(self.reader.fill_buf()?.is_empty())
     }
 }
 
@@ -466,21 +470,15 @@ impl<'a> LineReader<'a> {
         line_reader_read_input(file)
     }
 
-    /// Return the next line, if available and also the availability
-    /// of another one, or None at end of file.
-    pub fn get_line(&mut self) -> io::Result<Option<(IOChunk<'_>, bool)>> {
+    /// Return the next line, if available.
+    pub fn get_line(&mut self) -> io::Result<Option<IOChunk<'a>>> {
         match self {
             #[cfg(unix)]
             LineReader::MmapInput { cursor, .. } => {
                 // Obtain fields to prevent borrowing issues.
                 let fast_copy = cursor.fast_copy.clone();
                 let base = cursor.data.as_ptr();
-                if let Some(NextMmapLine {
-                    content,
-                    full_span,
-                    is_last_line,
-                }) = cursor.get_line()?
-                {
+                if let Some(NextMmapLine { content, full_span }) = cursor.get_line()? {
                     let chunk = IOChunk::from_content(IOChunkContent::MmapInput {
                         fast_copy,
                         base,
@@ -488,21 +486,34 @@ impl<'a> LineReader<'a> {
                         full_span,
                     });
 
-                    Ok(Some((chunk, is_last_line)))
+                    Ok(Some(chunk))
                 } else {
                     Ok(None)
                 }
             }
 
             LineReader::ReadInput(cursor) => {
-                if let Some((line, _has_newline, is_last_line)) = cursor.get_line()? {
+                if let Some((line, _has_newline)) = cursor.get_line()? {
                     let chunk =
                         IOChunk::from_content(IOChunkContent::new_owned(line, _has_newline));
-                    Ok(Some((chunk, is_last_line)))
+                    Ok(Some(chunk))
                 } else {
                     Ok(None)
                 }
             }
+
+            #[cfg(not(unix))]
+            LineReader::_Phantom(_) => unreachable!("_Phantom should never be constructed"),
+        }
+    }
+
+    /// Return true if the previously returned line was the last one.
+    pub fn last_line(&mut self) -> io::Result<bool> {
+        match self {
+            #[cfg(unix)]
+            LineReader::MmapInput { cursor, .. } => cursor.last_line(),
+
+            LineReader::ReadInput(cursor) => cursor.last_line(),
 
             #[cfg(not(unix))]
             LineReader::_Phantom(_) => unreachable!("_Phantom should never be constructed"),
@@ -1048,7 +1059,7 @@ mod tests {
         let mut out = OutputBuffer::new(Box::new(Box::new(out_file)));
 
         // Drain reader → writer
-        while let Some((chunk, _last_line)) = reader.get_line()? {
+        while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
         }
         out.flush()?;
@@ -1084,7 +1095,7 @@ mod tests {
         let mut out = OutputBuffer::new(Box::new(out_file));
 
         // Read the first mmap line ("zero\n") and write it
-        if let Some((chunk, _last_line)) = reader.get_line()? {
+        if let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
         }
 
@@ -1092,7 +1103,7 @@ mod tests {
         out.write_str("middle\n")?;
 
         // Read the second mmap line ("one\n") and write it
-        if let Some((chunk, _last_line)) = reader.get_line()? {
+        if let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
         }
 
@@ -1137,7 +1148,7 @@ mod tests {
         // Wrap it in your OutputBuffer and run the loop:
         let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline = 0;
-        while let Some((chunk, _last_line)) = reader.get_line()? {
+        while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
             nline += 1;
         }
@@ -1176,7 +1187,7 @@ mod tests {
         // Wrap it in your OutputBuffer and run the loop:
         let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline = 0;
-        while let Some((chunk, _last_line)) = reader.get_line()? {
+        while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
             nline += 1;
         }
@@ -1211,7 +1222,7 @@ mod tests {
         // Wrap it in your OutputBuffer and run the loop:
         let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline = 0;
-        while let Some((chunk, _last_line)) = reader.get_line()? {
+        while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
             nline += 1;
         }
@@ -1246,7 +1257,7 @@ mod tests {
         // Wrap it in your OutputBuffer and run the loop:
         let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline = 0;
-        while let Some((chunk, _last_line)) = reader.get_line()? {
+        while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
             nline += 1;
         }
@@ -1288,7 +1299,7 @@ mod tests {
         // Wrap it in OutputBuffer and run the loop:
         let mut out = OutputBuffer::new(Box::new(out_file));
         let mut nline_written = 0;
-        while let Some((chunk, _last_line)) = reader.get_line()? {
+        while let Some(chunk) = reader.get_line()? {
             out.write_chunk(&chunk)?;
             nline_written += 1;
         }
@@ -1319,52 +1330,46 @@ mod tests {
         let mut reader = LineReader::open_stream(&path)?;
 
         // Verify the reader's operation
-        if let Some((
-            IOChunk {
-                content:
-                    IOChunkContent::Owned {
-                        content,
-                        has_newline,
-                        ..
-                    },
-                utf8_verified,
-                ..
-            },
-            last_line,
-        )) = reader.get_line()?
+        if let Some(IOChunk {
+            content:
+                IOChunkContent::Owned {
+                    content,
+                    has_newline,
+                    ..
+                },
+            utf8_verified,
+            ..
+        }) = reader.get_line()?
         {
             assert_eq!(content, "first line");
             assert_eq!(content.len(), 10);
             assert!(has_newline);
             assert!(!utf8_verified.get());
-            assert!(!last_line);
+            assert!(!reader.last_line().unwrap());
         } else {
             panic!("Expected IOChunkContent::Owned");
         }
 
-        if let Some((
-            IOChunk {
-                content:
-                    IOChunkContent::Owned {
-                        content,
-                        has_newline,
-                        ..
-                    },
-                ..
-            },
-            last_line,
-        )) = reader.get_line()?
+        if let Some(IOChunk {
+            content:
+                IOChunkContent::Owned {
+                    content,
+                    has_newline,
+                    ..
+                },
+            ..
+        }) = reader.get_line()?
         {
             assert_eq!(content, "second line");
             assert!(has_newline);
-            assert!(!last_line);
+            assert!(!reader.last_line().unwrap());
         } else {
             panic!("Expected IOChunkContent::Owned");
         }
 
-        if let Some((content, last_line)) = reader.get_line()? {
+        if let Some(content) = reader.get_line()? {
             assert_eq!(content.as_str().unwrap(), "last line");
-            assert!(last_line);
+            assert!(reader.last_line().unwrap());
         } else {
             panic!("Expected IOChunk");
         }
@@ -1386,52 +1391,46 @@ mod tests {
         let mut reader = LineReader::open(&path)?;
 
         // Verify the reader's operation
-        if let Some((
-            IOChunk {
-                content:
-                    IOChunkContent::MmapInput {
-                        content, full_span, ..
-                    },
-                utf8_verified,
-                ..
-            },
-            last_line,
-        )) = reader.get_line()?
+        if let Some(IOChunk {
+            content:
+                IOChunkContent::MmapInput {
+                    content, full_span, ..
+                },
+            utf8_verified,
+            ..
+        }) = reader.get_line()?
         {
             assert_eq!(content, b"first line");
             assert_eq!(content.len(), 10);
             assert_eq!(full_span, b"first line\n");
             assert!(!utf8_verified.get());
-            assert!(!last_line);
+            assert!(!reader.last_line().unwrap());
         } else {
             panic!("Expected IOChunkContent::MapInput");
         }
 
-        if let Some((
-            IOChunk {
-                content:
-                    IOChunkContent::MmapInput {
-                        content, full_span, ..
-                    },
-                utf8_verified,
-                ..
-            },
-            last_line,
-        )) = reader.get_line()?
+        if let Some(IOChunk {
+            content:
+                IOChunkContent::MmapInput {
+                    content, full_span, ..
+                },
+            utf8_verified,
+            ..
+        }) = reader.get_line()?
         {
             assert_eq!(content, b"second line");
             assert_eq!(full_span, b"second line\n");
             assert!(!utf8_verified.get());
-            assert!(!last_line);
+            assert!(!reader.last_line().unwrap());
         } else {
             panic!("Expected IOChunkContent::MapInput");
         }
 
-        if let Some((content, last_line)) = reader.get_line()? {
+        if let Some(content) = reader.get_line()? {
             assert_eq!(content.as_bytes(), b"last line");
             assert_eq!(content.as_str().unwrap(), "last line");
             assert!(content.utf8_verified.get());
-            assert!(last_line);
+            assert!(reader.last_line().unwrap());
             // Cached version
             assert_eq!(content.as_str().unwrap(), "last line");
         } else {
