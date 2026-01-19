@@ -239,9 +239,11 @@ run_sed_test() {
     local rust_exit_code=0
     local rust_output=""
     if [[ -n "$flags" ]]; then
-        rust_output=$("$RUST_SED_BIN" "$flags" "$sed_script" input.txt 2>/dev/null) || rust_exit_code=$?
+        # shellcheck disable=SC2086
+        rust_output=$("$RUST_SED_BIN" "$flags" $sed_script input.txt 2> /dev/null) || rust_exit_code=$?
     else
-        rust_output=$(echo -n "$input_text" | "$RUST_SED_BIN" "$sed_script" 2>/dev/null) || rust_exit_code=$?
+        # shellcheck disable=SC2086
+        rust_output=$(echo -n "$input_text" | "$RUST_SED_BIN" $sed_script 2> /dev/null) || rust_exit_code=$?
     fi
 
     local test_result=""
