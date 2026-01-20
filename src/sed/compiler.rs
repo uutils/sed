@@ -68,11 +68,12 @@ pub fn compile(
 
     // Link branch commands to the target label commands.
     populate_label_map(result.clone(), context)?;
+    populate_range_commands(result.clone(), context);
     resolve_branch_targets(result.clone(), context)?;
 
     // Link the ends of command blocks to their following commands.
     // This converts the tree into a graph, so it must be the last
-    // conversion than traverses the structure as a tree.
+    // conversion that traverses the structure as a tree.
     if context.parsed_block_nesting > 0 {
         return Err(USimpleError::new(1, "unmatched `{'"));
     }
@@ -165,6 +166,26 @@ fn populate_label_map(
         cur = cmd.next.clone();
     }
     Ok(())
+}
+
+/// Populate the context's address range command list with references to associated commands.
+fn populate_range_commands(mut cur: Option<Rc<RefCell<Command>>>, context: &mut ProcessingContext) {
+    while let Some(rc_cmd) = cur {
+        // Borrow mutably just long enough to inspect/rewire this node
+        let cmd = rc_cmd.borrow_mut();
+
+        // Recursively process blocks.
+        if let CommandData::BranchTarget(Some(sub_head)) = &cmd.data {
+            populate_range_commands(Some(Rc::clone(sub_head)), context);
+        }
+
+        if cmd.addr2.is_some() {
+            // Save detected range command.
+            context.range_commands.push(Rc::clone(&rc_cmd));
+        }
+
+        cur = cmd.next.clone();
+    }
 }
 
 /// Replace branch labels with references to the corresponding commands.
@@ -307,12 +328,20 @@ fn compile_address_range(
     let mut n_addr = 0;
     let mut cmd = cmd.borrow_mut();
 
+    let mut is_line0 = false;
+
     line.eat_spaces();
     if !line.eol()
         && is_address_char(line.current())
         && let Ok(addr1) = compile_address(lines, line, context)
     {
+        is_line0 =
+            addr1.atype == AddressType::Line && matches!(addr1.value, AddressValue::LineNumber(0));
         cmd.addr1 = Some(addr1);
+        if is_line0 && context.posix {
+            // 0 starting address is a GNU extension.
+            return compilation_error(lines, line, "address 0 invalid in POSIX mode");
+        }
         n_addr += 1;
     }
 
@@ -323,9 +352,21 @@ fn compile_address_range(
         if !line.eol()
             && let Ok(addr2) = compile_address(lines, line, context)
         {
+            let addr2_is_re = addr2.atype == AddressType::Re;
             cmd.addr2 = Some(addr2);
+            if is_line0 && !addr2_is_re {
+                return compilation_error(
+                    lines,
+                    line,
+                    "address 0 can only be used with a regular expression second address",
+                );
+            }
             n_addr += 1;
         }
+    }
+
+    if is_line0 && n_addr == 1 {
+        return compilation_error(lines, line, "address 0 requires a second address");
     }
 
     Ok(n_addr)
@@ -2459,6 +2500,130 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("duplicate label `dup'"));
+    }
+
+    // populate_range_commands
+    fn command_with_range(
+        code: char,
+        start: usize,
+        end: usize,
+        data: CommandData,
+    ) -> Rc<RefCell<Command>> {
+        Rc::new(RefCell::new(Command {
+            code,
+            addr1: Some(Address {
+                atype: AddressType::Line,
+                value: AddressValue::LineNumber(start),
+            }),
+            addr2: Some(Address {
+                atype: AddressType::Line,
+                value: AddressValue::LineNumber(end),
+            }),
+            data,
+            ..Default::default()
+        }))
+    }
+
+    #[test]
+    fn test_range_address() {
+        let cmd = command_with_range('p', 3, 5, CommandData::None);
+        let mut context = ProcessingContext::default();
+        assert_eq!(context.range_commands.len(), 0);
+
+        populate_range_commands(Some(cmd.clone()), &mut context);
+
+        assert_eq!(context.range_commands.len(), 1);
+
+        // Verify it is the same command
+        let rc = &context.range_commands[0];
+        assert!(Rc::ptr_eq(rc, &cmd));
+
+        // Verify addresses
+        let cmd_ref = rc.borrow();
+
+        let addr1 = cmd_ref.addr1.as_ref().expect("addr1 missing");
+        assert_eq!(addr1.atype, AddressType::Line);
+        assert!(matches!(addr1.value, AddressValue::LineNumber(3)));
+
+        let addr2 = cmd_ref.addr2.as_ref().expect("addr2 missing");
+        assert_eq!(addr2.atype, AddressType::Line);
+        assert!(matches!(addr2.value, AddressValue::LineNumber(5)));
+    }
+
+    #[test]
+    fn test_non_range_addresses_do_not_register() {
+        let mut context = ProcessingContext::default();
+
+        // Zero-address command
+        let cmd0 = Rc::new(RefCell::new(Command {
+            code: 'p',
+            data: CommandData::None,
+            ..Default::default()
+        }));
+
+        populate_range_commands(Some(cmd0), &mut context);
+        assert!(context.range_commands.is_empty());
+
+        // One-address command
+        let cmd1 = Rc::new(RefCell::new(Command {
+            code: 'p',
+            addr1: Some(Address {
+                atype: AddressType::Line,
+                value: AddressValue::LineNumber(3),
+            }),
+            data: CommandData::None,
+            ..Default::default()
+        }));
+
+        populate_range_commands(Some(cmd1), &mut context);
+        assert!(context.range_commands.is_empty());
+    }
+
+    #[test]
+    fn test_range_address_outside_and_inside_block() {
+        // Top-level range command: 1,2p
+        let outer = command_with_range('p', 1, 2, CommandData::None);
+
+        // Nested range command: 3,5p
+        let nested = command_with_range('p', 3, 5, CommandData::None);
+
+        // Block containing the nested range command
+        let block = command_with_data(CommandData::BranchTarget(Some(nested.clone())));
+
+        // Link outer -> block
+        outer.borrow_mut().next = Some(block);
+
+        let mut context = ProcessingContext::default();
+        assert_eq!(context.range_commands.len(), 0);
+
+        populate_range_commands(Some(outer.clone()), &mut context);
+
+        // Two range commands must be found.
+        assert_eq!(context.range_commands.len(), 2);
+
+        // Verify both commands are present (order-independent).
+        assert!(
+            context
+                .range_commands
+                .iter()
+                .any(|rc| Rc::ptr_eq(rc, &outer))
+        );
+        assert!(
+            context
+                .range_commands
+                .iter()
+                .any(|rc| Rc::ptr_eq(rc, &nested))
+        );
+
+        let nested_ref = nested.borrow();
+
+        let addr1 = nested_ref.addr1.as_ref().expect("nested addr1 missing");
+        assert_eq!(addr1.atype, AddressType::Line);
+        assert!(matches!(addr1.value, AddressValue::LineNumber(3)));
+
+        let addr2 = nested_ref.addr2.as_ref().expect("nested addr2 missing");
+        assert_eq!(addr2.atype, AddressType::Line);
+        assert!(matches!(addr2.value, AddressValue::LineNumber(5)));
     }
 
     // resolve_branch_targets

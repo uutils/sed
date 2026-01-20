@@ -226,6 +226,15 @@ check_output!(addr_escaped_delimiter, ["-n", "\\_l1\\_7_p", LINES1]);
 check_output!(addr_range_numeric, ["-n", "1,4p", LINES1]);
 check_output!(addr_range_to_last, ["-n", "1,$p", LINES1, LINES2]);
 check_output!(addr_range_to_pattern, ["-n", "1,/l2_9/p", LINES1, LINES2]);
+check_output!(
+    addr_range_straddle,
+    ["-n", "/l1_3/,/l2_3/p", LINES1, LINES2]
+);
+check_output!(
+    addr_range_separate,
+    ["-n", "--separate", "/l1_3/,/l2_3/p", LINES1, LINES2]
+);
+check_output!(addr_range_from_zero_to_pattern, ["-n", "0,/_1/p", LINES1]);
 check_output!(addr_pattern_to_last, ["-n", "/4/,$p", LINES1, LINES2]);
 check_output!(addr_pattern_to_straddle, ["-n", "/4/,20p", LINES1, LINES2]);
 check_output!(addr_pattern_to_pattern, ["-n", "/4/,/10/p", LINES1, LINES2]);
@@ -1051,6 +1060,33 @@ fn test_undefined_label() {
         .fails()
         .code_is(1)
         .stderr_is("sed: <script argument 1>:1:1: error: undefined label `foo'\n");
+}
+
+#[test]
+fn test_addr0_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "0,/foo/p"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:2: error: address 0 invalid in POSIX mode\n");
+}
+
+#[test]
+fn test_addr0_second_required() {
+    new_ucmd!()
+        .args(&["0p"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:2: error: address 0 requires a second address\n");
+}
+
+#[test]
+fn test_addr0_second_re_only() {
+    new_ucmd!()
+        .args(&["0,4p"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with a regular expression second address\n");
 }
 
 // The following test diverse ways in which regexes are matched.

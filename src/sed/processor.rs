@@ -89,9 +89,12 @@ fn applies(
     let linenum = context.line_number;
 
     let result = if command.addr1.is_none() && command.addr2.is_none() {
+        // No address
         Ok(true)
     } else if let Some(addr2) = &command.addr2 {
+        // Two addresses
         if let Some(start) = command.start_line {
+            // Range is already latched active.
             match addr2.atype {
                 AddressType::RelLine => {
                     if let AddressValue::LineNumber(n) = addr2.value {
@@ -127,6 +130,7 @@ fn applies(
                 }
             }
         } else if let Some(addr1) = &command.addr1 {
+            // See if latch must start.
             if match_address(addr1, reader, pattern, context, &command.location)? {
                 match addr2.atype {
                     AddressType::Line => {
@@ -157,6 +161,7 @@ fn applies(
             Ok(false)
         }
     } else if let Some(addr1) = &command.addr1 {
+        // Single address
         Ok(match_address(
             addr1,
             reader,
@@ -165,7 +170,8 @@ fn applies(
             &command.location,
         )?)
     } else {
-        Ok(false)
+        // All allowed cases have been covered by the above logic.
+        panic!("impossible address combination");
     };
 
     if command.non_select {
@@ -686,6 +692,24 @@ fn process_file(
     Ok(())
 }
 
+/// Mark all address ranges non-active (and 0-starting ones as active).
+fn reset_latched_address_ranges(range_commands: &mut [Rc<RefCell<Command>>]) {
+    for cmd_rc in range_commands.iter() {
+        let mut cmd = cmd_rc.borrow_mut();
+
+        cmd.start_line =
+            // Check for address-spec line 0 pre-latch extension.
+            if let Some(addr1) = &cmd.addr1
+                && addr1.atype == AddressType::Line
+                && let AddressValue::LineNumber(0) = addr1.value
+            {
+                Some(0)
+            } else {
+                None
+            };
+    }
+}
+
 /// Process all input files
 pub fn process_all_files(
     commands: Option<Rc<RefCell<Command>>>,
@@ -703,9 +727,11 @@ pub fn process_all_files(
             .map_err_context(|| format!("error opening input file {}", path.quote()))?;
         let output = in_place.begin(path)?;
 
-        if context.separate {
+        if index == 0 || context.separate {
             context.line_number = 0;
+            reset_latched_address_ranges(&mut context.range_commands);
         }
+
         context.input_name = path.quote().to_string();
         process_file(&commands, &mut reader, output, context)?;
 
