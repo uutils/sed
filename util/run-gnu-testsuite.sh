@@ -239,9 +239,11 @@ run_sed_test() {
     local rust_exit_code=0
     local rust_output=""
     if [[ -n "$flags" ]]; then
-        rust_output=$("$RUST_SED_BIN" "$flags" "$sed_script" input.txt 2>/dev/null) || rust_exit_code=$?
+        # shellcheck disable=SC2086
+        rust_output=$("$RUST_SED_BIN" "$flags" $sed_script input.txt 2> /dev/null) || rust_exit_code=$?
     else
-        rust_output=$(echo -n "$input_text" | "$RUST_SED_BIN" "$sed_script" 2>/dev/null) || rust_exit_code=$?
+        # shellcheck disable=SC2086
+        rust_output=$(echo -n "$input_text" | "$RUST_SED_BIN" $sed_script 2> /dev/null) || rust_exit_code=$?
     fi
 
     local test_result=""
@@ -293,23 +295,23 @@ run_basic_tests() {
     run_sed_test "global_substitution" "s/a/X/g" "banana" "bXnXnX"
 
     # Line addressing
-    run_sed_test "line_address" "2s/test/TEST/" "line1\ntest\nline3" "line1\nTEST\nline3"
-    run_sed_test "range_address" "2,3s/x/X/" "x1\nx2\nx3\nx4" "x1\nX2\nX3\nx4"
+    run_sed_test "line_address" "2s/test/TEST/" $'line1\ntest\nline3' $'line1\nTEST\nline3'
+    run_sed_test "range_address" "2,3s/x/X/" $'x1\nx2\nx3\nx4' $'x1\nX2\nX3\nx4'
 
     # Delete command
-    run_sed_test "delete_line" "2d" "line1\nline2\nline3" "line1\nline3"
-    run_sed_test "delete_range" "2,3d" "line1\nline2\nline3\nline4" "line1\nline4"
+    run_sed_test "delete_line" "2d" $'line1\nline2\nline3' $'line1\nline3'
+    run_sed_test "delete_range" "2,3d" $'line1\nline2\nline3\nline4' $'line1\nline4'
 
     # Print command
-    run_sed_test "print_line" "-n 2p" "line1\nline2\nline3" "line2" "-n"
+    run_sed_test "print_line" "-n 2p" $'line1\nline2\nline3' "line2" "-n"
 
     # Append and insert
-    run_sed_test "append" "2a\\inserted" "line1\nline2\nline3" "line1\nline2\ninserted\nline3"
-    run_sed_test "insert" "2i\\inserted" "line1\nline2\nline3" "line1\ninserted\nline2\nline3"
+    run_sed_test "append" "2a\\inserted" $'line1\nline2\nline3' $'line1\nline2\ninserted\nline3'
+    run_sed_test "insert" "2i\\inserted" $'line1\nline2\nline3' $'line1\ninserted\nline2\nline3'
 
     # Character classes
     run_sed_test "digit_class" "s/[0-9]/X/g" "abc123def" "abcXXXdef"
-    run_sed_test "word_class" "s/[a-z]/X/g" "Hello123" "XXXXX123"
+    run_sed_test "word_class" "s/[a-z]/X/g" "Hello123" "HXXXX123"
 }
 
 # Run tests from specific GNU testsuite files that have .inp/.good/.sed triplets
