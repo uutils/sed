@@ -86,26 +86,13 @@ pub struct StringSpace {
     pub has_newline: bool, // True if \n-terminated
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 /// Types of address specifications that precede commands
-pub enum AddressType {
-    Re,      // Line that matches regex
-    Line,    // Specific line
-    RelLine, // Relative line
-    Last,    // Last line
-}
-
-#[derive(Debug)]
-/// Format of an address
-pub struct Address {
-    pub atype: AddressType,  // Address type
-    pub value: AddressValue, // Line number or regex
-}
-
-#[derive(Debug)]
-pub enum AddressValue {
-    LineNumber(usize),
-    Regex(Option<Regex>),
+pub enum Address {
+    Re(Option<Regex>), // Line that matches (optional) regex
+    Line(usize),       // Specific line
+    RelLine(usize),    // Relative line
+    Last,              // Last line
 }
 
 #[derive(Debug)]
