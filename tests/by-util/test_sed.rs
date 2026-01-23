@@ -269,6 +269,10 @@ check_output!(
 );
 check_output!(addr_empty_re_reuse, ["-n", "/_2/,//p", LINES1, LINES2]);
 check_output!(addr_simple_negation, ["-e", r"4,12!s/^/^/", LINES1]);
+check_output!(addr_range_even, ["-n", "0~2p", LINES1]);
+check_output!(addr_range_odd, ["-n", "1~2p", LINES1]);
+check_output!(addr_range_step_zero, ["-n", "10~0p", LINES1]);
+check_output!(addr_range_end_multiple, ["-n", "/l1_2/,~10p", LINES1]);
 
 ////////////////////////////////////////////////////////////
 // Substitution: s
@@ -1068,7 +1072,7 @@ fn test_addr0_non_posix() {
         .args(&["--posix", "0,/foo/p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:2: error: address 0 invalid in POSIX mode\n");
+        .stderr_is("sed: <script argument 1>:1:2: error: address 0 is invalid in POSIX mode\n");
 }
 
 #[test]
@@ -1086,7 +1090,25 @@ fn test_addr0_second_re_only() {
         .args(&["0,4p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with a regular expression second address\n");
+        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with a regular expression or ~step\n");
+}
+
+#[test]
+fn test_step_match_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "3~2p"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:3: error: ~step is invalid in POSIX mode\n");
+}
+
+#[test]
+fn test_step_end_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "3,~2p"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:4: error: ~step is invalid in POSIX mode\n");
 }
 
 // The following test diverse ways in which regexes are matched.

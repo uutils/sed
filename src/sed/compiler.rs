@@ -339,27 +339,66 @@ fn compile_address_range(
         cmd.addr1 = Some(addr1);
         if is_line0 && context.posix {
             // 0 starting address is a GNU extension.
-            return compilation_error(lines, line, "address 0 invalid in POSIX mode");
+            return compilation_error(lines, line, "address 0 is invalid in POSIX mode");
         }
         n_addr += 1;
     }
 
     line.eat_spaces();
-    if n_addr == 1 && !line.eol() && line.current() == ',' {
+    if n_addr == 1 && !line.eol() && matches!(line.current(), ',' | '~') {
+        let is_step_match = line.current() == '~'; // E.g. 0~2: Pick even-numbered lines
         line.advance();
         line.eat_spaces();
+        let is_step_end = if line.current() == '~' {
+            // E.g. /foo/,~10: Start at foo, include all lines until multiple of 10 is reached.
+            line.advance();
+            line.eat_spaces();
+            true
+        } else {
+            false
+        };
+
+        if (is_step_match || is_step_end) && context.posix {
+            // ~ steps are a GNU extension.
+            return compilation_error(lines, line, "~step is invalid in POSIX mode");
+        }
+
+        // Look for second address.
         if !line.eol()
             && let Ok(addr2) = compile_address(lines, line, context)
         {
-            let addr2_is_re = matches!(addr2, Address::Re(_));
-            cmd.addr2 = Some(addr2);
-            if is_line0 && !addr2_is_re {
+            // Set step_n to the number specified in the (required numeric) address.
+            let step_n = if is_step_match || is_step_end {
+                match addr2 {
+                    Address::Line(n) => n,
+                    _ => {
+                        return compilation_error(
+                            lines,
+                            line,
+                            "~step can only be specified on numeric addresses",
+                        );
+                    }
+                }
+            } else {
+                0 // dummy, not used
+            };
+
+            if is_line0 && !matches!(addr2, Address::Re(_)) && !is_step_match {
                 return compilation_error(
                     lines,
                     line,
-                    "address 0 can only be used with a regular expression second address",
+                    "address 0 can only be used with a regular expression or ~step",
                 );
             }
+
+            // If needed, transform Address::Line into Address::Step*.
+            cmd.addr2 = if is_step_match {
+                Some(Address::StepMatch(step_n))
+            } else if is_step_end {
+                Some(Address::StepEnd(step_n))
+            } else {
+                Some(addr2)
+            };
             n_addr += 1;
         }
     }
@@ -390,6 +429,8 @@ fn read_file_path(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> 
 }
 
 /// Compile and return a single range address specification.
+// Due to their irregular syntax ~ addresses are returned as Line() and adjusted
+// in compile_address_range().
 fn compile_address(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
@@ -1623,6 +1664,28 @@ mod tests {
 
         assert!(matches!(cmd.borrow().addr1, Some(Address::Line(2))));
         assert!(matches!(cmd.borrow().addr2, Some(Address::RelLine(3))));
+    }
+
+    #[test]
+    fn test_compile_step_match_address() {
+        let (lines, mut chars) = make_providers("0~2");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
+
+        assert_eq!(n_addr, 2);
+        assert!(matches!(cmd.borrow().addr1, Some(Address::Line(0))));
+        assert!(matches!(cmd.borrow().addr2, Some(Address::StepMatch(2))));
+    }
+
+    #[test]
+    fn test_compile_step_end_address() {
+        let (lines, mut chars) = make_providers("1,~10");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
+
+        assert_eq!(n_addr, 2);
+        assert!(matches!(cmd.borrow().addr1, Some(Address::Line(1))));
+        assert!(matches!(cmd.borrow().addr2, Some(Address::StepEnd(10))));
     }
 
     #[test]

@@ -86,11 +86,11 @@ fn applies(
             // Range is already latched active.
             match addr2 {
                 Address::RelLine(n) => {
-                    if linenum - start <= *n {
-                        Ok(true)
-                    } else {
+                    if linenum - start > *n {
                         command.start_line = None;
                         Ok(false)
+                    } else {
+                        Ok(true)
                     }
                 }
                 Address::Line(n) => {
@@ -102,14 +102,20 @@ fn applies(
                         Ok(true)
                     }
                 }
+                Address::StepMatch(step) => Ok((linenum - start).is_multiple_of(*step)),
+                Address::StepEnd(step) => {
+                    // Inclusive end on multiple of step
+                    if linenum.is_multiple_of(*step) {
+                        command.start_line = None;
+                    }
+                    Ok(true)
+                }
                 _ => {
                     if match_address(addr2, reader, pattern, context, &command.location)? {
                         command.start_line = None;
                         context.last_address = true;
-                        Ok(true)
-                    } else {
-                        Ok(true)
                     }
+                    Ok(true)
                 }
             }
         } else if let Some(addr1) = &command.addr1 {
