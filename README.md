@@ -85,6 +85,8 @@ cargo test
 * The `--follow-symlinks` flag for in-place editing.
 * Address 0 can be used to specify an address range that is already
   active on line 1 and can finish with the specified regular expression.
+* Address steps can be specified in the form of start~step and start,~step
+  ranges.
 
 ### Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.

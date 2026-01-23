@@ -93,6 +93,8 @@ pub enum Address {
     Line(usize),       // Specific line
     RelLine(usize),    // Relative line
     Last,              // Last line
+    StepMatch(usize),  // Lines matching specified step from first
+    StepEnd(usize),    // Range ending at specified step from first
 }
 
 #[derive(Debug)]
