@@ -47,13 +47,7 @@ jobs:
         ref: 'master'
         persist-credentials: false
 
-    #### Build environment setup
-    - name: Install dependencies
-      shell: bash
-      run: |
-        ## Install dependencies for sed testing (no need to build GNU sed)
-        sudo apt-get update
-        sudo apt-get install -y jq perl
+    # Omit installing part of https://github.com/actions/runner-images/tree/main/images/ubuntu
 
     ### Build
     - name: Build Rust sed binary
