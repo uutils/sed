@@ -10,7 +10,7 @@ on:
       - '*'
 
 permissions:
-  contents: read
+  contents: write # Publish sed instead of discarding
 
 # End the current execution if there is a new changeset in the PR
 concurrency:
@@ -55,7 +55,19 @@ jobs:
       run: |
         ## Build Rust sed binary
         cd 'sed'
-        cargo build --release
+        cargo build --config=profile.release.strip=true --profile=release #-fast
+        zstd -19 target/release/sed -o ../sed-x86_64-unknown-linux-gnu.zst
+    - name: Publish latest commit
+      uses: softprops/action-gh-release@v2
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      with:
+        tag_name: latest-commit
+        draft: false
+        prerelease: true
+        files: |
+          sed-x86_64-unknown-linux-gnu.zst
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     ### Run tests
     - name: Run GNU sed testsuite
