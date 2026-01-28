@@ -84,6 +84,16 @@ def compare_results(current_file, reference_file, ignore_file=None, output_file=
     # Filter out intermittent failures
     non_intermittent_new_failures = new_failures - ignore_set
 
+    # Check if results are identical (no changes)
+    no_changes = (pass_diff == 0 and fail_diff == 0 and total_diff == 0
+                  and not new_failures and not improvements)
+
+    # If no changes, write empty output to prevent comment posting
+    if no_changes:
+        with open(output_file, "w") as f:
+            f.write("")
+        return 0
+
     # Prepare output message
     output_lines = []
 
