@@ -85,8 +85,13 @@ def compare_results(current_file, reference_file, ignore_file=None, output_file=
     non_intermittent_new_failures = new_failures - ignore_set
 
     # Check if results are identical (no changes)
-    no_changes = (pass_diff == 0 and fail_diff == 0 and total_diff == 0
-                  and not new_failures and not improvements)
+    no_changes = (
+        pass_diff == 0
+        and fail_diff == 0
+        and total_diff == 0
+        and not new_failures
+        and not improvements
+    )
 
     # If no changes, write empty output to prevent comment posting
     if no_changes:
@@ -99,8 +104,12 @@ def compare_results(current_file, reference_file, ignore_file=None, output_file=
 
     # Show current vs reference numbers for debugging
     output_lines.append("Test results comparison:")
-    output_lines.append(f"  Current:   TOTAL: {current_summary.get('total', 0)} / PASSED: {current_summary.get('passed', 0)} / FAILED: {current_summary.get('failed', 0)} / SKIPPED: {current_summary.get('skipped', 0)}")
-    output_lines.append(f"  Reference: TOTAL: {reference_summary.get('total', 0)} / PASSED: {reference_summary.get('passed', 0)} / FAILED: {reference_summary.get('failed', 0)} / SKIPPED: {reference_summary.get('skipped', 0)}")
+    output_lines.append(
+        f"  Current:   TOTAL: {current_summary.get('total', 0)} / PASSED: {current_summary.get('passed', 0)} / FAILED: {current_summary.get('failed', 0)} / SKIPPED: {current_summary.get('skipped', 0)}"
+    )
+    output_lines.append(
+        f"  Reference: TOTAL: {reference_summary.get('total', 0)} / PASSED: {reference_summary.get('passed', 0)} / FAILED: {reference_summary.get('failed', 0)} / SKIPPED: {reference_summary.get('skipped', 0)}"
+    )
     output_lines.append("")
 
     # Summary of changes
