@@ -28,7 +28,9 @@ Further work aims to:
 
 ## Installation
 
-Ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).
+We provide binary for Linux x86_64 from main branch at https://github.com/uutils/sed/releases/tag/latest-commit .
+
+For other platforms, ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).
 
 Clone the repository and build the project using Cargo:
 
