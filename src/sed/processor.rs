@@ -712,6 +712,7 @@ pub fn process_all_files(
         let output = in_place.begin(path)?;
 
         if index == 0 || context.separate {
+            context.hold.content = String::from("\n");
             context.line_number = 0;
             reset_latched_address_ranges(&mut context.range_commands);
         }
