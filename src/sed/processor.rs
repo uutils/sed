@@ -520,14 +520,17 @@ fn process_file(
                 }
                 'g' => {
                     // Replace pattern with the contents of the hold space.
-                    pattern.set_to_string(context.hold.content.clone(), context.hold.has_newline);
+                    pattern.set_to_string(
+                        context.hold.content.clone(),
+                        context.hold.has_newline || context.hold.content.is_empty(),
+                    );
                 }
                 'G' => {
                     // Append to pattern \n followed by hold space contents.
                     let (pat_content, pat_has_newline) = pattern.fields_mut()?;
                     pat_content.push('\n');
                     pat_content.push_str(&context.hold.content);
-                    *pat_has_newline = context.hold.has_newline;
+                    *pat_has_newline = context.hold.has_newline || context.hold.content.is_empty();
                 }
                 'h' => {
                     // Replace hold with the contents of the pattern space.
@@ -633,6 +636,11 @@ fn process_file(
                     let (pat_content, pat_has_newline) = pattern.fields_mut()?;
                     std::mem::swap(pat_content, &mut context.hold.content);
                     std::mem::swap(pat_has_newline, &mut context.hold.has_newline);
+                    // If the hold space was empty (thus the pat_content is now empty),
+                    // ensure the new pattern space is printed with a newline
+                    if pat_content.is_empty() {
+                        *pat_has_newline = true;
+                    }
                 }
                 'y' => {
                     let trans = extract_variant!(command, Transliteration);
