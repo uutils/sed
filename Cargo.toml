@@ -85,7 +85,7 @@ regex = { workspace = true }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
 uucore = { workspace = true, features = ["entries", "process", "signals", "benchmark"] }
-uutests = "0.5.0"
+uutests = "0.6.0"
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }
