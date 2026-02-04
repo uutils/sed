@@ -724,6 +724,12 @@ pub fn process_all_files(
             reset_latched_address_ranges(&mut context.range_commands);
         }
 
+        // Reset hold space for separate file processing
+        if index > 0 && context.separate {
+            context.hold.content.clear();
+            context.hold.has_newline = false;
+        }
+
         context.input_name = path.quote().to_string();
         process_file(&commands, &mut reader, output, context)?;
 
