@@ -374,6 +374,11 @@ check_output!(
 check_output!(pattern_swap_empty_hold, ["-e", r"4x", LINES1]);
 check_output!(pattern_replace_empty_hold, ["-e", r"4g;5g", LINES1]);
 check_output!(pattern_replace_append_empty_hold, ["-e", r"4G;5G", LINES1]);
+check_output!(
+    pattern_swap_separate,
+    ["--separate", r"4x;6x", LINES1, LINES2]
+);
+
 check_output!(pattern_next_output, ["-e", r"4n", LINES1]);
 check_output!(pattern_next_no_output, ["-n", "-e", r"4n", LINES1]);
 check_output!(pattern_next_print_output, ["-e", r"4n;p", LINES1]);
