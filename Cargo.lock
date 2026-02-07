@@ -1200,7 +1200,7 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "textwrap",
- "uucore 0.5.0",
+ "uucore",
  "uutests",
  "xattr",
 ]
@@ -1534,56 +1534,27 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uucore"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5eddd390f3fdef74f104a948559e6de29203f60f8f563c8c9f528cd4c88ee78"
-dependencies = [
- "clap",
- "codspeed-divan-compat",
- "fluent",
- "fluent-bundle",
- "fluent-syntax",
- "libc",
- "nix",
- "os_display",
- "phf",
- "tempfile",
- "thiserror",
- "unic-langid",
- "uucore_procs 0.5.0",
- "wild",
-]
-
-[[package]]
-name = "uucore"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b157ba598d7f7ed06f6dbc62999edb9d730b4d3fb58e503d8ad6d5fbe1e04391"
 dependencies = [
  "clap",
+ "codspeed-divan-compat",
  "dns-lookup",
  "fluent",
  "fluent-bundle",
  "fluent-syntax",
+ "itertools",
  "jiff",
  "libc",
  "nix",
  "os_display",
+ "tempfile",
  "thiserror",
  "time",
  "unic-langid",
- "uucore_procs 0.6.0",
+ "uucore_procs",
  "wild",
-]
-
-[[package]]
-name = "uucore_procs"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47148309a1f7a989d165dabbbc7f2bf156d7ff6affe7d69c1c5bfb822e663ae6"
-dependencies = [
- "proc-macro2",
- "quote",
 ]
 
 [[package]]
@@ -1610,7 +1581,7 @@ dependencies = [
  "regex",
  "rlimit",
  "tempfile",
- "uucore 0.6.0",
+ "uucore",
  "xattr",
 ]
 
