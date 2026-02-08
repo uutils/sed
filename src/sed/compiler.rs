@@ -1236,6 +1236,11 @@ fn compile_text_command_posix(
             break;
         }
     }
+
+    if text.is_empty() {
+        compilation_error(lines, line, "incomplete command")?;
+    }
+
     cmd.data = CommandData::Text(Rc::from(text));
     Ok(CommandHandling::Continue)
 }
