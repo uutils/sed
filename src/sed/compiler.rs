@@ -2726,6 +2726,19 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_text_command_posix_incomplete() {
+        let (mut lines, mut chars) = make_providers("i\\");
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext {
+            posix: true,
+            ..Default::default()
+        };
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("incomplete command"));
+    }
+
+    #[test]
     fn test_compile_text_command_gnu_optional_backslash() {
         let mut chars = make_char_provider("athere");
         let mut lines = make_line_provider(&["line1", "line2"]);
