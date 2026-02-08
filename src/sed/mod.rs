@@ -382,6 +382,14 @@ mod tests {
     }
 
     #[test]
+    fn test_multiple_same_arguments() {
+        let matches = test_matches(&["-E", "-r"]);
+        let ctx = build_context(&matches);
+
+        assert!(ctx.regex_extended);
+    }
+
+    #[test]
     fn test_in_place_with_suffix() {
         let matches = test_matches(&["-i", ".bak"]);
         let ctx = build_context(&matches);
