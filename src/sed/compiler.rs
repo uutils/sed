@@ -1236,6 +1236,11 @@ fn compile_text_command_posix(
             break;
         }
     }
+
+    if text.is_empty() {
+        compilation_error(lines, line, "incomplete command")?;
+    }
+
     cmd.data = CommandData::Text(Rc::from(text));
     Ok(CommandHandling::Continue)
 }
@@ -2718,6 +2723,19 @@ mod tests {
             }
             _ => panic!("Expected CommandData::Text"),
         }
+    }
+
+    #[test]
+    fn test_compile_text_command_posix_incomplete() {
+        let (mut lines, mut chars) = make_providers("i\\");
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext {
+            posix: true,
+            ..Default::default()
+        };
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("incomplete command"));
     }
 
     #[test]

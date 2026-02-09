@@ -55,6 +55,7 @@ pub fn uu_app() -> Command {
         .version(crate_version!())
         .about(ABOUT)
         .override_usage(format_usage(USAGE))
+        .args_override_self(true)
         .infer_long_args(true)
         .args([
             arg!([script] "Script to execute if not otherwise provided."),
@@ -378,6 +379,14 @@ mod tests {
         assert!(ctx.sandbox);
         assert!(ctx.unbuffered);
         assert!(ctx.null_data);
+    }
+
+    #[test]
+    fn test_multiple_same_arguments() {
+        let matches = test_matches(&["-E", "-r"]);
+        let ctx = build_context(&matches);
+
+        assert!(ctx.regex_extended);
     }
 
     #[test]

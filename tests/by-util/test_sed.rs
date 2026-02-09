@@ -1067,6 +1067,15 @@ fn test_undefined_label() {
 }
 
 #[test]
+fn test_incomplete_test_command_posix() {
+    new_ucmd!()
+        .args(&["--posix", "i\\"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: :0:3: error: incomplete command\n");
+}
+
+#[test]
 fn test_addr0_non_posix() {
     new_ucmd!()
         .args(&["--posix", "0,/foo/p"])

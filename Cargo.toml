@@ -52,7 +52,7 @@ sysinfo = "0.38"
 tempfile = "3.10.1"
 textwrap = { version = "0.16.1", features = ["terminal_size"] }
 terminal_size = "0.4.2"
-uucore = { version = "0.5.0", features = ["libc"] }
+uucore = { version = "0.6.0", features = ["libc"] }
 xattr = "1.3.1"
 
 
@@ -85,7 +85,7 @@ regex = { workspace = true }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
 uucore = { workspace = true, features = ["entries", "process", "signals", "benchmark"] }
-uutests = "0.5.0"
+uutests = "0.6.0"
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }
