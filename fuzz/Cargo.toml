@@ -15,7 +15,7 @@ tempfile = "3.15.0"
 rand = { version = "0.10.0" }
 similar = "2.5.0"
 uucore = { version = "0.6.0", features = ["libc"] }
-uufuzz = "0.5.0"
+uufuzz = "0.6.0"
 
 sed = { path = ".." }
 
