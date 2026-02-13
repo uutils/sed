@@ -113,17 +113,12 @@ harness = false
 # release profile), the debug info and the stack traces will still be available.
 [profile.release]
 lto = true
-
-# A release-like profile that is tuned to be fast, even when being fast
-# compromises on binary size. This includes aborting on panic.
-[profile.release-fast]
-inherits = "release"
 panic = "abort"
-codegen-units = 1 # should be moved to release without regression
+codegen-units = 7
 
 # A release-like profile that is as small as possible.
 [profile.release-small]
-inherits = "release-fast"
+inherits = "release"
 opt-level = "z"
 strip = true
 
