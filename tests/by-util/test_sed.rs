@@ -1195,3 +1195,14 @@ fn test_print_command_adds_newline() {
         .succeeds()
         .stdout_is("foo\nfoo");
 }
+
+////////////////////////////////////////////////////////////
+// Test for issue #254: Missing newline in exchanged output with `2x`
+#[test]
+fn test_exchange_command_adds_newline() {
+    new_ucmd!()
+        .args(&["2x"])
+        .pipe_in("a\nb\nc\n")
+        .succeeds()
+        .stdout_is("a\n\nc\n");
+}

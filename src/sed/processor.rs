@@ -631,8 +631,12 @@ fn process_file(
                 'x' => {
                     // Exchange the contents of the pattern and hold spaces.
                     let (pat_content, pat_has_newline) = pattern.fields_mut()?;
+
+                    // Swap newline if hold space is logically non-empty.
+                    if !context.hold.content.is_empty() || context.hold.has_newline {
+                        std::mem::swap(pat_has_newline, &mut context.hold.has_newline);
+                    }
                     std::mem::swap(pat_content, &mut context.hold.content);
-                    std::mem::swap(pat_has_newline, &mut context.hold.has_newline);
                 }
                 'y' => {
                     let trans = extract_variant!(command, Transliteration);
