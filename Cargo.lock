@@ -1291,6 +1291,7 @@ dependencies = [
  "rand 0.10.0",
  "regex",
  "rlimit",
+ "rustc-hash",
  "sha2",
  "sysinfo",
  "tempfile",

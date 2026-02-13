@@ -25,7 +25,7 @@ use crate::sed::compiler::compile;
 use crate::sed::processor::process_all_files;
 use crate::sed::script_line_provider::ScriptValue;
 use clap::{Arg, ArgMatches, Command, arg, crate_version};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
 use uucore::format_usage;
@@ -216,7 +216,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         input_action: None,
         hold: StringSpace::default(),
         parsed_block_nesting: 0,
-        label_to_command_map: HashMap::new(),
+        label_to_command_map: FxHashMap::default(),
         range_commands: Vec::new(),
         substitution_made: false,
         append_elements: Vec::new(),
