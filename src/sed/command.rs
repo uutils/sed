@@ -15,7 +15,7 @@ use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::ScriptLineProvider;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::path::PathBuf; // For file descriptors and equivalent
 use std::rc::Rc;
 use uucore::error::UResult;
@@ -63,7 +63,7 @@ pub struct ProcessingContext {
     /// Nesting of { } at compile time
     pub parsed_block_nesting: usize,
     /// Command associated with each label
-    pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
+    pub label_to_command_map: FxHashMap<String, Rc<RefCell<Command>>>,
     /// Commands with a (latchable and resetable) address range
     pub range_commands: Vec<Rc<RefCell<Command>>>,
     /// True if a substitution was made as specified in the t command
@@ -214,7 +214,7 @@ const COMMON_UNICODE: usize = 2048;
 /// Transliteration command (y)
 pub struct Transliteration {
     fast: [char; COMMON_UNICODE],
-    slow: HashMap<char, char>,
+    slow: FxHashMap<char, char>,
 }
 
 impl Default for Transliteration {
@@ -226,7 +226,7 @@ impl Default for Transliteration {
         }
         Self {
             fast,
-            slow: HashMap::new(),
+            slow: FxHashMap::default(),
         }
     }
 }

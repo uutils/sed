@@ -68,6 +68,7 @@ memmap2.workspace = true
 phf = { workspace = true }
 predicates = { workspace = true }
 regex = { workspace = true }
+rustc-hash = "2.1.1"
 sysinfo = { workspace = true }
 tempfile = { workspace = true }
 terminal_size = { workspace = true }
