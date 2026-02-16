@@ -150,7 +150,6 @@ used_underscore_binding = "allow"            # 2
 too_many_lines = "allow"                     # 2
 struct_excessive_bools = "allow"             # 2
 match_same_arms = "allow"                    # 2
-manual_assert = "allow"                      # 2
 ignore_without_reason = "allow"              # 2
 format_push_string = "allow"                 # 2
 should_panic_without_expect = "allow"        # 1
