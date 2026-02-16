@@ -46,7 +46,7 @@ fn match_address(
 ) -> UResult<bool> {
     match addr {
         Address::Re(re) => {
-            let regex = re_or_saved_re(re, context, location)?;
+            let regex = re_or_saved_re(re.as_ref(), context, location)?;
             match regex.is_match(pattern) {
                 Ok(result) => Ok(result),
                 Err(e) => input_runtime_error(location, context, e.to_string()),
@@ -186,7 +186,7 @@ fn write_chunk(
 /// Return a reference to the current or the saved RE if the RE is None.
 /// Update the saved RE to RE.
 fn re_or_saved_re<'a>(
-    regex: &Option<Regex>,
+    regex: Option<&Regex>,
     context: &'a mut ProcessingContext,
     location: &ScriptLocation,
 ) -> UResult<&'a Regex> {
@@ -219,7 +219,7 @@ fn substitute(
 
     let mut text: Option<&str> = None;
 
-    let regex = re_or_saved_re(&sub.regex, context, &command.location)?;
+    let regex = re_or_saved_re(sub.regex.as_ref(), context, &command.location)?;
 
     // The following let block allows a common input_runtime_error to be
     // called once in all cases, and most importantly, to finish the regex
@@ -426,7 +426,7 @@ fn list(output: &mut OutputBuffer, line: &IOChunk, max_width: usize) -> UResult<
 #[allow(clippy::cognitive_complexity)]
 /// Process a single input file
 fn process_file(
-    commands: &Option<Rc<RefCell<Command>>>,
+    commands: Option<Rc<RefCell<Command>>>,
     reader: &mut LineReader,
     output: &mut OutputBuffer,
     context: &mut ProcessingContext,
@@ -452,7 +452,7 @@ fn process_file(
             };
 
         // Loop over script commands.
-        while let Some(command_rc) = current.clone() {
+        while let Some(command_rc) = current {
             let mut command = command_rc.borrow_mut();
 
             if !applies(&mut command, reader, &mut pattern, context)? {
@@ -721,7 +721,7 @@ pub fn process_all_files(
         }
 
         context.input_name = path.quote().to_string();
-        process_file(&commands, &mut reader, output, context)?;
+        process_file(commands.clone(), &mut reader, output, context)?;
 
         // Handle any N command remains.
         if context.last_file
