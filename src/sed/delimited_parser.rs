@@ -77,7 +77,7 @@ fn create_control_char(x: char) -> Option<char> {
     let c = x.to_ascii_uppercase();
 
     let transformed = (c as u8) ^ 0x40;
-    char::from_u32(transformed as u32)
+    char::from_u32(u32::from(transformed))
 }
 
 /// Parse a character escape valid in all contexts (RE pattern, substitution,
