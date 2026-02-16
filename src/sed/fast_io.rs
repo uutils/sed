@@ -376,7 +376,7 @@ impl FastCopy {
 
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
 
-        let ret = unsafe { libc::fstat(fd, &mut st) };
+        let ret = unsafe { libc::fstat(fd, &raw mut st) };
         if ret == -1 {
             // All fstat errors are programmer rather user faults
             // so panic is appropriate.
@@ -878,11 +878,10 @@ fn reliable_copy_file_range(
 ) -> std::io::Result<usize> {
     let mut pending = len;
     while pending > 0 {
-        let in_off_ptr: *mut i64 = &mut in_off;
         let ret = unsafe {
             libc::copy_file_range(
                 in_fd,
-                in_off_ptr,
+                &raw mut in_off,
                 out_fd,
                 std::ptr::null_mut(), // Use and update output offset
                 pending,
