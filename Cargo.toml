@@ -146,7 +146,6 @@ cast_sign_loss = "allow"                     # 4
 cast_possible_wrap = "allow"                 # 4
 uninlined_format_args = "allow"              # 3
 similar_names = "allow"                      # 3
-ptr_as_ptr = "allow"                         # 3
 used_underscore_binding = "allow"            # 2
 too_many_lines = "allow"                     # 2
 struct_excessive_bools = "allow"             # 2

@@ -815,8 +815,7 @@ fn reliable_write(fd: i32, ptr: *const u8, len: usize) -> std::io::Result<usize>
 
     impl Write for FdWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            let ret =
-                unsafe { libc::write(self.0, buf.as_ptr() as *const libc::c_void, buf.len()) };
+            let ret = unsafe { libc::write(self.0, buf.as_ptr().cast(), buf.len()) };
             if ret < 0 {
                 Err(io::Error::last_os_error())
             } else {
@@ -1694,7 +1693,7 @@ mod tests {
         thread::spawn(move || {
             let mut buf = [0u8; 1024];
             loop {
-                let n = unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+                let n = unsafe { libc::read(read_fd, buf.as_mut_ptr().cast(), buf.len()) };
                 if n <= 0 {
                     break;
                 }
