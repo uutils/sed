@@ -575,14 +575,11 @@ fn process_file(
                 'P' => {
                     // Output pattern space, up to the first \n.
                     let line = pattern.as_str()?;
-                    match line.find('\n') {
-                        Some(pos) => {
-                            output.write_str(&line[..=pos])?;
-                        }
-                        None => {
-                            output.write_str(line)?;
-                            output.write_str("\n")?;
-                        }
+                    if let Some(pos) = line.find('\n') {
+                        output.write_str(&line[..=pos])?;
+                    } else {
+                        output.write_str(line)?;
+                        output.write_str("\n")?;
                     }
                 }
                 'q' => {

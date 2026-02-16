@@ -706,14 +706,15 @@ pub fn compile_replacement(
                         }
 
                         // other escape sequences
-                        _ => match parse_char_escape(line) {
-                            Some(decoded) => literal.push(decoded),
-                            None => {
+                        _ => {
+                            if let Some(decoded) = parse_char_escape(line) {
+                                literal.push(decoded);
+                            } else {
                                 literal.push('\\');
                                 literal.push(line.current());
                                 line.advance();
                             }
-                        },
+                        }
                     }
                 }
 
@@ -1177,13 +1178,12 @@ fn compile_text_command_gnu(
                 continue 'text_content;
             }
 
-            match parse_char_escape(line) {
-                Some(decoded) => text.push(decoded),
-                None => {
-                    // Invalid escapes result in the escaped character.
-                    text.push(line.current());
-                    line.advance();
-                }
+            if let Some(decoded) = parse_char_escape(line) {
+                text.push(decoded);
+            } else {
+                // Invalid escapes result in the escaped character.
+                text.push(line.current());
+                line.advance();
             }
         } else {
             text.push(line.current());
