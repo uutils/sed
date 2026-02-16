@@ -162,12 +162,12 @@ impl ReplacementTemplate {
                 ReplacementPart::Literal(s) => result.push_str(s),
 
                 ReplacementPart::WholeMatch => {
-                    result.push_str(caps.get(0)?.map(|m| m.as_str()).unwrap_or(""));
+                    result.push_str(caps.get(0)?.map(|m| m.as_str()).unwrap_or_default());
                 }
 
                 ReplacementPart::Group(n) => {
                     let i: usize = (*n).try_into().unwrap();
-                    result.push_str(caps.get(i)?.map(|m| m.as_str()).unwrap_or(""));
+                    result.push_str(caps.get(i)?.map(|m| m.as_str()).unwrap_or_default());
                 }
             }
         }
