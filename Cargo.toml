@@ -136,7 +136,6 @@ needless_raw_string_hashes = "allow"         # 20
 assigning_clones = "allow"                   # 20
 redundant_else = "allow"                     # 16
 needless_pass_by_value = "allow"             # 15
-single_match_else = "allow"                  # 12
 missing_panics_doc = "allow"                 # 12
 cast_possible_truncation = "allow"           # 7
 unnecessary_wraps = "allow"                  # 6
@@ -154,6 +153,7 @@ format_push_string = "allow"                 # 2
 should_panic_without_expect = "allow"        # 1
 many_single_char_names = "allow"             # 1
 comparison_chain = "allow"
+multiple_crate_versions = "allow"
 unnested_or_patterns = "allow"
 
 restriction = { level = "allow", priority = -1 }

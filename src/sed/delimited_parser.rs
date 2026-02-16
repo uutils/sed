@@ -278,13 +278,12 @@ fn parse_character_class(
             if line.eol() {
                 break;
             }
-            match parse_char_escape(line) {
-                Some(decoded) => result.push(decoded),
-                None => {
-                    result.push('\\');
-                    result.push(line.current());
-                    line.advance();
-                }
+            if let Some(decoded) = parse_char_escape(line) {
+                result.push(decoded);
+            } else {
+                result.push('\\');
+                result.push(line.current());
+                line.advance();
             }
         } else {
             result.push(ch);
@@ -336,14 +335,13 @@ pub fn parse_regex(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) ->
                     line.advance();
                     continue;
                 }
-                match parse_char_escape(line) {
-                    Some(decoded) => result.push(decoded),
-                    None => {
-                        // Pass through \<any> to RE engine for further treatment
-                        result.push('\\');
-                        result.push(line.current());
-                        line.advance();
-                    }
+                if let Some(decoded) = parse_char_escape(line) {
+                    result.push(decoded);
+                } else {
+                    // Pass through \<any> to RE engine for further treatment
+                    result.push('\\');
+                    result.push(line.current());
+                    line.advance();
                 }
                 continue;
             }
@@ -378,14 +376,13 @@ pub fn parse_transliteration(
                     line.advance();
                     continue;
                 }
-                match parse_char_escape(line) {
-                    Some(decoded) => result.push(decoded),
-                    None => {
-                        // Pass through \<any> to tr for literal use
-                        result.push('\\');
-                        result.push(line.current());
-                        line.advance();
-                    }
+                if let Some(decoded) = parse_char_escape(line) {
+                    result.push(decoded);
+                } else {
+                    // Pass through \<any> to tr for literal use
+                    result.push('\\');
+                    result.push(line.current());
+                    line.advance();
                 }
                 continue;
             }
