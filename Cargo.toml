@@ -155,7 +155,6 @@ match_same_arms = "allow"                    # 2
 manual_let_else = "allow"                    # 2
 manual_assert = "allow"                      # 2
 ignore_without_reason = "allow"              # 2
-if_not_else = "allow"                        # 2
 format_push_string = "allow"                 # 2
 should_panic_without_expect = "allow"        # 1
 many_single_char_names = "allow"             # 1

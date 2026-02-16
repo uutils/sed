@@ -216,7 +216,10 @@ fn parse_character_class(
 
         if ch == '[' {
             line.advance();
-            if !line.eol() {
+            if line.eol() {
+                result.push('[');
+                continue;
+            } else {
                 let marker = line.current();
                 // POSIX character class, collating symbol, or equivalence
                 if marker == ':' || marker == '.' || marker == '=' {
@@ -265,9 +268,6 @@ fn parse_character_class(
                     line.advance();
                     continue;
                 }
-            } else {
-                result.push('[');
-                continue;
             }
         }
 
