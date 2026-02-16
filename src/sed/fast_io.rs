@@ -630,10 +630,9 @@ impl OutputBuffer {
             self.flush_mmap(WriteRange::Complete)?;
         }
 
-        let file = match File::open(path) {
-            Ok(f) => f,
+        let Ok(file) = File::open(path) else {
             // Per POSIX, if the file can't be read treat it as empty.
-            Err(_) => return Ok(()),
+            return Ok(());
         };
 
         let mut reader = BufReader::new(file);
