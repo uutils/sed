@@ -186,9 +186,10 @@ fn parse_character_class(
 ) -> UResult<String> {
     let mut result = String::new();
 
-    if line.eol() || line.current() != '[' {
-        panic!("Invalid character class.");
-    }
+    assert!(
+        !line.eol() && line.current() == '[',
+        "Invalid character class."
+    );
 
     line.advance();
     result.push('[');
