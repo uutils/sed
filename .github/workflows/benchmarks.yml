@@ -35,9 +35,10 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Install cargo-codspeed
-        shell: bash
-        run: cargo install cargo-codspeed --locked
+      - name: Install tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-codspeed
 
       - name: Build benchmarks for ${{ matrix.benchmark-target.package }}
         shell: bash
