@@ -91,7 +91,7 @@ jobs:
         find . -name "*json*" -type f || echo "No JSON files found"
 
     - name: Upload full json results
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: sed-gnu-full-result
         path: sed/${{ env.TEST_FULL_SUMMARY_FILE }}
@@ -99,7 +99,7 @@ jobs:
 
     - name: Upload test logs
       if: always()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: test-logs
         path: |
@@ -142,7 +142,7 @@ jobs:
         if_no_artifact_found: warn
 
     - name: Download full json results
-      uses: actions/download-artifact@v7
+      uses: actions/download-artifact@v8
       with:
         name: sed-gnu-full-result
         path: results
@@ -203,13 +203,13 @@ jobs:
         outputs HASH TOTAL PASS FAIL SKIP
 
     - name: Upload SHA1/ID of 'test-summary'
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: "${{ steps.summary.outputs.HASH }}"
         path: "${{ steps.vars.outputs.TEST_SUMMARY_FILE }}"
 
     - name: Upload test results summary
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: test-summary
         path: "${{ steps.vars.outputs.TEST_SUMMARY_FILE }}"
@@ -262,7 +262,7 @@ jobs:
     
     - name: Upload comparison log (for GnuComment workflow)
       if: success() || failure()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: comment
         path: reference/comment/

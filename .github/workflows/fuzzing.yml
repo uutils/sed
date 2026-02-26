@@ -150,7 +150,7 @@ jobs:
         path: |
           fuzz/corpus/${{ matrix.test-target.name }}
     - name: Upload Stats
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: fuzz-stats-${{ matrix.test-target.name }}
         path: |
@@ -167,7 +167,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download all stats
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           path: fuzz/stats-artifacts
           pattern: fuzz-stats-*
@@ -261,7 +261,7 @@ jobs:
         run: |
           cat fuzzing_summary.md
       - name: Upload Summary
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: fuzzing-summary
           path: fuzzing_summary.md
