@@ -77,7 +77,7 @@ fn create_control_char(x: char) -> Option<char> {
     let c = x.to_ascii_uppercase();
 
     let transformed = (c as u8) ^ 0x40;
-    char::from_u32(transformed as u32)
+    char::from_u32(u32::from(transformed))
 }
 
 /// Parse a character escape valid in all contexts (RE pattern, substitution,
@@ -186,9 +186,10 @@ fn parse_character_class(
 ) -> UResult<String> {
     let mut result = String::new();
 
-    if line.eol() || line.current() != '[' {
-        panic!("Invalid character class.");
-    }
+    assert!(
+        !line.eol() && line.current() == '[',
+        "Invalid character class."
+    );
 
     line.advance();
     result.push('[');
@@ -216,7 +217,10 @@ fn parse_character_class(
 
         if ch == '[' {
             line.advance();
-            if !line.eol() {
+            if line.eol() {
+                result.push('[');
+                continue;
+            } else {
                 let marker = line.current();
                 // POSIX character class, collating symbol, or equivalence
                 if marker == ':' || marker == '.' || marker == '=' {
@@ -265,9 +269,6 @@ fn parse_character_class(
                     line.advance();
                     continue;
                 }
-            } else {
-                result.push('[');
-                continue;
             }
         }
 
@@ -277,13 +278,12 @@ fn parse_character_class(
             if line.eol() {
                 break;
             }
-            match parse_char_escape(line) {
-                Some(decoded) => result.push(decoded),
-                None => {
-                    result.push('\\');
-                    result.push(line.current());
-                    line.advance();
-                }
+            if let Some(decoded) = parse_char_escape(line) {
+                result.push(decoded);
+            } else {
+                result.push('\\');
+                result.push(line.current());
+                line.advance();
             }
         } else {
             result.push(ch);
@@ -335,14 +335,13 @@ pub fn parse_regex(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) ->
                     line.advance();
                     continue;
                 }
-                match parse_char_escape(line) {
-                    Some(decoded) => result.push(decoded),
-                    None => {
-                        // Pass through \<any> to RE engine for further treatment
-                        result.push('\\');
-                        result.push(line.current());
-                        line.advance();
-                    }
+                if let Some(decoded) = parse_char_escape(line) {
+                    result.push(decoded);
+                } else {
+                    // Pass through \<any> to RE engine for further treatment
+                    result.push('\\');
+                    result.push(line.current());
+                    line.advance();
                 }
                 continue;
             }
@@ -377,14 +376,13 @@ pub fn parse_transliteration(
                     line.advance();
                     continue;
                 }
-                match parse_char_escape(line) {
-                    Some(decoded) => result.push(decoded),
-                    None => {
-                        // Pass through \<any> to tr for literal use
-                        result.push('\\');
-                        result.push(line.current());
-                        line.advance();
-                    }
+                if let Some(decoded) = parse_char_escape(line) {
+                    result.push(decoded);
+                } else {
+                    // Pass through \<any> to tr for literal use
+                    result.push('\\');
+                    result.push(line.current());
+                    line.advance();
                 }
                 continue;
             }

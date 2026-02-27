@@ -376,7 +376,7 @@ impl FastCopy {
 
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
 
-        let ret = unsafe { libc::fstat(fd, &mut st) };
+        let ret = unsafe { libc::fstat(fd, &raw mut st) };
         if ret == -1 {
             // All fstat errors are programmer rather user faults
             // so panic is appropriate.
@@ -630,10 +630,9 @@ impl OutputBuffer {
             self.flush_mmap(WriteRange::Complete)?;
         }
 
-        let file = match File::open(path) {
-            Ok(f) => f,
+        let Ok(file) = File::open(path) else {
             // Per POSIX, if the file can't be read treat it as empty.
-            Err(_) => return Ok(()),
+            return Ok(());
         };
 
         let mut reader = BufReader::new(file);
@@ -816,8 +815,7 @@ fn reliable_write(fd: i32, ptr: *const u8, len: usize) -> std::io::Result<usize>
 
     impl Write for FdWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            let ret =
-                unsafe { libc::write(self.0, buf.as_ptr() as *const libc::c_void, buf.len()) };
+            let ret = unsafe { libc::write(self.0, buf.as_ptr().cast(), buf.len()) };
             if ret < 0 {
                 Err(io::Error::last_os_error())
             } else {
@@ -878,11 +876,10 @@ fn reliable_copy_file_range(
 ) -> std::io::Result<usize> {
     let mut pending = len;
     while pending > 0 {
-        let in_off_ptr: *mut i64 = &mut in_off;
         let ret = unsafe {
             libc::copy_file_range(
                 in_fd,
-                in_off_ptr,
+                &raw mut in_off,
                 out_fd,
                 std::ptr::null_mut(), // Use and update output offset
                 pending,
@@ -1696,7 +1693,7 @@ mod tests {
         thread::spawn(move || {
             let mut buf = [0u8; 1024];
             loop {
-                let n = unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+                let n = unsafe { libc::read(read_fd, buf.as_mut_ptr().cast(), buf.len()) };
                 if n <= 0 {
                     break;
                 }

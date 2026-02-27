@@ -194,10 +194,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         in_place_suffix: matches
             .get_one::<String>("in-place")
             .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
-        length: matches
-            .get_one::<u32>("length")
-            .map(|v| *v as usize)
-            .unwrap_or(70),
+        length: matches.get_one::<u32>("length").map_or(70, |v| *v as usize),
         quiet: matches.get_flag("quiet"),
         posix: matches.get_flag("posix"),
         separate: matches.get_flag("separate"),

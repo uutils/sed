@@ -120,11 +120,42 @@ opt-level = "z"
 strip = true
 
 [lints.clippy]
-default_trait_access = "warn"
-manual_string_new = "warn"
+all = { level = "warn", priority = -1 }
+
+cargo = { level = "warn", priority = -1 }
+
+pedantic = { level = "warn", priority = -1 }
+# The counts were generated with this command:
+#   cargo +nightly clippy --all-targets --workspace --message-format=json --quiet \
+#     | jq -r '.message.code.code | select(. != null and startswith("clippy::"))' \
+#     | sort | uniq -c | sort -h -r
+missing_errors_doc = "allow"                 # 69
+doc_markdown = "allow"                       # 63
+must_use_candidate = "allow"                 # 56
+needless_raw_string_hashes = "allow"         # 20
+assigning_clones = "allow"                   # 20
+redundant_else = "allow"                     # 16
+needless_pass_by_value = "allow"             # 15
+missing_panics_doc = "allow"                 # 12
+cast_possible_truncation = "allow"           # 7
+unnecessary_wraps = "allow"                  # 6
+match_wildcard_for_single_variants = "allow" # 4
+cast_sign_loss = "allow"                     # 4
+cast_possible_wrap = "allow"                 # 4
+uninlined_format_args = "allow"              # 3
+similar_names = "allow"                      # 3
+used_underscore_binding = "allow"            # 2
+too_many_lines = "allow"                     # 2
+struct_excessive_bools = "allow"             # 2
+match_same_arms = "allow"                    # 2
+ignore_without_reason = "allow"              # 2
+format_push_string = "allow"                 # 2
+should_panic_without_expect = "allow"        # 1
+many_single_char_names = "allow"             # 1
+comparison_chain = "allow"
+multiple_crate_versions = "allow"
+unnested_or_patterns = "allow"
+
+restriction = { level = "allow", priority = -1 }
 cognitive_complexity = "warn"
-implicit_clone = "warn"
-range-plus-one = "warn"
-redundant-clone = "warn"
-match_bool = "warn"
-semicolon_if_nothing_returned = "warn"
+redundant_clone = "warn"
