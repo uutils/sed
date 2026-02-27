@@ -74,6 +74,9 @@ terminal_size = { workspace = true }
 textwrap = { workspace = true }
 uucore = { workspace = true }
 
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+mimalloc = { version = "0.1.48", default-features = false, features = ["override"] }
+
 [dev-dependencies]
 chrono = { workspace = true }
 divan = { workspace = true }
@@ -111,7 +114,7 @@ harness = false
 lto = true
 panic = "abort"
 # should be dropped to 1 for binary size without performance drop
-codegen-units = 7 
+codegen-units = 6
 
 # A release-like profile that is as small as possible.
 [profile.release-small]

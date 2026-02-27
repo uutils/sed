@@ -6,6 +6,10 @@
 use std::ffi::OsString;
 use std::process;
 
+#[cfg(not(target_os = "macos"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     // Detect multicall vs single-call BEFORE any uucore calls
     // This must happen first to set the utility name detection mode correctly
