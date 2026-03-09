@@ -505,7 +505,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -805,7 +805,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1244,7 +1244,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1296,7 +1296,7 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "textwrap",
- "uucore",
+ "uucore 0.6.0",
  "uutests",
  "xattr",
 ]
@@ -1449,10 +1449,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82a72c767771b47409d2345987fda8628641887d5466101319899796367354a0"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1648,20 +1648,40 @@ checksum = "b157ba598d7f7ed06f6dbc62999edb9d730b4d3fb58e503d8ad6d5fbe1e04391"
 dependencies = [
  "clap",
  "codspeed-divan-compat",
- "dns-lookup",
  "fluent",
  "fluent-bundle",
  "fluent-syntax",
  "itertools",
- "jiff",
  "libc",
  "nix",
  "os_display",
  "tempfile",
  "thiserror",
+ "unic-langid",
+ "uucore_procs 0.6.0",
+ "wild",
+]
+
+[[package]]
+name = "uucore"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8038531f506a34ab4612b93f97d5f40759768cd34a83fd2af041b84fcbde474"
+dependencies = [
+ "clap",
+ "dns-lookup",
+ "fluent",
+ "fluent-bundle",
+ "fluent-syntax",
+ "jiff",
+ "libc",
+ "nix",
+ "os_display",
+ "rustc-hash",
+ "thiserror",
  "time",
  "unic-langid",
- "uucore_procs",
+ "uucore_procs 0.7.0",
  "wild",
 ]
 
@@ -1676,10 +1696,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "uutests"
-version = "0.6.0"
+name = "uucore_procs"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83559c0581b560419248e130b8d8a3d362ae1f4d0a150ac5c493cc0acdb1ae31"
+checksum = "0f63e2d5083ff0983193a33e2d57fd271c7e3e3e7df8e46e8f471865647b2cbc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "uutests"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25b8a1598ddd20230a5df59d642e2e5741b0b90038bde8684c984515f947fda5"
 dependencies = [
  "ctor",
  "libc",
@@ -1689,7 +1719,7 @@ dependencies = [
  "regex",
  "rlimit",
  "tempfile",
- "uucore",
+ "uucore 0.7.0",
  "xattr",
 ]
 
@@ -1843,7 +1873,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
