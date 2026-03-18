@@ -75,8 +75,8 @@ jobs:
       run: |
         ## Run GNU sed testsuite using our script
         cd 'sed'
-        # Set GNU testsuite directory
-        export GNU_TESTSUITE_DIR="../gnu.sed/testsuite"
+        # Set GNU sed source directory (testsuite is at gnu.sed/testsuite/)
+        export GNU_SED_DIR="../gnu.sed"
         # Run tests with JSON output
         ./util/run-gnu-testsuite.sh --json-output "${{ env.TEST_FULL_SUMMARY_FILE }}" || true
 
