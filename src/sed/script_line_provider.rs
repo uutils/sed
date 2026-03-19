@@ -65,6 +65,14 @@ impl ScriptLineProvider {
         }
     }
 
+    /// Return the zero-based index of the currently processed script source.
+    pub fn get_source_index(&self) -> usize {
+        match &self.state {
+            State::Active { index, .. } => *index,
+            _ => 0,
+        }
+    }
+
     /// Return the currently processed script descriptive name.
     pub fn get_input_name(&self) -> &str {
         match &self.state {
@@ -128,7 +136,7 @@ impl ScriptLineProvider {
                 self.state = State::Active {
                     index: next_index,
                     reader: Box::new(BufReader::new(cursor)),
-                    input_name: format!("<script argument {}>", next_index + 1),
+                    input_name: format!("-e expression #{}", next_index + 1),
                     line_number: 0,
                 };
             }
@@ -285,7 +293,7 @@ mod tests {
         if let Some(line) = provider.next_line().unwrap() {
             assert_eq!(String::from_utf8(line).unwrap().trim(), "l1");
             assert_eq!(provider.get_line_number(), 1);
-            assert_eq!(provider.get_input_name(), "<script argument 1>");
+            assert_eq!(provider.get_input_name(), "-e expression #1");
         } else {
             panic!("Expected a line");
         }
@@ -293,7 +301,7 @@ mod tests {
         if let Some(line) = provider.next_line().unwrap() {
             assert_eq!(String::from_utf8(line).unwrap().trim(), "l2");
             assert_eq!(provider.get_line_number(), 2);
-            assert_eq!(provider.get_input_name(), "<script argument 1>");
+            assert_eq!(provider.get_input_name(), "-e expression #1");
         } else {
             panic!("Expected a line");
         }
@@ -301,7 +309,7 @@ mod tests {
         if let Some(line) = provider.next_line().unwrap() {
             assert_eq!(String::from_utf8(line).unwrap().trim(), "l3");
             assert_eq!(provider.get_line_number(), 1);
-            assert_eq!(provider.get_input_name(), "<script argument 2>");
+            assert_eq!(provider.get_input_name(), "-e expression #2");
         } else {
             panic!("Expected a line");
         }

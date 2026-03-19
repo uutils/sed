@@ -170,6 +170,8 @@ fn render_snippet(
 
 /// Fail with msg as a compile error at the provider location.
 /// The error's exit code is 1 (compilation phase).
+/// Format matches GNU sed: `-e expression #N, char C: message` for string
+/// scripts, `file:line: message` for file scripts.
 pub fn compilation_error<T>(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
@@ -189,6 +191,7 @@ pub fn compilation_error<T>(
 
 /// Fail with msg as a compilation error at the command's location.
 /// The error's exit code is as specified.
+/// Format matches GNU sed conventions.
 fn location_error<T>(location: &ScriptLocation, msg: impl ToString, exit_code: i32) -> UResult<T> {
     Err(USimpleError::new(
         exit_code,
