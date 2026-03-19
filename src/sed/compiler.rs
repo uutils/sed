@@ -27,7 +27,9 @@ use std::rc::Rc;
 use terminal_size::{Width, terminal_size};
 use uucore::error::{UResult, USimpleError};
 
-const DEFAULT_OUTPUT_WIDTH: usize = 60;
+/// Default line-wrap width for the `l` command when no terminal, COLS, or
+/// `-l` flag is available.  Matches GNU sed's compiled-in default of 70.
+const DEFAULT_OUTPUT_WIDTH: usize = 70;
 
 // Handling required after processing a command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,8 +254,10 @@ fn compile_sequence(
 
         // According to POSIX: "If the first two characters in the script are
         // "#n", the default output shall be suppressed".
+        // This only applies to the very first line of the first script source.
         if !line.eol()
             && line.current() == '#'
+            && lines.get_source_index() == 0
             && lines.get_line_number() == 1
             && line.get_pos() == 0
         {
@@ -511,25 +515,33 @@ fn parse_number(
 }
 
 /// Parse the end of a command, failing with an error on extra characters.
+/// Valid command terminators are: EOL, ';', '}', and '#' (start of comment).
 fn parse_command_ending(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
 ) -> UResult<()> {
-    if !line.eol() && line.current() == ';' {
-        line.advance();
+    line.eat_spaces();
+
+    if line.eol() {
         return Ok(());
     }
 
-    if !line.eol() {
-        return compilation_error(
+    match line.current() {
+        ';' => {
+            line.advance();
+            Ok(())
+        }
+        '}' | '#' => {
+            // Don't consume — the caller (compile_sequence) handles these
+            Ok(())
+        }
+        _ => compilation_error(
             lines,
             line,
             format!("extra characters at the end of the {} command", cmd.code),
-        );
+        ),
     }
-
-    Ok(())
 }
 
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
@@ -710,7 +722,7 @@ pub fn compile_replacement(
                             if let Some(decoded) = parse_char_escape(line) {
                                 literal.push(decoded);
                             } else {
-                                literal.push('\\');
+                                // Unknown escape: drop the backslash (GNU behavior)
                                 literal.push(line.current());
                                 line.advance();
                             }
@@ -931,6 +943,8 @@ pub fn compile_subst_flags(
 
             ';' | '\n' => break,
 
+            '}' | '#' => break, // closing brace and comment start are valid terminators
+
             other => {
                 return compilation_error(
                     lines,
@@ -1068,7 +1082,16 @@ fn compile_label_command(
 }
 
 /// Return the width of the command's terminal or a default.
+/// GNU sed checks COLS env var first, then terminal width, then defaults to 70.
+/// COLS values <= 0 or non-numeric are ignored.
 fn output_width() -> usize {
+    if let Ok(cols) = std::env::var("COLS")
+        && let Ok(n) = cols.parse::<usize>()
+        && n > 0
+    {
+        // Subtract 1 to avoid line wraps on terminals
+        return n - 1;
+    }
     if let Some((Width(w), _)) = terminal_size() {
         w as usize
     } else {
@@ -1082,13 +1105,17 @@ fn compile_number_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    _context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     line.advance(); // Skip the command character
     line.eat_spaces(); // Skip any leading whitespace
 
     match parse_number(lines, line, false)? {
         Some(n) => {
+            // 'l<N>' is a GNU extension, reject in POSIX mode
+            if cmd.code == 'l' && context.posix {
+                return compilation_error(lines, line, "extra characters after command");
+            }
             cmd.data = CommandData::Number(n);
         }
         None => match cmd.code {
@@ -1096,7 +1123,13 @@ fn compile_number_command(
                 cmd.data = CommandData::Number(0);
             }
             'l' => {
-                cmd.data = CommandData::Number(output_width());
+                // Use -l flag value if set (non-zero), else auto-detect
+                let width = if context.length > 0 {
+                    context.length
+                } else {
+                    output_width()
+                };
+                cmd.data = CommandData::Number(width);
             }
             _ => panic!("invalid number-expecting command"),
         },
@@ -1438,7 +1471,7 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert!(msg.contains("test.sed:42:5: error: unexpected token"));
+        assert!(msg.contains("test.sed:42: unexpected token"));
     }
 
     #[test]
@@ -1455,7 +1488,7 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert_eq!(msg, "input.txt:3:1: error: invalid command 'x'");
+        assert_eq!(msg, "input.txt:3: invalid command 'x'");
     }
 
     // get_verified_cmd_spec
@@ -1467,7 +1500,7 @@ mod tests {
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("test.sed:1:1: error: command expected"));
+        assert!(msg.contains("test.sed:1: command expected"));
     }
 
     #[test]
@@ -1478,7 +1511,7 @@ mod tests {
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("script.sed:2:1: error: invalid command code `@'"));
+        assert!(msg.contains("script.sed:2: invalid command code `@'"));
     }
 
     #[test]
@@ -1489,9 +1522,7 @@ mod tests {
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("input.sed:3:1: error: command q expects up to 1 address(es), found 2")
-        );
+        assert!(msg.contains("input.sed:3: command q expects up to 1 address(es), found 2"));
     }
 
     #[test]
@@ -1511,9 +1542,7 @@ mod tests {
         let result = get_verified_cmd_spec(&lines, &line, 2, true);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("input.sed:1:1: error: command i expects up to 1 address(es), found 2")
-        );
+        assert!(msg.contains("input.sed:1: command i expects up to 1 address(es), found 2"));
     }
 
     // parse_number
@@ -1892,7 +1921,7 @@ mod tests {
 
         assert_eq!(cmd.location.line_number, 1);
         assert_eq!(cmd.location.column_number, 1);
-        assert_eq!(cmd.location.input_name.as_ref(), "<script argument 1>");
+        assert_eq!(cmd.location.input_name.as_ref(), "-e expression #1");
 
         assert!(cmd.next.is_none());
     }
@@ -1909,14 +1938,14 @@ mod tests {
         assert_eq!(cmd.code, 'l');
         assert_eq!(cmd.location.line_number, 1);
         assert_eq!(cmd.location.column_number, 1);
-        assert_eq!(cmd.location.input_name.as_ref(), "<script argument 1>");
+        assert_eq!(cmd.location.input_name.as_ref(), "-e expression #1");
 
         let binding2 = cmd.next.clone().unwrap();
         let cmd2 = binding2.borrow();
         assert_eq!(cmd2.code, 'q');
         assert_eq!(cmd2.location.line_number, 1);
         assert_eq!(cmd2.location.column_number, 3);
-        assert_eq!(cmd2.location.input_name.as_ref(), "<script argument 1>");
+        assert_eq!(cmd2.location.input_name.as_ref(), "-e expression #1");
 
         assert!(cmd2.next.is_none());
     }
