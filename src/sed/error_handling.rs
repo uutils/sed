@@ -47,36 +47,53 @@ impl ScriptLocation {
 
 /// Fail with msg as a compile error at the provider location.
 /// The error's exit code is 1 (compilation phase).
+/// Format matches GNU sed: `-e expression #N, char C: message` for string
+/// scripts, `file:line: message` for file scripts.
 pub fn compilation_error<T>(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
     msg: impl ToString,
 ) -> UResult<T> {
-    Err(USimpleError::new(
-        1,
+    let input_name = lines.get_input_name();
+    let message = if input_name.starts_with("-e expression") {
+        // GNU format: char position is 1-based within the current line
         format!(
-            "{}:{}:{}: error: {}",
-            lines.get_input_name(),
-            lines.get_line_number(),
+            "{}, char {}: {}",
+            input_name,
             line.get_pos() + 1,
             msg.to_string()
-        ),
-    ))
+        )
+    } else {
+        format!(
+            "{}:{}: {}",
+            input_name,
+            lines.get_line_number(),
+            msg.to_string()
+        )
+    };
+    Err(USimpleError::new(1, message))
 }
 
 /// Fail with msg as a compilation error at the command's location.
 /// The error's exit code is as specified.
+/// Format matches GNU sed conventions.
 fn location_error<T>(location: &ScriptLocation, msg: impl ToString, exit_code: i32) -> UResult<T> {
-    Err(USimpleError::new(
-        exit_code,
+    let message = if location.input_name.starts_with("-e expression") {
         format!(
-            "{}:{}:{}: error: {}",
+            "{}, char {}: {}",
             location.input_name,
-            location.line_number,
             location.column_number,
             msg.to_string()
-        ),
-    ))
+        )
+    } else {
+        format!(
+            "{}:{}: {}",
+            location.input_name,
+            location.line_number,
+            msg.to_string()
+        )
+    };
+    Err(USimpleError::new(exit_code, message))
 }
 
 /// Fail with msg as a compilation error at the command's location.
@@ -101,13 +118,16 @@ pub fn input_runtime_error<T>(
     context: &ProcessingContext,
     msg: impl ToString,
 ) -> UResult<T> {
+    let loc_str = if location.input_name.starts_with("-e expression") {
+        format!("{}, char {}", location.input_name, location.column_number)
+    } else {
+        format!("{}:{}", location.input_name, location.line_number)
+    };
     Err(USimpleError::new(
         2,
         format!(
-            "{}:{}:{}: {}:{} error: {}",
-            location.input_name,
-            location.line_number,
-            location.column_number,
+            "{}: {}:{} error: {}",
+            loc_str,
             context.input_name,
             context.line_number,
             msg.to_string()
