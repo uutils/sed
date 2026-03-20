@@ -47,7 +47,8 @@ The binary is named `sed` in `target/release/sed`.
 
 ### GNU sed Compatibility Testing
 
-Test compatibility against GNU sed using the comprehensive testsuite (47+ tests, ~10% pass rate):
+Test compatibility against GNU sed by running the upstream testsuite shell scripts
+with a lightweight gnulib test-framework shim:
 
 ```bash
 # Clone GNU sed testsuite (one time setup)
@@ -56,11 +57,16 @@ git clone https://github.com/mirror/sed.git ../gnu.sed
 # Run compatibility tests
 ./util/run-gnu-testsuite.sh
 
+# Verbose mode shows failure details
+./util/run-gnu-testsuite.sh -v
+
 # Generate JSON results for CI
 ./util/run-gnu-testsuite.sh --json-output results.json
 ```
 
-The testsuite extracts test cases from the GNU sed repository and tests them against expected outputs.
+The harness executes each `.sh` test from the GNU sed testsuite directly, injecting
+our Rust sed binary via `PATH` and providing shim implementations of the gnulib test
+framework functions (`compare_`, `returns_`, `skip_`, etc.).
 
 ### Unit Tests
 
@@ -80,6 +86,7 @@ cargo test
 * The `a`, `c`, and `i` commands do not require an initial backslash,
   allow text to appear on the same line, and support escape sequences
   in the specified text.
+* The `a`, `i`, `=`, `l`, `q` and `r` commands support address range as an extension to POSIX.
 * The substitution command replacement group `\0` is a synonym for &.
 * A `Q` command (optionally followed by an exit code) quits immediately.
 * The `q` command can be optionally followed by an exit code.

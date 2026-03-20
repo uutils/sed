@@ -1,18 +1,20 @@
 #!/bin/bash
 # Script to run GNU sed testsuite tests against the Rust sed implementation
 #
-# This script extracts and runs individual sed commands from the GNU sed testsuite
-# to test compatibility between GNU sed and the Rust sed implementation.
+# This script runs the GNU sed testsuite shell scripts by providing a
+# lightweight shim for the gnulib test framework (init.sh) and injecting
+# our Rust sed binary via PATH.
 #
-# Usage: ./util/run-gnu-testsuite.sh [options] [test-pattern]
+# Usage: ./util/run-gnu-testsuite.sh [options]
 #
 # Options:
-#   -h, --help     Show this help message
-#   -v, --verbose  Run tests with verbose output
-#   -q, --quiet    Run tests quietly (only show failures)
+#   -h, --help                Show this help message
+#   -v, --verbose             Run tests with verbose output
+#   -q, --quiet               Run tests quietly (only show failures)
+#   --json-output FILE        Output results to JSON file
 #
 # Examples:
-#   ./util/run-gnu-testsuite.sh                    # Run basic functionality tests
+#   ./util/run-gnu-testsuite.sh                    # Run all tests
 #   ./util/run-gnu-testsuite.sh -v                 # Run with verbose output
 
 # Don't exit on failure since test failures are expected
@@ -20,14 +22,12 @@ set -o pipefail
 
 # Configuration
 RUST_SED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GNU_TESTSUITE_DIR_ORIG="${GNU_TESTSUITE_DIR:-}"
-GNU_TESTSUITE_DIR="${GNU_TESTSUITE_DIR:-${RUST_SED_DIR}/../gnu.sed/testsuite}"
+GNU_SED_DIR="${GNU_SED_DIR:-${RUST_SED_DIR}/../gnu.sed}"
+GNU_TESTSUITE_DIR=""
 VERBOSE=false
 QUIET=false
 JSON_OUTPUT_FILE=""
 DETAILED_RESULTS=()
-
-# No colors for cleaner output
 
 # Statistics
 TOTAL_TESTS=0
@@ -45,13 +45,13 @@ usage() {
     echo "  --json-output FILE        Output results to JSON file"
     echo
     echo "Examples:"
-    echo "  $0                        # Run basic functionality tests"
+    echo "  $0                        # Run all tests"
     echo "  $0 -v                     # Run with verbose output"
     echo "  $0 --json-output out.json # Output results to JSON file"
     echo
     echo "Environment variables:"
-    echo "  GNU_TESTSUITE_DIR         Path to GNU sed testsuite directory"
-    echo "                            (default: ../gnu.sed/testsuite)"
+    echo "  GNU_SED_DIR               Path to GNU sed source directory"
+    echo "                            (default: ../gnu.sed)"
     echo ""
     echo "Setup:"
     echo "  To get the GNU sed testsuite for comprehensive testing:"
@@ -67,6 +67,12 @@ log_info() {
 log_success() {
     if [[ "$QUIET" != "true" ]]; then
         echo "[PASS] $1"
+    fi
+}
+
+log_skip() {
+    if [[ "$QUIET" != "true" ]]; then
+        echo "[SKIP] $1"
     fi
 }
 
@@ -86,19 +92,19 @@ log_verbose() {
 
 # Function to generate JSON output
 generate_json_output() {
-    # Change back to the original directory to create the JSON file there
     cd "$RUST_SED_DIR"
 
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local rust_version=$(cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r '.packages[0].version // "unknown"')
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local rust_version
+    rust_version=$(cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r '.packages[0].version // "unknown"')
 
     # Build tests array safely using jq
     local tests_json="[]"
     if [[ ${#DETAILED_RESULTS[@]} -gt 0 ]]; then
-        # Create a temporary file with one JSON object per line
-        local temp_file=$(mktemp)
+        local temp_file
+        temp_file=$(mktemp)
         printf "%s\n" "${DETAILED_RESULTS[@]}" > "$temp_file"
-
 
         tests_json=$(jq -s '.' < "$temp_file" 2>/dev/null)
         if [[ $? -ne 0 ]]; then
@@ -108,7 +114,6 @@ generate_json_output() {
         rm -f "$temp_file"
     fi
 
-    # Generate JSON output using jq for safety
     jq -n \
         --arg timestamp "$timestamp" \
         --argjson total "$TOTAL_TESTS" \
@@ -173,17 +178,16 @@ done
 # Validate environment
 GNU_TESTSUITE_AVAILABLE=true
 
-# Convert GNU_TESTSUITE_DIR to absolute path if it's relative
-# This is critical because the script changes directories during test execution
-if [[ -d "$GNU_TESTSUITE_DIR" ]]; then
-    GNU_TESTSUITE_DIR="$(cd "$GNU_TESTSUITE_DIR" && pwd)"
+# Resolve GNU_SED_DIR to absolute path, then derive testsuite dir
+if [[ -d "$GNU_SED_DIR" ]]; then
+    GNU_SED_DIR="$(cd "$GNU_SED_DIR" && pwd)"
+    GNU_TESTSUITE_DIR="$GNU_SED_DIR/testsuite"
 fi
 
 if [[ ! -d "$GNU_TESTSUITE_DIR" ]]; then
-    log_warning "GNU sed testsuite not found at: $GNU_TESTSUITE_DIR"
+    log_warning "GNU sed testsuite not found at: $GNU_SED_DIR"
     log_warning "To get the full GNU sed testsuite, clone it with:"
     log_warning "  git clone https://github.com/mirror/sed.git ${RUST_SED_DIR}/../gnu.sed"
-    log_warning "Will run basic functionality tests only"
     GNU_TESTSUITE_AVAILABLE=false
 fi
 
@@ -214,353 +218,308 @@ trap 'rm -rf "$TEST_WORK_DIR"' EXIT
 
 log_info "Test working directory: $TEST_WORK_DIR"
 
-# Function to run a basic sed test
-run_sed_test() {
+# Record a test result (for JSON output)
+record_result() {
     local test_name="$1"
-    local sed_script="$2"
-    local input_text="$3"
-    local expected_output="$4"
-    local flags="$5"
+    local test_status="$2"
+    local error_message="$3"
 
-    TOTAL_TESTS=$((TOTAL_TESTS + 1))
-
-    log_verbose "Running test: $test_name"
-
-    # Create test-specific directory
-    local test_dir="$TEST_WORK_DIR/test_$TOTAL_TESTS"
-    mkdir -p "$test_dir"
-    cd "$test_dir"
-
-    # Write input to file
-    echo -n "$input_text" > input.txt
-    echo -n "$expected_output" > expected.txt
-
-    # Run Rust sed
-    local rust_exit_code=0
-    local rust_output=""
-    if [[ -n "$flags" ]]; then
-        # shellcheck disable=SC2086
-        rust_output=$("$RUST_SED_BIN" "$flags" $sed_script input.txt 2> /dev/null) || rust_exit_code=$?
-    else
-        # shellcheck disable=SC2086
-        rust_output=$(echo -n "$input_text" | "$RUST_SED_BIN" $sed_script 2> /dev/null) || rust_exit_code=$?
-    fi
-
-    local test_result=""
-    local test_status=""
-    local error_message=""
-
-    # Compare with expected output
-    if [[ "$rust_output" == "$expected_output" && $rust_exit_code -eq 0 ]]; then
-        log_success "$test_name"
-        PASSED_TESTS=$((PASSED_TESTS + 1))
-        test_status="PASS"
-    else
-        log_error "$test_name"
-        if [[ "$VERBOSE" == "true" ]]; then
-            echo "  | Expected: '$expected_output'"
-            echo "  | Got: '$rust_output' (exit: $rust_exit_code)"
-        fi
-        FAILED_TESTS=$((FAILED_TESTS + 1))
-        test_status="FAIL"
-        error_message="Expected: '$expected_output', Got: '$rust_output' (exit: $rust_exit_code)"
-    fi
-
-    # Store detailed results for JSON output
     if [[ -n "$JSON_OUTPUT_FILE" ]]; then
-        # Create JSON object using jq to ensure proper escaping and structure
         local json_obj
         json_obj=$(jq -n \
             --arg name "$test_name" \
             --arg status "$test_status" \
-            --arg script "$sed_script" \
             --arg error "$error_message" \
-            '{name: $name, status: $status, script: $script, error: $error}')
-
+            '{name: $name, status: $status, error: $error}')
         DETAILED_RESULTS+=("$json_obj")
     fi
-
-    # Cleanup test directory
-    cd "$TEST_WORK_DIR"
-    rm -rf "$test_dir"
 }
 
+# Create the shim srcdir with init.sh and symlinks to real test data
+create_test_shim() {
+    local shim_srcdir="$1"
+    local real_testsuite_dir="$2"
 
-# Define basic functionality tests
-run_basic_tests() {
-    log_info "Running basic sed functionality tests..."
+    # The test scripts do: . "${srcdir=.}/testsuite/init.sh"
+    # We create a srcdir that has:
+    #   testsuite/init.sh  -> our shim
+    #   testsuite/*        -> symlinks to real GNU testsuite data files
+    mkdir -p "$shim_srcdir/testsuite"
 
-    # Basic substitution
-    run_sed_test "basic_substitution" "s/hello/world/" "hello there" "world there"
-    run_sed_test "global_substitution" "s/a/X/g" "banana" "bXnXnX"
+    # Symlink all real testsuite files (data, scripts, sed programs)
+    for f in "$real_testsuite_dir"/*; do
+        local base
+        base=$(basename "$f")
+        # Don't symlink init.sh if it exists (we provide our own)
+        [[ "$base" == "init.sh" ]] && continue
+        ln -sf "$f" "$shim_srcdir/testsuite/$base"
+    done
 
-    # Line addressing
-    run_sed_test "line_address" "2s/test/TEST/" $'line1\ntest\nline3' $'line1\nTEST\nline3'
-    run_sed_test "range_address" "2,3s/x/X/" $'x1\nx2\nx3\nx4' $'x1\nX2\nX3\nx4'
+    cat > "$shim_srcdir/testsuite/init.sh" << 'SHIM_EOF'
+# Lightweight shim for gnulib test framework init.sh
+# Provides just enough for GNU sed testsuite scripts to run
 
-    # Delete command
-    run_sed_test "delete_line" "2d" $'line1\nline2\nline3' $'line1\nline3'
-    run_sed_test "delete_range" "2,3d" $'line1\nline2\nline3\nline4' $'line1\nline4'
+# Exit codes
+EXIT_PASS=0
+EXIT_SKIP=77
+EXIT_FRAMEWORK_FAILURE=99
 
-    # Print command
-    run_sed_test "print_line" "-n 2p" $'line1\nline2\nline3' "line2" "-n"
+fail=0
 
-    # Append and insert
-    run_sed_test "append" "2a\\inserted" $'line1\nline2\nline3' $'line1\nline2\ninserted\nline3'
-    run_sed_test "insert" "2i\\inserted" $'line1\nline2\nline3' $'line1\ninserted\nline2\nline3'
+# abs_top_srcdir is used by some tests to find data files (.inp, .sed, .good)
+abs_top_srcdir="$srcdir"
+export abs_top_srcdir
 
-    # Character classes
-    run_sed_test "digit_class" "s/[0-9]/X/g" "abc123def" "abcXXXdef"
-    run_sed_test "word_class" "s/[a-z]/X/g" "Hello123" "HXXXX123"
+# Create a temp directory for the test and cd into it
+test_dir_=$(mktemp -d)
+trap 'rm -rf "$test_dir_"' EXIT
+cd "$test_dir_" || exit $EXIT_FRAMEWORK_FAILURE
+
+framework_failure_() {
+    echo "FRAMEWORK FAILURE: $*" >&2
+    exit $EXIT_FRAMEWORK_FAILURE
 }
 
-# Run tests from specific GNU testsuite files that have .inp/.good/.sed triplets
-run_gnu_testsuite_tests() {
-    log_info "Extracting and running tests from GNU testsuite..."
+skip_() {
+    echo "SKIP: $*" >&2
+    exit $EXIT_SKIP
+}
 
-    local tests_found=0
+compare_() {
+    diff "$1" "$2" > /dev/null 2>&1
+}
 
-    # 1. Handle complete triplets (inp + good + sed)
-    for inp_file in "$GNU_TESTSUITE_DIR"/*.inp; do
-        if [[ -f "$inp_file" ]]; then
-            local basename
-            basename=$(basename "$inp_file" .inp)
-            local good_file="$GNU_TESTSUITE_DIR/${basename}.good"
-            local sed_file="$GNU_TESTSUITE_DIR/${basename}.sed"
+compare() {
+    diff "$1" "$2" > /dev/null 2>&1
+}
 
-            if [[ -f "$good_file" && -f "$sed_file" ]]; then
-                local input_content
-                local expected_content
+# Run a command and check that it returns the expected exit code
+returns_() {
+    local expected_rc="$1"
+    shift
+    "$@"
+    local actual_rc=$?
+    if [[ $actual_rc -ne $expected_rc ]]; then
+        return 1
+    fi
+    return 0
+}
 
-                input_content=$(cat "$inp_file")
-                expected_content=$(cat "$good_file")
+path_prepend_() {
+    # The test scripts call: path_prepend_ ./sed
+    # We ignore this since we already have our sed in PATH
+    :
+}
 
-                log_verbose "Found complete triplet: $basename"
-                run_sed_test "${basename}_triplet" "$sed_file" "$input_content" "$expected_content" "-f"
-                tests_found=$((tests_found + 1))
-            fi
+print_ver_() {
+    :
+}
+
+Exit() {
+    exit "$1"
+}
+
+# require_ functions: skip tests that need capabilities we can't provide
+require_valgrind_() {
+    skip_ "valgrind not available in this test harness"
+}
+
+require_selinux_() {
+    skip_ "SELinux not available in this test harness"
+}
+
+very_expensive_() {
+    skip_ "very expensive tests disabled"
+}
+
+expensive_() {
+    skip_ "expensive tests disabled"
+}
+
+require_en_utf8_locale_() {
+    # Check if en_US.UTF-8 locale is available
+    if locale -a 2>/dev/null | grep -qi 'en_US\.utf-\?8'; then
+        return 0
+    fi
+    skip_ "en_US.UTF-8 locale not available"
+}
+
+require_ru_utf8_locale_() {
+    if locale -a 2>/dev/null | grep -qi 'ru_RU\.utf-\?8'; then
+        return 0
+    fi
+    skip_ "ru_RU.UTF-8 locale not available"
+}
+
+require_el_iso88597_locale_() {
+    skip_ "el_GR.iso88597 locale not available"
+}
+
+require_ja_shiftjis_locale_() {
+    LOCALE_JA_SJIS=""
+    for l in shiftjis sjis SJIS; do
+        if locale -a 2>/dev/null | grep -qi "ja_JP\.$l"; then
+            LOCALE_JA_SJIS="ja_JP.$l"
+            return 0
         fi
     done
+    skip_ "ja_JP shift-jis locale not available"
+}
 
-    # 2. Handle partial triplets (inp + good, no sed script)
-    for inp_file in "$GNU_TESTSUITE_DIR"/*.inp; do
-        if [[ -f "$inp_file" ]]; then
-            local basename
-            basename=$(basename "$inp_file" .inp)
-            local good_file="$GNU_TESTSUITE_DIR/${basename}.good"
-            local sed_file="$GNU_TESTSUITE_DIR/${basename}.sed"
+require_valid_ja_shiftjis_locale_() {
+    skip_ "ja_JP shift-jis locale validation not available"
+}
 
-            if [[ -f "$good_file" && ! -f "$sed_file" ]]; then
-                # Look for sed commands in the corresponding shell script
-                local shell_file="$GNU_TESTSUITE_DIR/${basename}.sh"
-                if [[ -f "$shell_file" ]]; then
-                    extract_sed_commands_from_script "$shell_file" "$inp_file" "$good_file"
-                    tests_found=$((tests_found + 1))
-                fi
+require_valid_ja_eucjp_locale_() {
+    skip_ "ja_JP.eucJP locale validation not available"
+}
+
+remove_cr_inplace() {
+    sed -i'' -e "s/\r//g" "$@" || framework_failure_
+}
+SHIM_EOF
+}
+
+# Run a single GNU testsuite shell script with our shims
+run_gnu_shell_test() {
+    local test_script="$1"
+    local test_name
+    test_name=$(basename "$test_script" .sh)
+
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
+    log_verbose "Running test: $test_name"
+
+    # Run the test script with a per-test timeout to avoid hangs.
+    # We write output to a file (not a pipe) and run timeout in the
+    # foreground so there are no orphaned processes or signal issues.
+    local test_output_file="$TEST_WORK_DIR/test_output_$$"
+    local test_exit_code=0
+
+    # When the script is not the process group leader (e.g. in CI),
+    # GNU timeout falls back to "foreground" mode and sends SIGTERM
+    # to the entire process group when a test hangs. Ignore SIGTERM
+    # during the test so the parent script survives.
+    trap '' TERM
+
+    PATH="$SED_WRAPPER_DIR:$PATH" \
+    srcdir="$SHIM_SRCDIR" \
+    timeout --kill-after=5 10 \
+        /bin/sh "$test_script" </dev/null >"$test_output_file" 2>&1 \
+    || test_exit_code=$?
+
+    trap - TERM
+
+    local test_output=""
+    [[ -f "$test_output_file" ]] && test_output=$(cat "$test_output_file")
+    rm -f "$test_output_file"
+
+    # Detect timeout: 124 = GNU coreutils timeout, 125 = uutils timeout,
+    # >=128 = killed by signal (137=SIGKILL, 143=SIGTERM in foreground mode)
+    if [[ $test_exit_code -eq 124 || $test_exit_code -eq 125 || $test_exit_code -ge 128 ]]; then
+        log_error "$test_name (timeout)"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        record_result "$test_name" "FAIL" "Test timed out after 10s"
+        return
+    fi
+
+    local error_message=""
+
+    case $test_exit_code in
+        0)
+            log_success "$test_name"
+            PASSED_TESTS=$((PASSED_TESTS + 1))
+            record_result "$test_name" "PASS" ""
+            ;;
+        77)
+            log_skip "$test_name"
+            SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  | $test_output" | head -3
             fi
-        fi
-    done
+            record_result "$test_name" "SKIP" "$test_output"
+            ;;
+        99)
+            log_error "$test_name (framework failure)"
+            FAILED_TESTS=$((FAILED_TESTS + 1))
+            error_message="Framework failure: $test_output"
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  | Framework failure"
+                echo "  | $test_output" | head -5
+            fi
+            record_result "$test_name" "FAIL" "$error_message"
+            ;;
+        *)
+            log_error "$test_name"
+            FAILED_TESTS=$((FAILED_TESTS + 1))
+            error_message="Exit code: $test_exit_code"
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  | Exit code: $test_exit_code"
+                echo "  | $test_output" | head -5
+            fi
+            record_result "$test_name" "FAIL" "$error_message"
+            ;;
+    esac
+}
 
-    # 3. Extract simple tests from shell scripts
-    local shell_count=0
+# Run all GNU testsuite shell script tests
+run_gnu_shell_tests() {
+    log_info "Running GNU testsuite shell script tests..."
 
-    # Use array to collect shell files via find (more reliable than glob)
+    # Collect all .sh test files
     local shell_files=()
-    # Use temporary file approach to avoid process substitution issues in CI
     local temp_file_list
     temp_file_list=$(mktemp)
-    trap 'rm -f "$temp_file_list"' EXIT
 
-    # Find shell files and store in temporary file
-    # GNU_TESTSUITE_DIR is already an absolute path, so use it directly
-    find "$GNU_TESTSUITE_DIR" -name "*.sh" 2>/dev/null > "$temp_file_list"
+    find "$GNU_TESTSUITE_DIR" -maxdepth 1 -name "*.sh" 2>/dev/null | sort > "$temp_file_list"
 
-
-    # Read the file list into array
     while IFS= read -r shell_file; do
         [[ -n "$shell_file" ]] && shell_files+=("$shell_file")
     done < "$temp_file_list"
-
     rm -f "$temp_file_list"
 
+    local shell_count=0
     for shell_file in "${shell_files[@]}"; do
-        if [[ -f "$shell_file" && $shell_count -lt 50 ]]; then  # Process more test files
-            local basename
-            basename=$(basename "$shell_file" .sh)
+        [[ -f "$shell_file" ]] || continue
+        local base
+        base=$(basename "$shell_file" .sh)
 
-            # Skip files we already processed and skip complex/problematic tests
-            case "$basename" in
-                "help-version"|"compile-"*|"panic-"*|"debug"|"*wrapper*"|"no-perl")
-                    continue
-                    ;;
-            esac
+        # Skip scripts that aren't actual tests
+        case "$base" in
+            "help-version"|"panic-"*|"debug"|"Makefile"|"init")
+                continue
+                ;;
+        esac
 
-            if [[ ! -f "$GNU_TESTSUITE_DIR/${basename}.inp" ]]; then
-                extract_simple_tests_from_script "$shell_file"
-                shell_count=$((shell_count + 1))
-            fi
-        fi
+        run_gnu_shell_test "$shell_file"
+        shell_count=$((shell_count + 1))
     done
 
-    if [[ $tests_found -eq 0 && $shell_count -eq 0 ]]; then
-        log_warning "No GNU testsuite tests found"
-    else
-        log_info "Extracted tests from GNU testsuite: $tests_found triplets + $shell_count shell scripts"
-    fi
+    log_info "Ran $shell_count shell script tests"
 }
 
-# Extract sed commands from shell scripts when we have input/output files
-extract_sed_commands_from_script() {
-    local script_file="$1"
-    local input_file="$2"
-    local expected_file="$3"
-    local basename
-    basename=$(basename "$script_file" .sh)
+# Set up sed wrapper and test shim (once, before all tests)
+SED_WRAPPER_DIR="$TEST_WORK_DIR/bin"
+mkdir -p "$SED_WRAPPER_DIR"
+cat > "$SED_WRAPPER_DIR/sed" << WRAPPER_EOF
+#!/bin/sh
+exec "$RUST_SED_BIN" "\$@"
+WRAPPER_EOF
+chmod +x "$SED_WRAPPER_DIR/sed"
 
-    log_verbose "Extracting from script: $basename"
-
-    # Look for simple sed patterns in the script
-    while IFS= read -r line; do
-        # Match: sed 'script' < input > output
-        if [[ $line =~ sed[[:space:]]+[\'\"](.*)[\'\"] ]] && [[ $line == *"<"* || $line == *"|"* ]]; then
-            local sed_script="${BASH_REMATCH[1]}"
-            if [[ -n "$sed_script" && ${#sed_script} -lt 100 ]]; then  # Avoid very complex scripts
-                local input_content
-                local expected_content
-                input_content=$(cat "$input_file")
-                expected_content=$(cat "$expected_file")
-                run_sed_test "${basename}_extracted" "$sed_script" "$input_content" "$expected_content"
-            fi
-        fi
-    done < "$script_file"
-}
-
-# Extract simple tests from shell scripts (without input/output files)
-extract_simple_tests_from_script() {
-    local script_file="$1"
-    local basename
-    basename=$(basename "$script_file" .sh)
-    local extracted_count=0
-
-    log_verbose "Scanning script: $basename"
-
-    # Look for various sed command patterns in the GNU testsuite
-    while IFS= read -r line; do
-        if [[ $extracted_count -ge 5 ]]; then  # Limit extractions per file
-            break
-        fi
-
-        # Skip comments and empty lines
-        [[ $line =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// }" ]] && continue
-
-        # Pattern 1: echo "text" | sed 'script'
-        if [[ $line =~ echo[[:space:]]+[\'\"]([^\'\"]+)[\'\"].*\|.*sed[[:space:]]+[\'\"]([^\'\"]+)[\'\"] ]]; then
-            local input_text="${BASH_REMATCH[1]}"
-            local sed_script="${BASH_REMATCH[2]}"
-            if [[ -n "$input_text" && -n "$sed_script" && ${#sed_script} -lt 80 ]]; then
-                run_sed_test "${basename}_echo_${extracted_count}" "$sed_script" "$input_text" "" ""
-                extracted_count=$((extracted_count + 1))
-                continue
-            fi
-        fi
-
-        # Pattern 2: sed -e 'script' file
-        if [[ $line =~ sed[[:space:]]+-e[[:space:]]+[\'\"]([^\'\"]+)[\'\"] ]] && [[ $extracted_count -lt 2 ]]; then
-            local sed_script="${BASH_REMATCH[1]}"
-            if [[ -n "$sed_script" && ${#sed_script} -lt 80 ]]; then
-                run_sed_test "${basename}_dash_e_${extracted_count}" "$sed_script" "line1\nline2\nline3" "" ""
-                extracted_count=$((extracted_count + 1))
-                continue
-            fi
-        fi
-
-        # Pattern 3: sed 's/pattern/replacement/' file
-        if [[ $line =~ sed[[:space:]]+[\'\"]s/([^/]+)/([^/]*)/[^\'\"]*[\'\"] ]] && [[ $extracted_count -lt 2 ]]; then
-            local pattern="${BASH_REMATCH[1]}"
-            local replacement="${BASH_REMATCH[2]}"
-            if [[ -n "$pattern" && ${#pattern} -lt 30 ]]; then
-                local input_text="This is $pattern in text"
-                local sed_script="s/$pattern/$replacement/"
-                run_sed_test "${basename}_subst_${extracted_count}" "$sed_script" "$input_text" "" ""
-                extracted_count=$((extracted_count + 1))
-                continue
-            fi
-        fi
-
-        # Pattern 4: Simple sed 'command' patterns
-        if [[ $line =~ sed[[:space:]]+[\'\"]([^\'\"]+)[\'\"] ]] && [[ $extracted_count -lt 1 ]]; then
-            local sed_script="${BASH_REMATCH[1]}"
-            # Only take simple, short commands
-            if [[ -n "$sed_script" && ${#sed_script} -lt 50 && ! $sed_script =~ \$\{ ]]; then
-                # Avoid complex scripts with variables or complex syntax
-                case "$sed_script" in
-                    *"\${"*|*'`'*|*"\$(")
-                        continue
-                        ;;
-                    *)
-                        run_sed_test "${basename}_cmd_${extracted_count}" "$sed_script" "test\ndata\nline" "" ""
-                        extracted_count=$((extracted_count + 1))
-                        ;;
-                esac
-            fi
-        fi
-
-        # Pattern 5: printf | sed patterns
-        if [[ $line =~ printf[[:space:]]+[\'\"]([^\'\"]+)[\'\"].*\|.*sed[[:space:]]+[\'\"]([^\'\"]+)[\'\"] ]]; then
-            local input_text="${BASH_REMATCH[1]}"
-            local sed_script="${BASH_REMATCH[2]}"
-            if [[ -n "$input_text" && -n "$sed_script" && ${#sed_script} -lt 60 ]]; then
-                # Convert \n to actual newlines
-                input_text=$(echo -e "$input_text")
-                run_sed_test "${basename}_printf_${extracted_count}" "$sed_script" "$input_text" "" ""
-                extracted_count=$((extracted_count + 1))
-                continue
-            fi
-        fi
-
-        # Pattern 6: sed 'script' input_file > output (file-based format common in GNU tests)
-        if [[ $line =~ ^[[:space:]]*sed[[:space:]]+[\'\"]([^\'\"]+)[\'\"][[:space:]]+[a-zA-Z0-9_-]+[[:space:]]*\> ]]; then
-            local sed_script="${BASH_REMATCH[1]}"
-            if [[ -n "$sed_script" && ${#sed_script} -lt 80 && ! $sed_script =~ \$\{ ]]; then
-                # Use generic test input for file-based tests
-                run_sed_test "${basename}_file_${extracted_count}" "$sed_script" "line1\nline2\nline3\ntest data" "" ""
-                extracted_count=$((extracted_count + 1))
-                continue
-            fi
-        fi
-
-        # Pattern 7: sed -n 'script' (with -n flag)
-        if [[ $line =~ sed[[:space:]]+-n[[:space:]]+[\'\"]([^\'\"]+)[\'\"] ]]; then
-            local sed_script="${BASH_REMATCH[1]}"
-            if [[ -n "$sed_script" && ${#sed_script} -lt 80 ]]; then
-                run_sed_test "${basename}_n_${extracted_count}" "$sed_script" "line1\nline2\nline3" "" "-n"
-                extracted_count=$((extracted_count + 1))
-                continue
-            fi
-        fi
-
-    done < "$script_file"
-
-    if [[ $extracted_count -gt 0 ]]; then
-        log_verbose "Extracted $extracted_count tests from $basename"
-    fi
-}
+SHIM_SRCDIR="$TEST_WORK_DIR/srcdir"
+if [[ "$GNU_TESTSUITE_AVAILABLE" == "true" ]]; then
+    create_test_shim "$SHIM_SRCDIR" "$GNU_TESTSUITE_DIR"
+fi
 
 # Main test execution
 log_info "Starting test execution..."
-echo
 
 start_time=$(date +%s)
 
-# Run basic functionality tests
-run_basic_tests
-
-# Try to run some GNU testsuite tests if available
 if [[ "$GNU_TESTSUITE_AVAILABLE" == "true" ]]; then
-    run_gnu_testsuite_tests
+    run_gnu_shell_tests
 else
-    log_warning "Skipping GNU testsuite-specific tests"
+    log_warning "Skipping GNU testsuite tests (testsuite not found)"
 fi
 
 end_time=$(date +%s)
