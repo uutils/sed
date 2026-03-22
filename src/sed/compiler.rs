@@ -12,7 +12,9 @@ use crate::sed::command::{
     Address, Command, CommandData, ProcessingContext, ReplacementPart, ReplacementTemplate,
     Substitution, Transliteration,
 };
-use crate::sed::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
+use crate::sed::delimited_parser::{
+    RegexMode, parse_char_escape, parse_regex, parse_transliteration,
+};
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
 use crate::sed::fast_regex::Regex;
 use crate::sed::named_writer::NamedWriter;
@@ -286,7 +288,6 @@ fn compile_sequence(
         let n_addr = compile_address_range(lines, line, &mut cmd, context)?;
         line.eat_spaces();
         let mut cmd_spec = get_verified_cmd_spec(lines, line, n_addr, context.posix)?;
-
         // Compile the command according to its specification.
         let mut cmd_mut = cmd.borrow_mut();
         cmd_mut.code = line.current();
@@ -331,10 +332,8 @@ fn compile_address_range(
     let mut is_line0 = false;
 
     line.eat_spaces();
-    if !line.eol()
-        && is_address_char(line.current())
-        && let Ok(addr1) = compile_address(lines, line, context)
-    {
+    if !line.eol() && is_address_char(line.current()) {
+        let addr1 = compile_address(lines, line, context)?;
         is_line0 = matches!(addr1, Address::Line(0));
         cmd.addr1 = Some(addr1);
         if is_line0 && context.posix {
@@ -364,9 +363,8 @@ fn compile_address_range(
         }
 
         // Look for second address.
-        if !line.eol()
-            && let Ok(addr2) = compile_address(lines, line, context)
-        {
+        if !line.eol() {
+            let addr2 = compile_address(lines, line, context)?;
             // Set step_n to the number specified in the (required numeric) address.
             let step_n = if is_step_match || is_step_end {
                 match addr2 {
@@ -449,7 +447,12 @@ fn compile_address(
                 // The next character is an arbitrary delimiter
                 line.advance();
             }
-            let re = parse_regex(lines, line)?;
+            let regex_mode = if context.regex_extended {
+                RegexMode::Extended
+            } else {
+                RegexMode::Basic
+            };
+            let re = parse_regex(lines, line, regex_mode)?;
             // Skip over delimiter
             line.advance();
 
@@ -533,7 +536,7 @@ fn parse_command_ending(
 }
 
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
-/// - Replaces `\(`, `\)`, `\?`, `\+` and `\|` with `(`, `)`, `?`, `+` and `|`.
+/// - Replaces `\(`, `\)`, `\?`, `\+`, `\|`, `\{` and `\}` with `(`, `)`, `?`, `+`, `|`, `{` and `}`.
 /// - Puts single-digit back-references in non-capturing groups..
 /// - Escapes ERE-only metacharacters: `+ ? { } | ( )`.
 /// - Leaves all other characters as-is.
@@ -565,6 +568,14 @@ fn bre_to_ere(pattern: &str) -> String {
                 Some('|') => {
                     chars.next();
                     result.push('|'); // Alternation operator
+                }
+                Some('{') => {
+                    chars.next();
+                    result.push('{'); // Brace quantifier start
+                }
+                Some('}') => {
+                    chars.next();
+                    result.push('}'); // Brace quantifier end
                 }
                 Some(v) if v.is_ascii_digit() => {
                     // Back-reference.  In sed BREs these are single-digit
@@ -636,7 +647,7 @@ fn compile_regex(
 
     // Convert basic to extended regular expression if needed.
     let pattern = if context.regex_extended {
-        pattern
+        &pattern.replace("{,}", "*")
     } else {
         &bre_to_ere(pattern)
     };
@@ -645,7 +656,7 @@ fn compile_regex(
     let pattern = if icase {
         format!("(?i){pattern}")
     } else {
-        pattern.to_string()
+        pattern.clone()
     };
 
     // Compile into engine.
@@ -788,8 +799,12 @@ fn compile_subst_command(
         );
     }
 
-    let pattern = parse_regex(lines, line)?;
-
+    let regex_mode = if context.regex_extended {
+        RegexMode::Extended
+    } else {
+        RegexMode::Basic
+    };
+    let pattern = parse_regex(lines, line, regex_mode)?;
     let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line)?;
@@ -819,7 +834,6 @@ fn compile_subst_command(
             ),
         );
     }
-
     cmd.data = CommandData::Substitution(subst);
 
     parse_command_ending(lines, line, cmd)?;
@@ -1572,6 +1586,21 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_re_extended() {
+        let (lines, chars) = make_providers("acaa\nbbb\nccc");
+        let mut ctx = ctx();
+        ctx.regex_extended = true;
+        let regex = compile_regex(&lines, &chars, "cc{,}", &ctx, false)
+            .unwrap()
+            .expect("regex should be present");
+        assert!(
+            regex
+                .is_match(&mut IOChunk::new_from_str("acaa\nccc"))
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn test_compile_re_case_insensitive() {
         let (lines, chars) = dummy_providers();
         let regex = compile_regex(&lines, &chars, "abc", &ctx(), true)
@@ -1799,6 +1828,17 @@ mod tests {
             }
             _ => panic!("expected regex address"),
         }
+    }
+
+    #[test]
+    fn test_compile_address_range_error_propagation() {
+        let (lines, mut chars) = make_providers("1,/abc");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("unterminated regular expression"));
     }
 
     // compile_sequence
@@ -2206,6 +2246,11 @@ mod tests {
     fn test_bre_group_translation() {
         assert_eq!(bre_to_ere(r"\(a\?b\+c\|\)"), "(a?b+c|)");
         assert_eq!(bre_to_ere(r"a\(b\)c"), "a(b)c");
+    }
+
+    #[test]
+    fn test_bre_brace_quantifier_translation() {
+        assert_eq!(bre_to_ere(r"\{1,4\}"), "{1,4}");
     }
 
     #[test]
