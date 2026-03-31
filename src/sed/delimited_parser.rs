@@ -400,7 +400,27 @@ fn validate_quantifier_structure(
     line.advance();
 
     while !line.eol() && line.current() != delimiter {
-        if !is_extended_mode {
+        if is_extended_mode {
+            // In ERE mode, look for }
+            if line.current() == '}' {
+                if advances == 0 {
+                    invalid_content_detected = true;
+                }
+                found_closing_brace = true;
+                break;
+            } else {
+                if line.current() == ',' {
+                    if seen_comma {
+                        invalid_content_detected = true;
+                    }
+                    seen_comma = true;
+                } else if !line.current().is_ascii_digit() {
+                    invalid_content_detected = true;
+                }
+                line.advance();
+                advances += 1;
+            }
+        } else {
             // In BRE mode, look for \}
             if line.current() == '\\' {
                 line.advance();
@@ -417,26 +437,6 @@ fn validate_quantifier_structure(
                 }
             } else {
                 // Only digits and comma allowed
-                if line.current() == ',' {
-                    if seen_comma {
-                        invalid_content_detected = true;
-                    }
-                    seen_comma = true;
-                } else if !line.current().is_ascii_digit() {
-                    invalid_content_detected = true;
-                }
-                line.advance();
-                advances += 1;
-            }
-        } else {
-            // In ERE mode, look for }
-            if line.current() == '}' {
-                if advances == 0 {
-                    invalid_content_detected = true;
-                }
-                found_closing_brace = true;
-                break;
-            } else {
                 if line.current() == ',' {
                     if seen_comma {
                         invalid_content_detected = true;
@@ -987,7 +987,6 @@ mod tests {
         assert_eq!(parsed, "a\\{2,3\\}");
         assert_eq!(line.current(), '/');
     }
-
 
     #[test]
     fn test_basic_regex_with_unmatched_brace_quantifier() {
