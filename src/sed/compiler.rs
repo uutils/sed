@@ -529,7 +529,7 @@ fn parse_command_ending(
 }
 
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
-/// - Replaces `\(` and `\)` with `(` and `)`.
+/// - Replaces `\(`, `\)`, `\{` and `\}` with `(`, `)`, `{` and `}`.
 /// - Puts single-digit back-references in non-capturing groups..
 /// - Escapes ERE-only metacharacters: `+ ? { } | ( )`.
 /// - Leaves all other characters as-is.
@@ -552,11 +552,11 @@ fn bre_to_ere(pattern: &str) -> String {
                 }
                 Some('{') => {
                     chars.next();
-                    result.push('{'); // Group end
+                    result.push('{'); // Brace quantifier start
                 }
                 Some('}') => {
                     chars.next();
-                    result.push('}'); // Group end
+                    result.push('}'); // Brace quantifier end
                 }
                 Some(v) if v.is_ascii_digit() => {
                     // Back-reference.  In sed BREs these are single-digit
@@ -2211,6 +2211,11 @@ mod tests {
     fn test_bre_group_translation() {
         assert_eq!(bre_to_ere(r"\(abc\)"), "(abc)");
         assert_eq!(bre_to_ere(r"a\(b\)c"), "a(b)c");
+    }
+
+    #[test]
+    fn test_bre_brace_quantifier_translation() {
+        assert_eq!(bre_to_ere(r"\{1,4\}"), "{1,4}");
     }
 
     #[test]
