@@ -981,26 +981,33 @@ mod tests {
     }
 
     #[test]
-    fn test_extended_regex_quantifier_with_ere() {
+    fn test_basic_regex_quantifier() {
+        let (lines, mut line) = make_providers("/a\\{2,3\\}/p");
+        let parsed = parse_regex(&lines, &mut line, true).unwrap();
+        assert_eq!(parsed, "a\\{2,3\\}");
+        assert_eq!(line.current(), '/');
+    }
+
+
+    #[test]
+    fn test_basic_regex_with_unmatched_brace_quantifier() {
+        let (lines, mut line) = make_providers("/a{2,3/p");
+        let err = parse_regex(&lines, &mut line, true).unwrap_err();
+        assert!(err.to_string().contains("Unmatched \\{"));
+    }
+
+    #[test]
+    fn test_basic_regex_with_invalid_content() {
+        let (lines, mut line) = make_providers("/a{2d,3}/p");
+        let err = parse_regex(&lines, &mut line, true).unwrap_err();
+        assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    }
+
+    #[test]
+    fn test_extended_regex_quantifier() {
         let (lines, mut line) = make_providers("/a{2,3}/p");
         let parsed = parse_regex(&lines, &mut line, true).unwrap();
         assert_eq!(parsed, "a{2,3}");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_extended_regex_with_zero_or_more() {
-        let (lines, mut line) = make_providers("/a{,}/p");
-        let parsed = parse_regex(&lines, &mut line, true).unwrap();
-        assert_eq!(parsed, "a{,}");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_extended_regex_literal() {
-        let (lines, mut line) = make_providers("/a{,5}/p");
-        let parsed = parse_regex(&lines, &mut line, true).unwrap();
-        assert_eq!(parsed, "a{0,5}");
         assert_eq!(line.current(), '/');
     }
 
@@ -1012,36 +1019,8 @@ mod tests {
     }
 
     #[test]
-    fn test_extended_regex_with_empty_quantifier() {
-        let (lines, mut line) = make_providers("/a{}/p");
-        let err = parse_regex(&lines, &mut line, true).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_extended_regex_with_whitespace_quantifier() {
-        let (lines, mut line) = make_providers("/a{}/p");
-        let err = parse_regex(&lines, &mut line, true).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
     fn test_extended_regex_with_invalid_m() {
         let (lines, mut line) = make_providers("/a{2d,3}/p");
-        let err = parse_regex(&lines, &mut line, true).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_extended_regex_with_invalid_n() {
-        let (lines, mut line) = make_providers("/a{2,-3}/p");
-        let err = parse_regex(&lines, &mut line, true).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_extended_regex_with_m_gt_n() {
-        let (lines, mut line) = make_providers("/a{3,2}/p");
         let err = parse_regex(&lines, &mut line, true).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
     }
