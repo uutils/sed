@@ -317,7 +317,7 @@ fn scan_delimiter(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> 
 pub fn parse_regex(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
-    extended_mode: bool,
+    is_extended_mode: bool,
 ) -> UResult<String> {
     let delimiter = scan_delimiter(lines, line)?;
     let mut result = String::new();
@@ -339,8 +339,8 @@ pub fn parse_regex(
                     line.advance();
                     continue;
                 }
-                if line.current() == '{' && !extended_mode {
-                    validate_quantifier_structure(lines, line, delimiter, true)?;
+                if line.current() == '{' && !is_extended_mode {
+                    validate_quantifier_structure(lines, line, delimiter, false)?;
                     let quantifier = validate_quantifier_numbers(lines, line)?;
                     result.push('\\');
                     result.push('{');
@@ -363,8 +363,8 @@ pub fn parse_regex(
                 }
                 continue;
             }
-            '{' if extended_mode => {
-                validate_quantifier_structure(lines, line, delimiter, false)?;
+            '{' if is_extended_mode => {
+                validate_quantifier_structure(lines, line, delimiter, true)?;
                 let quantifier = validate_quantifier_numbers(lines, line)?;
                 result.push('{');
                 result.push_str(&quantifier);
@@ -389,7 +389,7 @@ fn validate_quantifier_structure(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     delimiter: char,
-    is_bre: bool,
+    is_extended_mode: bool,
 ) -> UResult<usize> {
     let invalid_content_error_msg = "Invalid content of \\{\\}";
     let mut advances = 0;
@@ -400,7 +400,7 @@ fn validate_quantifier_structure(
     line.advance();
 
     while !line.eol() && line.current() != delimiter {
-        if is_bre {
+        if !is_extended_mode {
             // In BRE mode, look for \}
             if line.current() == '\\' {
                 line.advance();
