@@ -1097,6 +1097,135 @@ mod tests {
         assert_eq!(line.current(), '/');
     }
 
+    // validate_quantifier_structure
+    //BRE tests
+    #[test]
+    fn test_validate_quantifier_structure_bre_valid() {
+        let (lines, mut line) = make_providers("{2,3\\}");
+        let result = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap();
+        assert_eq!(result, 4);
+        assert_eq!(line.current(), '{'); // Line should be back on the opening brace
+    }
+
+    #[test]
+    fn test_validate_quantifier_structure_bre_with_unmatched_brace() {
+        let (lines, mut line) = make_providers("{2,3");
+        let err = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap_err();
+        assert!(err.to_string().contains("Unmatched \\{"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_structure_bre_with_empty_content() {
+        let (lines, mut line) = make_providers("{\\}");
+        let err = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap_err();
+        assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_structure_bre_with_invalid_char() {
+        let (lines, mut line) = make_providers("{2d,3\\}");
+        let err = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap_err();
+        assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_structure_bre_with_double_comma() {
+        let (lines, mut line) = make_providers("{2,3,\\}");
+        let err = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap_err();
+        assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    }
+
+    // ERE tests
+    #[test]
+    fn test_validate_quantifier_structure_ere_valid() {
+        let (lines, mut line) = make_providers("{2,3}");
+        let result = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap();
+        assert_eq!(result, 3);
+        assert_eq!(line.current(), '{'); // Line should be back on the opening brace
+    }
+
+    #[test]
+    fn test_validate_quantifier_structure_ere_with_unmatched_brace() {
+        let (lines, mut line) = make_providers("{2,3");
+        let err = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap_err();
+        assert!(err.to_string().contains("Unmatched \\{"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_structure_ere_with_empty_content() {
+        let (lines, mut line) = make_providers("{}");
+        let err = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap_err();
+        assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_structure_ere_with_invalid_char() {
+        let (lines, mut line) = make_providers("{2d,3}");
+        let err = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap_err();
+        assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_structure_ere_with_double_comma() {
+        let (lines, mut line) = make_providers("{2,3,}");
+        let err = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap_err();
+        assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    }
+
+    // validate_quantifier_numbers
+    #[test]
+    fn test_validate_quantifier_numbers_with_m() {
+        let (lines, mut line) = make_providers("{2}");
+        let result = validate_quantifier_numbers(&lines, &mut line).unwrap();
+        assert_eq!(result, "2");
+        assert_eq!(line.current(), '}');
+    }
+
+    #[test]
+    fn test_validate_quantifier_numbers_with_single_comma() {
+        let (lines, mut line) = make_providers("{,}");
+        let result = validate_quantifier_numbers(&lines, &mut line).unwrap();
+        assert_eq!(result, ",");
+        assert_eq!(line.current(), '}');
+    }
+
+    #[test]
+    fn test_validate_quantifier_numbers_with_comma_n() {
+        let (lines, mut line) = make_providers("{,3}");
+        let result = validate_quantifier_numbers(&lines, &mut line).unwrap();
+        assert_eq!(result, "0,3");
+        assert_eq!(line.current(), '}');
+    }
+
+    #[test]
+    fn test_validate_quantifier_numbers_valid() {
+        let (lines, mut line) = make_providers("{2,3}");
+        let result = validate_quantifier_numbers(&lines, &mut line).unwrap();
+        assert_eq!(result, "2,3");
+        assert_eq!(line.current(), '}');
+    }
+
+    #[test]
+    fn test_validate_quantifier_numbers_with_m_too_big() {
+        let (lines, mut line) = make_providers("{256}");
+        let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
+        assert!(err.to_string().contains("Regular expression too big"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_numbers_with_n_too_big() {
+        let (lines, mut line) = make_providers("{2,256}");
+        let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
+        assert!(err.to_string().contains("Regular expression too big"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_numbers_with_m_gt_n() {
+        let (lines, mut line) = make_providers("{3,2}");
+        let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
+        assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    }
+
     // parse_transliteration
     #[test]
     fn test_simple_transliteration() {
