@@ -194,7 +194,9 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         in_place_suffix: matches
             .get_one::<String>("in-place")
             .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
-        length: matches.get_one::<u32>("length").map_or(70, |v| *v as usize),
+        // 0 means "not explicitly set via -l"; the l command then
+        // falls back to COLS, terminal width, or DEFAULT_OUTPUT_WIDTH.
+        length: matches.get_one::<u32>("length").map_or(0, |v| *v as usize),
         quiet: matches.get_flag("quiet"),
         posix: matches.get_flag("posix"),
         separate: matches.get_flag("separate"),
@@ -334,7 +336,7 @@ mod tests {
         assert!(!ctx.follow_symlinks);
         assert!(!ctx.in_place);
         assert_eq!(ctx.in_place_suffix, None);
-        assert_eq!(ctx.length, 70);
+        assert_eq!(ctx.length, 0);
         assert!(!ctx.quiet);
         assert!(!ctx.posix);
         assert!(!ctx.separate);
@@ -403,7 +405,7 @@ mod tests {
         let ctx_default = build_context(&matches_default);
         let ctx_custom = build_context(&matches_custom);
 
-        assert_eq!(ctx_default.length, 70);
+        assert_eq!(ctx_default.length, 0);
         assert_eq!(ctx_custom.length, 120);
     }
 }

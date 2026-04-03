@@ -1071,7 +1071,7 @@ fn test_invalid_backreference() {
         .args(&["-n", "-e", r"s/./X/;s//\1/", LINES1])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:8: error: invalid reference \\1 on command's RHS\n");
+        .stderr_is("sed: -e expression #1, char 8: invalid reference \\1 on command's RHS\n");
 }
 
 #[test]
@@ -1080,7 +1080,7 @@ fn test_duplicate_label() {
         .args(&[":foo;:foo"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:6: error: duplicate label `foo'\n");
+        .stderr_is("sed: -e expression #1, char 6: duplicate label `foo'\n");
 }
 
 #[test]
@@ -1089,7 +1089,7 @@ fn test_undefined_label() {
         .args(&["b foo"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:1: error: undefined label `foo'\n");
+        .stderr_is("sed: -e expression #1, char 1: undefined label `foo'\n");
 }
 
 #[test]
@@ -1098,7 +1098,7 @@ fn test_incomplete_test_command_posix() {
         .args(&["--posix", "i\\"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: :0:3: error: incomplete command\n");
+        .stderr_is("sed: :0: incomplete command\n");
 }
 
 #[test]
@@ -1107,7 +1107,7 @@ fn test_addr0_non_posix() {
         .args(&["--posix", "0,/foo/p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:2: error: address 0 is invalid in POSIX mode\n");
+        .stderr_is("sed: -e expression #1, char 2: address 0 is invalid in POSIX mode\n");
 }
 
 #[test]
@@ -1116,7 +1116,7 @@ fn test_addr0_second_required() {
         .args(&["0p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:2: error: address 0 requires a second address\n");
+        .stderr_is("sed: -e expression #1, char 2: address 0 requires a second address\n");
 }
 
 #[test]
@@ -1125,7 +1125,7 @@ fn test_addr0_second_re_only() {
         .args(&["0,4p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with a regular expression or ~step\n");
+        .stderr_is("sed: -e expression #1, char 4: address 0 can only be used with a regular expression or ~step\n");
 }
 
 #[test]
@@ -1134,7 +1134,7 @@ fn test_step_match_non_posix() {
         .args(&["--posix", "3~2p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:3: error: ~step is invalid in POSIX mode\n");
+        .stderr_is("sed: -e expression #1, char 3: ~step is invalid in POSIX mode\n");
 }
 
 #[test]
@@ -1143,7 +1143,7 @@ fn test_step_end_non_posix() {
         .args(&["--posix", "3,~2p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:4: error: ~step is invalid in POSIX mode\n");
+        .stderr_is("sed: -e expression #1, char 4: ~step is invalid in POSIX mode\n");
 }
 
 // The following test diverse ways in which regexes are matched.
@@ -1154,7 +1154,7 @@ fn test_fancy_regex_is_match_error() {
         .args(&["-E", r"/(\.+)+\1b$/p", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:1: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
+        .stderr_is("sed: -e expression #1, char 1: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
 }
 
 #[test]
@@ -1163,7 +1163,7 @@ fn test_fancy_regex_find_error() {
         .args(&["-E", r"p;s/(\.+)+\1b$/X/", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
+        .stderr_is("sed: -e expression #1, char 3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
 }
 
 #[test]
@@ -1172,7 +1172,7 @@ fn test_fancy_regex_captures_error() {
         .args(&["-E", r"p;s/(\.+)+\1b$/\1/", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
+        .stderr_is("sed: -e expression #1, char 3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
 }
 
 #[test]
@@ -1181,7 +1181,7 @@ fn test_fancy_regex_captures_iter_error() {
         .args(&["-E", r"p;s/(\.+)+\1b$/\1/3", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: error retrieving RE captures: Error executing regex: Max limit for backtracking count exceeded\n");
+        .stderr_is("sed: -e expression #1, char 3: 'input/dots-4k.txt':1 error: error retrieving RE captures: Error executing regex: Max limit for backtracking count exceeded\n");
 }
 
 #[test]
@@ -1190,7 +1190,7 @@ fn test_write_file_failure() {
         .args(&["w /xyzzy/xyzy", LINES1])
         .fails()
         .code_is(2)
-        .stderr_contains("sed: <script argument 1>:1:1: error: creating file '/xyzzy/xyzy':");
+        .stderr_contains("sed: -e expression #1, char 1: creating file '/xyzzy/xyzy':");
 }
 
 #[test]
@@ -1199,7 +1199,7 @@ fn test_missing_substitute_re() {
         .args(&["l;s//foo/", LINES1])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: 'input/lines1':1 error: no previous regular expression\n");
+        .stderr_is("sed: -e expression #1, char 3: 'input/lines1':1 error: no previous regular expression\n");
 }
 
 #[test]
@@ -1208,7 +1208,7 @@ fn test_missing_address_re() {
         .args(&["l\np;//s/foo/bar/", LINES1])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:2:3: 'input/lines1':1 error: no previous regular expression\n");
+        .stderr_is("sed: -e expression #1, char 3: 'input/lines1':1 error: no previous regular expression\n");
 }
 
 ////////////////////////////////////////////////////////////
