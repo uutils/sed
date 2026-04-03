@@ -520,14 +520,17 @@ fn process_file(
                 }
                 'g' => {
                     // Replace pattern with the contents of the hold space.
-                    pattern.set_to_string(context.hold.content.clone(), context.hold.has_newline);
+                    pattern.set_to_string(
+                        context.hold.content.clone(),
+                        context.hold.has_newline || context.hold.content.is_empty(),
+                    );
                 }
                 'G' => {
                     // Append to pattern \n followed by hold space contents.
                     let (pat_content, pat_has_newline) = pattern.fields_mut()?;
                     pat_content.push('\n');
                     pat_content.push_str(&context.hold.content);
-                    *pat_has_newline = context.hold.has_newline;
+                    *pat_has_newline = context.hold.has_newline || context.hold.content.is_empty();
                 }
                 'h' => {
                     // Replace hold with the contents of the pattern space.
@@ -634,6 +637,12 @@ fn process_file(
                         std::mem::swap(pat_has_newline, &mut context.hold.has_newline);
                     }
                     std::mem::swap(pat_content, &mut context.hold.content);
+                    std::mem::swap(pat_has_newline, &mut context.hold.has_newline);
+                    // If the hold space was empty (thus the pat_content is now empty),
+                    // ensure the new pattern space is printed with a newline
+                    if pat_content.is_empty() {
+                        *pat_has_newline = true;
+                    }
                 }
                 'y' => {
                     let trans = extract_variant!(command, Transliteration);
@@ -712,9 +721,14 @@ pub fn process_all_files(
             .map_err_context(|| format!("error opening input file {}", path.quote()))?;
         let output = in_place.begin(path)?;
 
-        if index == 0 || context.separate {
+        if context.separate || index == 0 {
             context.line_number = 0;
             reset_latched_address_ranges(&mut context.range_commands);
+
+            // Reset hold space for separate file processing
+            // (doesn't affect results if --separate is not used)
+            context.hold.content.clear();
+            context.hold.has_newline = false;
         }
 
         context.input_name = path.quote().to_string();
