@@ -217,6 +217,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         range_commands: Vec::new(),
         substitution_made: false,
         append_elements: Vec::new(),
+        pattern_deleted: false,
     }
 }
 
