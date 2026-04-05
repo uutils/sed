@@ -384,11 +384,11 @@ impl FastCopy {
             panic!("fstat failed on fd {}: {}", fd, err);
         }
 
-        let ftype = st.st_mode & libc::S_IFMT;
+        let ftype = st.st_mode as libc::mode_t & libc::S_IFMT;
 
         Self {
             fd,
-            is_regular: ftype == libc::S_IFREG,
+            is_regular: ftype as libc::mode_t == libc::S_IFREG,
             block_size: st.st_blksize as usize,
         }
     }
@@ -754,7 +754,7 @@ impl OutputBuffer {
                         chunk.out_ptr,
                         chunk.in_fast_copy.fd,
                         // Input file offset
-                        unsafe { chunk.out_ptr.offset_from(chunk.base_ptr) } as i64,
+                        unsafe { chunk.out_ptr.offset_from(chunk.base_ptr) } as libc::off_t,
                         self.fast_copy.fd,
                         chunk.len,
                         // Alignment block size: the largest of the two
