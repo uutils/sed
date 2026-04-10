@@ -286,7 +286,6 @@ fn compile_sequence(
         let n_addr = compile_address_range(lines, line, &mut cmd, context)?;
         line.eat_spaces();
         let mut cmd_spec = get_verified_cmd_spec(lines, line, n_addr, context.posix)?;
-
         // Compile the command according to its specification.
         let mut cmd_mut = cmd.borrow_mut();
         cmd_mut.code = line.current();
@@ -331,10 +330,8 @@ fn compile_address_range(
     let mut is_line0 = false;
 
     line.eat_spaces();
-    if !line.eol()
-        && is_address_char(line.current())
-        && let Ok(addr1) = compile_address(lines, line, context)
-    {
+    if !line.eol() && is_address_char(line.current()) {
+        let addr1 = compile_address(lines, line, context)?;
         is_line0 = matches!(addr1, Address::Line(0));
         cmd.addr1 = Some(addr1);
         if is_line0 && context.posix {
@@ -364,9 +361,8 @@ fn compile_address_range(
         }
 
         // Look for second address.
-        if !line.eol()
-            && let Ok(addr2) = compile_address(lines, line, context)
-        {
+        if !line.eol() {
+            let addr2 = compile_address(lines, line, context)?;
             // Set step_n to the number specified in the (required numeric) address.
             let step_n = if is_step_match || is_step_end {
                 match addr2 {
@@ -449,7 +445,7 @@ fn compile_address(
                 // The next character is an arbitrary delimiter
                 line.advance();
             }
-            let re = parse_regex(lines, line)?;
+            let re = parse_regex(lines, line, context.regex_extended)?;
             // Skip over delimiter
             line.advance();
 
@@ -533,7 +529,7 @@ fn parse_command_ending(
 }
 
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
-/// - Replaces `\(` and `\)` with `(` and `)`.
+/// - Replaces `\(`, `\)`, `\{` and `\}` with `(`, `)`, `{` and `}`.
 /// - Puts single-digit back-references in non-capturing groups..
 /// - Escapes ERE-only metacharacters: `+ ? { } | ( )`.
 /// - Leaves all other characters as-is.
@@ -553,6 +549,14 @@ fn bre_to_ere(pattern: &str) -> String {
                 Some(')') => {
                     chars.next();
                     result.push(')'); // Group end
+                }
+                Some('{') => {
+                    chars.next();
+                    result.push('{'); // Brace quantifier start
+                }
+                Some('}') => {
+                    chars.next();
+                    result.push('}'); // Brace quantifier end
                 }
                 Some(v) if v.is_ascii_digit() => {
                     // Back-reference.  In sed BREs these are single-digit
@@ -624,7 +628,7 @@ fn compile_regex(
 
     // Convert basic to extended regular expression if needed.
     let pattern = if context.regex_extended {
-        pattern
+        &pattern.replace("{,}", "*")
     } else {
         &bre_to_ere(pattern)
     };
@@ -633,7 +637,7 @@ fn compile_regex(
     let pattern = if icase {
         format!("(?i){pattern}")
     } else {
-        pattern.to_string()
+        pattern.clone()
     };
 
     // Compile into engine.
@@ -776,8 +780,7 @@ fn compile_subst_command(
         );
     }
 
-    let pattern = parse_regex(lines, line)?;
-
+    let pattern = parse_regex(lines, line, context.regex_extended)?;
     let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line)?;
@@ -807,7 +810,6 @@ fn compile_subst_command(
             ),
         );
     }
-
     cmd.data = CommandData::Substitution(subst);
 
     parse_command_ending(lines, line, cmd)?;
@@ -1560,6 +1562,21 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_re_extended() {
+        let (lines, chars) = make_providers("acaa\nbbb\nccc");
+        let mut ctx = ctx();
+        ctx.regex_extended = true;
+        let regex = compile_regex(&lines, &chars, "cc{,}", &ctx, false)
+            .unwrap()
+            .expect("regex should be present");
+        assert!(
+            regex
+                .is_match(&mut IOChunk::new_from_str("acaa\nccc"))
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn test_compile_re_case_insensitive() {
         let (lines, chars) = dummy_providers();
         let regex = compile_regex(&lines, &chars, "abc", &ctx(), true)
@@ -2194,6 +2211,11 @@ mod tests {
     fn test_bre_group_translation() {
         assert_eq!(bre_to_ere(r"\(abc\)"), "(abc)");
         assert_eq!(bre_to_ere(r"a\(b\)c"), "a(b)c");
+    }
+
+    #[test]
+    fn test_bre_brace_quantifier_translation() {
+        assert_eq!(bre_to_ere(r"\{1,4\}"), "{1,4}");
     }
 
     #[test]
