@@ -58,7 +58,7 @@ jobs:
         cargo build --config=profile.release.strip=true --profile=release #-fast
         zstd -19 target/release/sed -o ../sed-x86_64-unknown-linux-gnu.zst
     - name: Publish latest commit
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       with:
         tag_name: latest-commit
