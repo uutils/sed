@@ -17,6 +17,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check
 
+  check_android:
+    name: cargo check (Android ${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [aarch64-linux-android, armv7-linux-androideabi]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: android-actions/setup-android@v4
+      - name: Install Android NDK
+        run: sdkmanager "ndk;29.0.14206865"
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+      - name: Check Android target
+        run: cargo ndk --platform 21 --target ${{ matrix.target }} check
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/29.0.14206865
+
   test:
     name: cargo test
     runs-on: ${{ matrix.os }}
