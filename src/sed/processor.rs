@@ -122,19 +122,11 @@ fn applies(
             // See if latch must start.
             if match_address(addr1, reader, pattern, context, &command.location)? {
                 match addr2 {
-                    Address::Line(n) => {
-                        if linenum >= *n {
-                            context.last_address = true;
-                        } else {
-                            command.start_line = Some(linenum);
-                        }
+                    Address::Line(n) if linenum >= *n => {
+                        context.last_address = true;
                     }
-                    Address::RelLine(n) => {
-                        if *n == 0 {
-                            context.last_address = true;
-                        } else {
-                            command.start_line = Some(linenum);
-                        }
+                    Address::RelLine(n) if *n == 0 => {
+                        context.last_address = true;
                     }
                     _ => {
                         command.start_line = Some(linenum);
