@@ -15,6 +15,14 @@ use crate::sed::script_line_provider::ScriptLineProvider;
 use std::char;
 use uucore::error::UResult;
 
+/// Defines whether regex patterns use Basic Regular Expression (BRE) or
+/// Extended Regular Expression (ERE) syntax.
+#[derive(Copy, Clone, Debug)]
+pub enum RegexMode {
+    Basic,
+    Extended,
+}
+
 /// Return true if c is a valid octal digit
 fn is_ascii_octal_digit(c: char) -> bool {
     matches!(c, '0'..='7')
@@ -313,11 +321,12 @@ fn scan_delimiter(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> 
 /// Parse the regular expression delimited by the current line
 /// character and return it as a string.
 /// On return, the line is on the closing delimiter.
-/// If extended_mode is false, quantifiers like {m,n} are treated as literals.
+/// In Basic mode, quantifiers like {m,n} must be escaped (\{m,n\}).
+/// In Extended mode, quantifiers like {m,n} don't require escaping.
 pub fn parse_regex(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
-    is_extended_mode: bool,
+    regex_mode: RegexMode,
 ) -> UResult<String> {
     let delimiter = scan_delimiter(lines, line)?;
     let mut result = String::new();
@@ -339,8 +348,8 @@ pub fn parse_regex(
                     line.advance();
                     continue;
                 }
-                if line.current() == '{' && !is_extended_mode {
-                    validate_quantifier_structure(lines, line, delimiter, false)?;
+                if line.current() == '{' && matches!(regex_mode, RegexMode::Basic) {
+                    validate_quantifier_structure(lines, line, delimiter, RegexMode::Basic)?;
                     let quantifier = validate_quantifier_numbers(lines, line)?;
                     result.push('\\');
                     result.push('{');
@@ -363,8 +372,8 @@ pub fn parse_regex(
                 }
                 continue;
             }
-            '{' if is_extended_mode => {
-                validate_quantifier_structure(lines, line, delimiter, true)?;
+            '{' if matches!(regex_mode, RegexMode::Extended) => {
+                validate_quantifier_structure(lines, line, delimiter, RegexMode::Extended)?;
                 let quantifier = validate_quantifier_numbers(lines, line)?;
                 result.push('{');
                 result.push_str(&quantifier);
@@ -389,64 +398,67 @@ fn validate_quantifier_structure(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     delimiter: char,
-    is_extended_mode: bool,
+    regex_mode: RegexMode,
 ) -> UResult<usize> {
     let invalid_content_error_msg = "Invalid content of \\{\\}";
-    let mut advances = 0;
     let mut found_closing_brace = false;
     let mut seen_comma = false;
     let mut invalid_content_detected = false;
-
+    let mut is_quantifier_empty = true;
+    let initial_pos = line.get_pos();
     line.advance();
 
     while !line.eol() && line.current() != delimiter {
-        if is_extended_mode {
-            // In ERE mode, look for }
-            if line.current() == '}' {
-                if advances == 0 {
-                    invalid_content_detected = true;
-                }
-                found_closing_brace = true;
-                break;
-            } else {
-                if line.current() == ',' {
-                    if seen_comma {
-                        invalid_content_detected = true;
-                    }
-                    seen_comma = true;
-                } else if !line.current().is_ascii_digit() {
-                    invalid_content_detected = true;
-                }
-                line.advance();
-                advances += 1;
-            }
-        } else {
-            // In BRE mode, look for \}
-            if line.current() == '\\' {
-                line.advance();
-                advances += 1;
-                if !line.eol() && line.current() == '}' {
+        match regex_mode {
+            RegexMode::Extended => {
+                // In ERE mode, look for }
+                if line.current() == '}' {
                     // Empty quantifier {} is not valid
-                    if advances == 1 {
+                    if is_quantifier_empty {
                         invalid_content_detected = true;
                     }
                     found_closing_brace = true;
                     break;
                 } else {
-                    invalid_content_detected = true;
-                }
-            } else {
-                // Only digits and comma allowed
-                if line.current() == ',' {
-                    if seen_comma {
+                    // Entering means there is no } immediately after the {
+                    is_quantifier_empty = false;
+                    // Only digits and one comma allowed
+                    if line.current() == ',' {
+                        if seen_comma {
+                            invalid_content_detected = true;
+                        }
+                        seen_comma = true;
+                    } else if !line.current().is_ascii_digit() {
                         invalid_content_detected = true;
                     }
-                    seen_comma = true;
-                } else if !line.current().is_ascii_digit() {
-                    invalid_content_detected = true;
+                    line.advance();
                 }
-                line.advance();
-                advances += 1;
+            }
+            RegexMode::Basic => {
+                // In BRE mode, look for \}
+                if line.current() == '\\' {
+                    line.advance();
+                    if !line.eol() && line.current() == '}' {
+                        if is_quantifier_empty {
+                            invalid_content_detected = true;
+                        }
+                        found_closing_brace = true;
+                        break;
+                    } else {
+                        invalid_content_detected = true;
+                    }
+                } else {
+                    is_quantifier_empty = false;
+                    if line.current() == ',' {
+                        if seen_comma {
+                            invalid_content_detected = true;
+                        }
+                        seen_comma = true;
+                    } else if !line.current().is_ascii_digit() {
+                        invalid_content_detected = true;
+                    }
+                    line.advance();
+                }
             }
         }
     }
@@ -459,8 +471,8 @@ fn validate_quantifier_structure(
         return compilation_error(lines, line, invalid_content_error_msg);
     }
 
-    line.retreat(advances + 1);
-    Ok(advances)
+    line.set_position(initial_pos);
+    Ok(initial_pos)
 }
 
 // Peforms validations on m and/or n values of the quantifier
@@ -951,7 +963,7 @@ mod tests {
     #[test]
     fn test_simple_regex() {
         let (lines, mut line) = make_providers("/abc/");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "abc");
         assert_eq!(line.current(), '/');
     }
@@ -959,7 +971,7 @@ mod tests {
     #[test]
     fn test_regex_with_escaped_delimiter() {
         let (lines, mut line) = make_providers("/ab\\/c/");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "ab/c");
         assert_eq!(line.current(), '/');
     }
@@ -967,7 +979,7 @@ mod tests {
     #[test]
     fn test_regex_with_capture() {
         let (lines, mut line) = make_providers(r"/\(.\)/c/");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, r"\(.\)");
         assert_eq!(line.current(), '/');
     }
@@ -975,7 +987,7 @@ mod tests {
     #[test]
     fn test_regex_with_escape_sequence() {
         let (lines, mut line) = make_providers("/ab\\n/");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "ab\n");
         assert_eq!(line.current(), '/');
     }
@@ -983,29 +995,29 @@ mod tests {
     #[test]
     fn test_basic_regex_quantifier() {
         let (lines, mut line) = make_providers("/a\\{2,3\\}/p");
-        let parsed = parse_regex(&lines, &mut line, true).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "a\\{2,3\\}");
         assert_eq!(line.current(), '/');
     }
 
     #[test]
     fn test_basic_regex_with_unmatched_brace_quantifier() {
-        let (lines, mut line) = make_providers("/a{2,3/p");
-        let err = parse_regex(&lines, &mut line, true).unwrap_err();
+        let (lines, mut line) = make_providers("/a\\{2,3/p");
+        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
         assert!(err.to_string().contains("Unmatched \\{"));
     }
 
     #[test]
     fn test_basic_regex_with_invalid_content() {
-        let (lines, mut line) = make_providers("/a{2d,3}/p");
-        let err = parse_regex(&lines, &mut line, true).unwrap_err();
+        let (lines, mut line) = make_providers("/a\\{2d,3\\}/p");
+        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
     }
 
     #[test]
     fn test_extended_regex_quantifier() {
         let (lines, mut line) = make_providers("/a{2,3}/p");
-        let parsed = parse_regex(&lines, &mut line, true).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap();
         assert_eq!(parsed, "a{2,3}");
         assert_eq!(line.current(), '/');
     }
@@ -1013,35 +1025,35 @@ mod tests {
     #[test]
     fn test_extended_regex_with_unmatched_brace_quantifier() {
         let (lines, mut line) = make_providers("/a{2,3/p");
-        let err = parse_regex(&lines, &mut line, true).unwrap_err();
+        let err = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap_err();
         assert!(err.to_string().contains("Unmatched \\{"));
     }
 
     #[test]
     fn test_extended_regex_with_invalid_m() {
         let (lines, mut line) = make_providers("/a{2d,3}/p");
-        let err = parse_regex(&lines, &mut line, true).unwrap_err();
+        let err = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
     }
 
     #[test]
     fn errors_on_unterminated_regex() {
         let (lines, mut line) = make_providers("/unterminated");
-        let err = parse_regex(&lines, &mut line, false).unwrap_err();
+        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
         assert!(err.to_string().contains("unterminated regular expression"));
     }
 
     #[test]
     fn errors_on_esc_at_re_eol() {
         let (lines, mut line) = make_providers("/foo\\");
-        let err = parse_regex(&lines, &mut line, false).unwrap_err();
+        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
         assert!(err.to_string().contains("unterminated regular expression"));
     }
 
     #[test]
     fn errors_on_backslash_delimiter() {
         let (lines, mut line) = make_providers("\\bad");
-        let err = parse_regex(&lines, &mut line, false).unwrap_err();
+        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
         assert!(
             err.to_string()
                 .contains("\\ cannot be used as a string delimiter")
@@ -1051,7 +1063,7 @@ mod tests {
     #[test]
     fn test_regex_with_character_class() {
         let (lines, mut line) = make_providers("/[a-z]/");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "[a-z]");
         assert_eq!(line.current(), '/');
     }
@@ -1059,7 +1071,7 @@ mod tests {
     #[test]
     fn test_regex_with_bracket_delimiter() {
         let (lines, mut line) = make_providers("[abc[");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "abc");
         assert_eq!(line.current(), '[');
     }
@@ -1067,7 +1079,7 @@ mod tests {
     #[test]
     fn test_bracket_regex_with_bracket_delimiter() {
         let (lines, mut line) = make_providers("[a\\[0-9]bc[");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "a[0-9]bc");
         assert_eq!(line.current(), '[');
     }
@@ -1075,7 +1087,7 @@ mod tests {
     #[test]
     fn test_regex_with_escaped_bracket_in_character_class() {
         let (lines, mut line) = make_providers("/[a\\]z]/");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "[a\\]z]");
         assert_eq!(line.current(), '/');
     }
@@ -1083,7 +1095,7 @@ mod tests {
     #[test]
     fn test_regex_with_delimiter_inside_character_class() {
         let (lines, mut line) = make_providers("/[a/c]/");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "[a/c]");
         assert_eq!(line.current(), '/');
     }
@@ -1091,7 +1103,7 @@ mod tests {
     #[test]
     fn test_regex_with_escaped_paren_and_backslash() {
         let (lines, mut line) = make_providers("/\\(\\\\/");
-        let parsed = parse_regex(&lines, &mut line, false).unwrap();
+        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, "\\(\\\\");
         assert_eq!(line.current(), '/');
     }
@@ -1101,36 +1113,41 @@ mod tests {
     #[test]
     fn test_validate_quantifier_structure_bre_valid() {
         let (lines, mut line) = make_providers("{2,3\\}");
-        let result = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap();
-        assert_eq!(result, 4);
+        let result =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap();
+        assert_eq!(result, 0);
         assert_eq!(line.current(), '{'); // Line should be back on the opening brace
     }
 
     #[test]
     fn test_validate_quantifier_structure_bre_with_unmatched_brace() {
         let (lines, mut line) = make_providers("{2,3");
-        let err = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap_err();
+        let err =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap_err();
         assert!(err.to_string().contains("Unmatched \\{"));
     }
 
     #[test]
     fn test_validate_quantifier_structure_bre_with_empty_content() {
         let (lines, mut line) = make_providers("{\\}");
-        let err = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap_err();
+        let err =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
     }
 
     #[test]
     fn test_validate_quantifier_structure_bre_with_invalid_char() {
         let (lines, mut line) = make_providers("{2d,3\\}");
-        let err = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap_err();
+        let err =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
     }
 
     #[test]
     fn test_validate_quantifier_structure_bre_with_double_comma() {
         let (lines, mut line) = make_providers("{2,3,\\}");
-        let err = validate_quantifier_structure(&lines, &mut line, '/', false).unwrap_err();
+        let err =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
     }
 
@@ -1138,36 +1155,41 @@ mod tests {
     #[test]
     fn test_validate_quantifier_structure_ere_valid() {
         let (lines, mut line) = make_providers("{2,3}");
-        let result = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap();
-        assert_eq!(result, 3);
+        let result =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap();
+        assert_eq!(result, 0);
         assert_eq!(line.current(), '{'); // Line should be back on the opening brace
     }
 
     #[test]
     fn test_validate_quantifier_structure_ere_with_unmatched_brace() {
         let (lines, mut line) = make_providers("{2,3");
-        let err = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap_err();
+        let err =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap_err();
         assert!(err.to_string().contains("Unmatched \\{"));
     }
 
     #[test]
     fn test_validate_quantifier_structure_ere_with_empty_content() {
         let (lines, mut line) = make_providers("{}");
-        let err = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap_err();
+        let err =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
     }
 
     #[test]
     fn test_validate_quantifier_structure_ere_with_invalid_char() {
         let (lines, mut line) = make_providers("{2d,3}");
-        let err = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap_err();
+        let err =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
     }
 
     #[test]
     fn test_validate_quantifier_structure_ere_with_double_comma() {
         let (lines, mut line) = make_providers("{2,3,}");
-        let err = validate_quantifier_structure(&lines, &mut line, '/', true).unwrap_err();
+        let err =
+            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
     }
 

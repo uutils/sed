@@ -196,7 +196,6 @@ macro_rules! check_output_posix {
 // Input files
 const LINES1: &str = "input/lines1";
 const LINES2: &str = "input/lines2";
-const REGEX_QUANTIFIERS: &str = "input/regex-quantifiers.txt";
 const NO_NEW_LINE: &str = "input/no-new-line.txt";
 
 ////////////////////////////////////////////////////////////
@@ -279,42 +278,77 @@ check_output!(addr_range_end_multiple, ["-n", "/l1_2/,~10p", LINES1]);
 
 // Quantifiers: {m,n}
 // m and n are considered to be the first and second numbers in the interval, respectively.
-check_output!(
-    ere_quantifier_exactly_m,
-    ["-n", "-E", "-e", "/l{2}/p", REGEX_QUANTIFIERS]
-);
-check_output!(
-    ere_quantifier_minimum_m,
-    ["-n", "-E", "-e", "/l{1,}/p", REGEX_QUANTIFIERS]
-);
-check_output!(
-    ere_quantifier_m_to_n,
-    ["-n", "-E", "-e", "/l{3,4}/p", REGEX_QUANTIFIERS]
-);
-check_output!(
-    ere_quantifier_comma_n,
-    ["-n", "-E", "-e", "/l{,4}/p", REGEX_QUANTIFIERS]
-);
 
-check_output!(
-    bre_quantifier_minimum_m,
-    ["-n", "-e", "/l\\{3,\\}/p", REGEX_QUANTIFIERS]
-);
+const REGEX_QUANTIFIERS_INPUT: &str =
+    "Hello World\nHelo World\nHelllllo World\nHeo Word\nHeo Worl}d\n";
 
-check_output!(
-    bre_quantifier_comma,
-    ["-n", "-e", "/l\\{,\\}/p", REGEX_QUANTIFIERS]
-);
+#[test]
+fn ere_quantifier_exactly_m() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{2}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Hello World\nHelllllo World\n");
+}
 
-check_output!(
-    bre_quantifier_only_closing_brace,
-    ["-n", "-e", "/l\\}/p", REGEX_QUANTIFIERS]
-);
+#[test]
+fn ere_quantifier_minimum_m() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{1,}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Hello World\nHelo World\nHelllllo World\nHeo Worl}d\n");
+}
+
+#[test]
+fn ere_quantifier_m_to_n() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{3,4}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Helllllo World\n");
+}
+
+#[test]
+fn ere_quantifier_comma_n() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{,4}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is(REGEX_QUANTIFIERS_INPUT);
+}
+
+#[test]
+fn bre_quantifier_minimum_m() {
+    new_ucmd!()
+        .args(&["-n", "-e", "/l\\{3,\\}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Helllllo World\n");
+}
+
+#[test]
+fn bre_quantifier_comma() {
+    new_ucmd!()
+        .args(&["-n", "-e", "/l\\{,\\}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is(REGEX_QUANTIFIERS_INPUT);
+}
+
+#[test]
+fn bre_quantifier_only_closing_brace() {
+    new_ucmd!()
+        .args(&["-n", "-e", "/l\\}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Heo Worl}d\n");
+}
 
 #[test]
 fn test_ere_quantifier_n_gt_m() {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{3,2}/p", REGEX_QUANTIFIERS])
+        .args(&["-E", "-e", "/l{3,2}/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Invalid content of \\{\\}");
@@ -323,7 +357,7 @@ fn test_ere_quantifier_n_gt_m() {
 #[test]
 fn test_ere_quantifier_negative_m() {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{-2,4}/p", REGEX_QUANTIFIERS])
+        .args(&["-E", "-e", "/l{-2,4}/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Invalid content of \\{\\}");
@@ -332,7 +366,7 @@ fn test_ere_quantifier_negative_m() {
 #[test]
 fn test_ere_quantifier_invalid_m() {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{d,}/p", REGEX_QUANTIFIERS])
+        .args(&["-E", "-e", "/l{d,}/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Invalid content of \\{\\}");
@@ -341,7 +375,7 @@ fn test_ere_quantifier_invalid_m() {
 #[test]
 fn test_ere_quantifier_m_too_big() {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{300,}/p", REGEX_QUANTIFIERS])
+        .args(&["-E", "-e", "/l{300,}/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Regular expression too big");
@@ -350,7 +384,7 @@ fn test_ere_quantifier_m_too_big() {
 #[test]
 fn test_ere_quantifier_empty() {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{}/p", REGEX_QUANTIFIERS])
+        .args(&["-E", "-e", "/l{}/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Invalid content of \\{\\}");
@@ -359,7 +393,7 @@ fn test_ere_quantifier_empty() {
 #[test]
 fn test_ere_quantifier_whitespace() {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{ }/p", REGEX_QUANTIFIERS])
+        .args(&["-E", "-e", "/l{ }/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Invalid content of \\{\\}");
@@ -368,7 +402,7 @@ fn test_ere_quantifier_whitespace() {
 #[test]
 fn test_ere_quantifier_unmatched_brace() {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{,/p", REGEX_QUANTIFIERS])
+        .args(&["-E", "-e", "/l{,/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Unmatched \\{");
@@ -377,7 +411,7 @@ fn test_ere_quantifier_unmatched_brace() {
 #[test]
 fn test_ere_quantifier_unmatched_brace_2() {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{m,n/p", REGEX_QUANTIFIERS])
+        .args(&["-E", "-e", "/l{m,n/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Unmatched \\{");
@@ -386,7 +420,7 @@ fn test_ere_quantifier_unmatched_brace_2() {
 #[test]
 fn test_bre_quantifier_unmatched_brace() {
     new_ucmd!()
-        .args(&["-e", "/l\\{1,2}/p", REGEX_QUANTIFIERS])
+        .args(&["-e", "/l\\{1,2}/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Unmatched \\{");

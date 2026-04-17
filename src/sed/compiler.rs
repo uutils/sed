@@ -12,7 +12,9 @@ use crate::sed::command::{
     Address, Command, CommandData, ProcessingContext, ReplacementPart, ReplacementTemplate,
     Substitution, Transliteration,
 };
-use crate::sed::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
+use crate::sed::delimited_parser::{
+    RegexMode, parse_char_escape, parse_regex, parse_transliteration,
+};
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
 use crate::sed::fast_regex::Regex;
 use crate::sed::named_writer::NamedWriter;
@@ -445,7 +447,12 @@ fn compile_address(
                 // The next character is an arbitrary delimiter
                 line.advance();
             }
-            let re = parse_regex(lines, line, context.regex_extended)?;
+            let regex_mode = if context.regex_extended {
+                RegexMode::Extended
+            } else {
+                RegexMode::Basic
+            };
+            let re = parse_regex(lines, line, regex_mode)?;
             // Skip over delimiter
             line.advance();
 
@@ -780,7 +787,12 @@ fn compile_subst_command(
         );
     }
 
-    let pattern = parse_regex(lines, line, context.regex_extended)?;
+    let regex_mode = if context.regex_extended {
+        RegexMode::Extended
+    } else {
+        RegexMode::Basic
+    };
+    let pattern = parse_regex(lines, line, regex_mode)?;
     let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line)?;
@@ -1804,6 +1816,17 @@ mod tests {
             }
             _ => panic!("expected regex address"),
         }
+    }
+
+    #[test]
+    fn test_compile_address_range_error_propagation() {
+        let (lines, mut chars) = make_providers("1,/abc");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("unterminated regular expression"));
     }
 
     // compile_sequence
