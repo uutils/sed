@@ -300,6 +300,15 @@ check_output!(
         LINES1
     ]
 );
+check_output!(
+    subst_quantifier_zero_or_one,
+    ["-e", r"s/_[0-9]\([0-9]\)\?/_x\1/g", LINES1]
+);
+check_output!(
+    subst_quantifier_one_or_more,
+    ["-e", r"s/_[0-9]\+/_x/g", LINES1]
+);
+check_output!(subst_alternation_operator, ["-e", r"s/0\|1/x/g", LINES1]);
 check_output!(subst_multiline, ["-e", "s/_/u0\\\nu1\\\nu2/g", LINES1]);
 check_output!(subst_numbered_replacement, ["-e", r"s/./X/4", LINES1]);
 check_output!(subst_brace, ["-e", r"s/[123]/X/g", LINES1]);
