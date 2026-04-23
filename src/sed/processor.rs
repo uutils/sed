@@ -557,21 +557,14 @@ fn process_file(
                     continue 'lines;
                 }
                 'p' => {
-                    // Write the pattern space to standard output.
                     write_chunk(output, context, &pattern)?;
-                    if !pattern.is_newline_terminated() {
-                        // !chomped equivalent
-                        output.write_str("\n")?; // explicit \n
-                    }
                 }
                 'P' => {
-                    // Output pattern space, up to the first \n.
                     let line = pattern.as_str()?;
                     if let Some(pos) = line.find('\n') {
                         output.write_str(&line[..=pos])?;
                     } else {
-                        output.write_str(line)?;
-                        output.write_str("\n")?;
+                        write_chunk(output, context, &pattern)?;
                     }
                 }
                 'q' => {
@@ -652,6 +645,7 @@ fn process_file(
         flush_appends(output, context)?;
 
         if context.stop_processing {
+            output.flush_pending_newline()?;
             break;
         }
     }

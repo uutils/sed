@@ -211,7 +211,10 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         stop_processing: false,
         saved_regex: None,
         input_action: None,
-        hold: StringSpace::default(),
+        hold: StringSpace {
+            content: String::new(),
+            has_newline: true,
+        },
         parsed_block_nesting: 0,
         label_to_command_map: HashMap::new(),
         range_commands: Vec::new(),
