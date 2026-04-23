@@ -559,8 +559,11 @@ pub struct OutputBuffer {
     max_pending_write: usize,       // Max bytes to keep before flushing
     #[cfg(unix)]
     mmap_chunk: Option<MmapOutput>, // Chunk to write
+    // True when the last write didn't end with \n; the \n is deferred so
+    // that commands like `p` don't emit a spurious newline under -n.
+    pending_newline: bool,
     #[cfg(test)]
-    low_level_flushes: usize,       // Number of system call flushes
+    low_level_flushes: usize, // Number of system call flushes
 }
 
 /// Threshold to use buffered writes for output
@@ -591,6 +594,7 @@ impl OutputBuffer {
     pub fn new(w: Box<dyn OutputWrite + 'static>) -> Self {
         Self {
             out: BufWriter::new(w),
+            pending_newline: false,
             #[cfg(test)]
             low_level_flushes: 0,
         }
@@ -609,16 +613,22 @@ impl OutputBuffer {
             fast_copy,
             max_pending_write,
             mmap_chunk: None,
+            pending_newline: false,
             #[cfg(test)]
             low_level_flushes: 0,
         }
     }
 
-    /// Schedule the specified String or &strfor eventual output
+    /// Schedule the specified String or &str for eventual output
     pub fn write_str<S: Into<String>>(&mut self, s: S) -> io::Result<()> {
+        let mut s = s.into();
+        let has_newline = s.ends_with('\n');
+        if has_newline {
+            s.truncate(s.len() - 1);
+        }
         self.write_chunk(&IOChunk::from_content(IOChunkContent::new_owned(
-            s.into(),
-            false,
+            s,
+            has_newline,
         )))
     }
 
@@ -667,6 +677,16 @@ enum WriteRange {
 impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output
     pub fn write_chunk(&mut self, new_chunk: &IOChunk) -> io::Result<()> {
+        if new_chunk.is_empty() && !new_chunk.is_newline_terminated() {
+            return Ok(());
+        }
+
+        if self.pending_newline {
+            self.flush_mmap(WriteRange::Complete)?;
+            self.out.write_all(b"\n")?;
+            self.pending_newline = false;
+        }
+
         match &new_chunk.content {
             IOChunkContent::MmapInput {
                 full_span,
@@ -712,6 +732,7 @@ impl OutputBuffer {
                         len: new_len,
                     });
                 }
+                self.pending_newline = !new_chunk.is_newline_terminated();
             }
 
             IOChunkContent::Owned {
@@ -724,6 +745,7 @@ impl OutputBuffer {
                 if *has_newline {
                     self.out.write_all(b"\n")?;
                 }
+                self.pending_newline = !has_newline;
             }
         }
         Ok(())
@@ -772,6 +794,16 @@ impl OutputBuffer {
         Ok(())
     }
 
+    /// Write a deferred newline if the last output didn't end with one.
+    pub fn flush_pending_newline(&mut self) -> io::Result<()> {
+        if self.pending_newline {
+            self.flush_mmap(WriteRange::Complete)?;
+            self.out.write_all(b"\n")?;
+            self.pending_newline = false;
+        }
+        Ok(())
+    }
+
     /// Flush everything: pending mmap and buffered data.
     pub fn flush(&mut self) -> io::Result<()> {
         self.flush_mmap(WriteRange::Complete)?; // flush mmap if any
@@ -783,6 +815,15 @@ impl OutputBuffer {
 impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output
     pub fn write_chunk(&mut self, chunk: &IOChunk) -> io::Result<()> {
+        if chunk.is_empty() && !chunk.is_newline_terminated() {
+            return Ok(());
+        }
+
+        if self.pending_newline {
+            self.out.write_all(b"\n")?;
+            self.pending_newline = false;
+        }
+
         match &chunk.content {
             IOChunkContent::Owned {
                 content,
@@ -793,9 +834,19 @@ impl OutputBuffer {
                 if *has_newline {
                     self.out.write_all(b"\n")?;
                 }
+                self.pending_newline = !has_newline;
                 Ok(())
             }
         }
+    }
+
+    /// Write a deferred newline if the last output didn't end with one.
+    pub fn flush_pending_newline(&mut self) -> io::Result<()> {
+        if self.pending_newline {
+            self.out.write_all(b"\n")?;
+            self.pending_newline = false;
+        }
+        Ok(())
     }
 
     /// Flush everything: pending mmap and buffered data.
@@ -1796,6 +1847,7 @@ mod tests {
             max_pending_write: 8,
             #[cfg(unix)]
             mmap_chunk: None,
+            pending_newline: false,
             low_level_flushes: 0,
         };
         (buf, file)
@@ -1847,9 +1899,9 @@ mod tests {
     fn mmap_new_chunk_and_coalesce() {
         let (mut outbuf, _file) = new_for_test(); // OutputBuffer
 
-        let backing = b"abcdefgh"; // contiguous buffer
-        let c1 = make_mmap_chunk(&backing[0..4]); // "abcd"
-        let c2 = make_mmap_chunk(&backing[4..8]); // "efgh"
+        let backing = b"abc\nefg\n"; // contiguous buffer, newline-terminated lines
+        let c1 = make_mmap_chunk(&backing[0..4]); // "abc\n"
+        let c2 = make_mmap_chunk(&backing[4..8]); // "efg\n"
 
         outbuf.write_chunk(&c1).unwrap();
         outbuf.write_chunk(&c2).unwrap();
@@ -1879,13 +1931,13 @@ mod tests {
     fn mmap_coalesce_and_flush_blocks() {
         let (mut buf, _file) = new_for_test();
         buf.max_pending_write = 4;
-        let backing = b"abcdefgh"; // contiguous buffer
-        let c1 = make_mmap_chunk(&backing[0..5]); // "abcde"
-        let c2 = make_mmap_chunk(&backing[5..8]); // "fgh"
+        let backing = b"abcde\nfgh\n"; // contiguous newline-terminated lines
+        let c1 = make_mmap_chunk(&backing[0..6]); // "abcde\n"
+        let c2 = make_mmap_chunk(&backing[6..10]); // "fgh\n"
 
         buf.write_chunk(&c1).unwrap();
         buf.write_chunk(&c2).unwrap();
-        // After a flush
+        // After a flush triggered by exceeding max_pending_write
         assert_eq!(buf.mmap_chunk.as_ref().unwrap().len, 0);
     }
 
@@ -1915,5 +1967,59 @@ mod tests {
         file.read_to_string(&mut out).unwrap();
 
         assert_eq!(out, "world\n");
+    }
+
+    // pending_newline is injected between two no-newline chunks
+    #[test]
+    fn pending_newline_injected_between_chunks() {
+        let (mut buf, mut file) = new_for_test();
+        buf.write_chunk(&make_owned_chunk("first", false)).unwrap();
+        buf.write_chunk(&make_owned_chunk("second", true)).unwrap();
+        buf.out.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = String::new();
+        file.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "first\nsecond\n");
+    }
+
+    // flush_pending_newline emits the deferred newline
+    #[test]
+    fn flush_pending_newline_emits_newline() {
+        let (mut buf, mut file) = new_for_test();
+        buf.write_chunk(&make_owned_chunk("foo", false)).unwrap();
+        assert!(buf.pending_newline);
+        buf.flush_pending_newline().unwrap();
+        assert!(!buf.pending_newline);
+        buf.out.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = String::new();
+        file.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "foo\n");
+    }
+
+    // write_str strips trailing newline and sets pending_newline correctly
+    #[test]
+    fn write_str_with_trailing_newline() {
+        let (mut buf, mut file) = new_for_test();
+        buf.write_str("bar\n").unwrap();
+        assert!(!buf.pending_newline);
+        buf.out.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = String::new();
+        file.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "bar\n");
+    }
+
+    #[test]
+    fn write_str_without_trailing_newline() {
+        let (mut buf, mut file) = new_for_test();
+        buf.write_str("baz").unwrap();
+        assert!(buf.pending_newline);
+        buf.flush_pending_newline().unwrap();
+        buf.out.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = String::new();
+        file.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "baz\n");
     }
 }

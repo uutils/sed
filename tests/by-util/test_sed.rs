@@ -1212,7 +1212,7 @@ fn test_missing_address_re() {
 }
 
 ////////////////////////////////////////////////////////////
-// Test for issue #143: Missing newline in output with `-e p`
+// issue #143: p with no trailing newline
 #[test]
 fn test_print_command_adds_newline() {
     new_ucmd!()
@@ -1222,8 +1222,36 @@ fn test_print_command_adds_newline() {
         .stdout_is("foo\nfoo");
 }
 
-////////////////////////////////////////////////////////////
-// Test for issue #254: Missing newline in exchanged output with `2x`
+#[test]
+fn test_print_command_multiline_no_newline() {
+    new_ucmd!()
+        .args(&["-e", "p"])
+        .pipe_in("a\nfoo")
+        .succeeds()
+        .stdout_is("a\na\nfoo\nfoo");
+}
+
+// -n p must not add a trailing newline when input has none
+#[test]
+fn test_print_command_silent_no_newline() {
+    new_ucmd!()
+        .args(&["-n", "p"])
+        .pipe_in("foo")
+        .succeeds()
+        .stdout_is("foo");
+}
+
+// sanity: normal newline-terminated input is unaffected
+#[test]
+fn test_print_command_with_newline() {
+    new_ucmd!()
+        .args(&["-e", "p"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("foo\nfoo\n");
+}
+
+// issue #254: 2x missing newline
 #[test]
 fn test_exchange_command_adds_newline() {
     new_ucmd!()
@@ -1231,4 +1259,34 @@ fn test_exchange_command_adds_newline() {
         .pipe_in("a\nb\nc\n")
         .succeeds()
         .stdout_is("a\n\nc\n");
+}
+
+// issue #306: 1x with no-newline input should output an empty line
+#[test]
+fn test_exchange_no_newline_outputs_empty_line() {
+    new_ucmd!()
+        .args(&["1x"])
+        .pipe_in("abc")
+        .succeeds()
+        .stdout_is("\n");
+}
+
+// q with no newline input must not drop the trailing newline
+#[test]
+fn test_quit_no_newline() {
+    new_ucmd!()
+        .args(&["q"])
+        .pipe_in("foo")
+        .succeeds()
+        .stdout_is("foo\n");
+}
+
+// P with single line no newline input
+#[test]
+fn test_print_first_line_no_newline() {
+    new_ucmd!()
+        .args(&["-n", "P"])
+        .pipe_in("foo")
+        .succeeds()
+        .stdout_is("foo");
 }
