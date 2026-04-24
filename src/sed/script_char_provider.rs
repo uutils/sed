@@ -34,6 +34,11 @@ impl ScriptCharProvider {
         self.pos = self.pos.saturating_sub(n);
     }
 
+    /// Sets new current position.
+    pub fn set_position(&mut self, pos: usize) {
+        self.pos = pos;
+    }
+
     /// Returns the current character. Panics if out of bounds.
     pub fn current(&self) -> char {
         self.line[self.pos]
