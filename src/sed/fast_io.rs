@@ -949,9 +949,8 @@ fn reliable_copy_file_range(
         } else if ret == 0 {
             // EOF reached
             break;
-        } else {
-            pending -= ret as usize;
         }
+        pending -= ret as usize;
     }
     Ok(len)
 }
