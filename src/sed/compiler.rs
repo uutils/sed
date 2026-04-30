@@ -498,9 +498,8 @@ fn parse_number(
     if num_str.is_empty() {
         if required {
             return compilation_error(lines, line, "number expected");
-        } else {
-            return Ok(None);
         }
+        return Ok(None);
     }
 
     num_str
@@ -680,13 +679,12 @@ pub fn compile_replacement(
                             literal.push('\n');
                             *line = ScriptCharProvider::new(&next_line_string);
                             continue;
-                        } else {
-                            return compilation_error(
-                                lines,
-                                line,
-                                "unterminated substitute replacement (unexpected EOF)",
-                            );
                         }
+                        return compilation_error(
+                            lines,
+                            line,
+                            "unterminated substitute replacement (unexpected EOF)",
+                        );
                     }
 
                     match line.current() {

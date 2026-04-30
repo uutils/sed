@@ -477,10 +477,9 @@ fn process_file(
                         // New command to execute
                         current.clone_from(target);
                         continue;
-                    } else {
-                        // Branch to the end of the script.
-                        break;
                     }
+                    // Branch to the end of the script.
+                    break;
                 }
                 'c' => {
                     // At range end replace pattern space with text and
@@ -504,11 +503,10 @@ fn process_file(
                         s.drain(..=pos);
                         current.clone_from(&commands);
                         continue;
-                    } else {
-                        // Same as d
-                        pattern.clear();
-                        break;
                     }
+                    // Same as d
+                    pattern.clear();
+                    break;
                 }
                 'g' => {
                     // Replace pattern with the contents of the hold space.
@@ -600,10 +598,9 @@ fn process_file(
                         // New command to execute
                         current.clone_from(target);
                         continue;
-                    } else {
-                        // Branch to the end of the script.
-                        break;
                     }
+                    // Branch to the end of the script.
+                    break;
                 }
                 'w' => {
                     // Append the pattern space to the specified file.

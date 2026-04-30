@@ -220,56 +220,53 @@ fn parse_character_class(
             if line.eol() {
                 result.push('[');
                 continue;
-            } else {
-                let marker = line.current();
-                // POSIX character class, collating symbol, or equivalence
-                if marker == ':' || marker == '.' || marker == '=' {
-                    line.advance();
-
-                    result.push('[');
-                    result.push(marker);
-
-                    let mut inner = String::new();
-                    let mut terminated = false;
-
-                    while !line.eol() {
-                        let c = line.current();
-                        if c == marker {
-                            line.advance();
-                            if !line.eol() && line.current() == ']' {
-                                line.advance();
-                                result.push_str(&inner);
-                                result.push(marker);
-                                result.push(']');
-                                terminated = true;
-                                break;
-                            } else {
-                                // False alarm, just part of the inner name
-                                inner.push(marker);
-                            }
-                        } else {
-                            inner.push(c);
-                            line.advance();
-                        }
-                    }
-
-                    if !terminated {
-                        return compilation_error(
-                            lines,
-                            line,
-                            "Unterminated POSIX character class, equivalence or collating symbol",
-                        );
-                    }
-
-                    continue;
-                } else {
-                    // Not a POSIX construct — treat as literal
-                    result.push('[');
-                    result.push(marker);
-                    line.advance();
-                    continue;
-                }
             }
+            let marker = line.current();
+            // POSIX character class, collating symbol, or equivalence
+            if marker == ':' || marker == '.' || marker == '=' {
+                line.advance();
+
+                result.push('[');
+                result.push(marker);
+
+                let mut inner = String::new();
+                let mut terminated = false;
+
+                while !line.eol() {
+                    let c = line.current();
+                    if c == marker {
+                        line.advance();
+                        if !line.eol() && line.current() == ']' {
+                            line.advance();
+                            result.push_str(&inner);
+                            result.push(marker);
+                            result.push(']');
+                            terminated = true;
+                            break;
+                        }
+                        // False alarm, just part of the inner name
+                        inner.push(marker);
+                    } else {
+                        inner.push(c);
+                        line.advance();
+                    }
+                }
+
+                if !terminated {
+                    return compilation_error(
+                        lines,
+                        line,
+                        "Unterminated POSIX character class, equivalence or collating symbol",
+                    );
+                }
+
+                continue;
+            }
+            // Not a POSIX construct — treat as literal
+            result.push('[');
+            result.push(marker);
+            line.advance();
+            continue;
         }
 
         if ch == '\\' {
