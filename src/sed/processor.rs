@@ -444,12 +444,12 @@ fn process_file(
             };
 
         // Loop over script commands.
-        while let Some(command_rc) = current {
+        while let Some(command_rc) = current.take() {
             let mut command = command_rc.borrow_mut();
 
             if !applies(&mut command, reader, &mut pattern, context)? {
                 // Advance to next command
-                current = command.next.clone();
+                current.clone_from(&command.next);
                 continue;
             }
 
@@ -457,7 +457,7 @@ fn process_file(
                 '{' => {
                     // Block begin; start processing the enclosed ones.
                     let body = extract_variant!(command, BranchTarget);
-                    current = body.clone();
+                    current.clone_from(body);
                     continue;
                 }
                 '}' => {
@@ -475,7 +475,7 @@ fn process_file(
                     let target = extract_variant!(command, BranchTarget);
                     if target.is_some() {
                         // New command to execute
-                        current = target.clone();
+                        current.clone_from(target);
                         continue;
                     } else {
                         // Branch to the end of the script.
@@ -502,7 +502,7 @@ fn process_file(
                     if let Some(pos) = pattern.as_str()?.find('\n') {
                         let (s, _) = pattern.fields_mut()?;
                         s.drain(..=pos);
-                        current = commands.clone();
+                        current.clone_from(&commands);
                         continue;
                     } else {
                         // Same as d
@@ -598,7 +598,7 @@ fn process_file(
                     context.substitution_made = false;
                     if target.is_some() {
                         // New command to execute
-                        current = target.clone();
+                        current.clone_from(target);
                         continue;
                     } else {
                         // Branch to the end of the script.
@@ -635,7 +635,7 @@ fn process_file(
                 _ => panic!("invalid command code"),
             } // match
             // Advance to next command.
-            current = command.next.clone();
+            current.clone_from(&command.next);
         }
 
         if !context.quiet {
