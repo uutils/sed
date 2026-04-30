@@ -120,7 +120,7 @@ fn patch_block_endings(head: Option<Rc<RefCell<Command>>>) {
                 }
 
                 // 3) splice the tail’s `.next` to splice_target
-                tail.borrow_mut().next = splice_target.clone();
+                tail.borrow_mut().next.clone_from(&splice_target);
             }
 
             // drop the borrow before moving on
@@ -140,7 +140,7 @@ fn populate_label_map(
     mut cur: Option<Rc<RefCell<Command>>>,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
-    while let Some(rc_cmd) = cur {
+    while let Some(rc_cmd) = cur.take() {
         // Borrow mutably just long enough to inspect/rewire this node
         let cmd = rc_cmd.borrow_mut();
 
@@ -163,14 +163,14 @@ fn populate_label_map(
             context.label_to_command_map.insert(label, rc_cmd.clone());
         }
 
-        cur = cmd.next.clone();
+        cur.clone_from(&cmd.next);
     }
     Ok(())
 }
 
 /// Populate the context's address range command list with references to associated commands.
 fn populate_range_commands(mut cur: Option<Rc<RefCell<Command>>>, context: &mut ProcessingContext) {
-    while let Some(rc_cmd) = cur {
+    while let Some(rc_cmd) = cur.take() {
         // Borrow mutably just long enough to inspect/rewire this node
         let cmd = rc_cmd.borrow_mut();
 
@@ -184,7 +184,7 @@ fn populate_range_commands(mut cur: Option<Rc<RefCell<Command>>>, context: &mut 
             context.range_commands.push(Rc::clone(&rc_cmd));
         }
 
-        cur = cmd.next.clone();
+        cur.clone_from(&cmd.next);
     }
 }
 
@@ -194,7 +194,7 @@ fn resolve_branch_targets(
     mut cur: Option<Rc<RefCell<Command>>>,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
-    while let Some(rc_cmd) = cur {
+    while let Some(rc_cmd) = cur.take() {
         // Borrow mutably just long enough to inspect/rewire this node
         let mut cmd = rc_cmd.borrow_mut();
 
@@ -233,7 +233,7 @@ fn resolve_branch_targets(
         }
 
         // Advance to the next sibling
-        cur = cmd.next.clone();
+        cur.clone_from(&cmd.next);
     }
     Ok(())
 }
