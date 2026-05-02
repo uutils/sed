@@ -698,9 +698,13 @@ pub fn process_all_files(
             .map_err_context(|| format!("error opening input file {}", path.quote()))?;
         let output = in_place.begin(path)?;
 
-        if index == 0 || context.separate {
+        if context.separate || index == 0 {
             context.line_number = 0;
             reset_latched_address_ranges(&mut context.range_commands);
+
+            // Reset hold space for separate file processing
+            context.hold.content.clear();
+            context.hold.has_newline = true;
         }
 
         context.input_name = path.quote().to_string();

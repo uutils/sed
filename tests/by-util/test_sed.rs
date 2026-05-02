@@ -380,6 +380,10 @@ check_output!(
     pattern_hold_append_swap,
     ["-e", r"2h;3H;4g;5G;6x;6p;6x;6p", LINES1]
 );
+check_output!(
+    pattern_swap_separate,
+    ["--separate", r"4x;6x", LINES1, LINES2]
+);
 check_output!(pattern_next_output, ["-e", r"4n", LINES1]);
 check_output!(pattern_next_no_output, ["-n", "-e", r"4n", LINES1]);
 check_output!(pattern_next_print_output, ["-e", r"4n;p", LINES1]);
