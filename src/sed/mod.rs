@@ -44,7 +44,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         let _ = uu_app().print_help();
         std::process::exit(1);
     }
-    
+
     let (scripts, files) = get_scripts_files(&matches)?;
     let mut context = build_context(&matches);
 
