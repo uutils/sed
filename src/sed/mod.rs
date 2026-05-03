@@ -36,6 +36,15 @@ const USAGE: &str = "sed [OPTION]... [script] [file]...";
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
+
+    // Don't use arg_required_else_help when declaring command
+    // as it exits with code 2 and we use it to check
+    // default matches in tests.
+    if !matches.args_present() {
+        let _ = uu_app().print_help();
+        std::process::exit(1);
+    }
+    
     let (scripts, files) = get_scripts_files(&matches)?;
     let mut context = build_context(&matches);
 
