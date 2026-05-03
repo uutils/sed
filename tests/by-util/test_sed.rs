@@ -69,6 +69,11 @@ fn test_no_arguments() {
 }
 
 #[test]
+fn test_positional_script_ok() {
+    new_ucmd!().arg("l").succeeds().code_is(0);
+}
+
+#[test]
 fn test_empty_positional_script_ok() {
     new_ucmd!().arg("").succeeds().code_is(0);
 }
