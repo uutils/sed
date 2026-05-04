@@ -75,7 +75,7 @@ uucore = { workspace = true }
 [dev-dependencies]
 assert_fs = { workspace = true }
 chrono = { workspace = true }
-ctor = "0.13.0"
+ctor = "1.0.0"
 divan = { workspace = true }
 hex = { workspace = true }
 libc = { workspace = true }

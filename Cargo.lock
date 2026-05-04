@@ -392,9 +392,9 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.13.1"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3429e8f8e3ce0ffe475c411850f70468c70d7a87d2ac3d15dd44703fb885aede"
+checksum = "2d9055288750fb7dd379447bc8b5ebbc89e6a70c233258f5ec6e8ade1c4b413b"
 dependencies = [
  "link-section",
  "linktime-proc-macro",
@@ -1240,7 +1240,7 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "codspeed-divan-compat",
- "ctor 0.13.1",
+ "ctor 1.0.0",
  "fancy-regex",
  "hex",
  "libc",
