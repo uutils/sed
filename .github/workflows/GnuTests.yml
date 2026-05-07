@@ -261,7 +261,7 @@ jobs:
           echo "ONLY_INTERMITTENT=true" >> $GITHUB_ENV
           echo "::notice ::No new test failures detected"
         fi
-    
+
     - name: Upload comparison log (for GnuComment workflow)
       if: success() || failure()
       uses: actions/upload-artifact@v7
