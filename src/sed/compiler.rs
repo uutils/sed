@@ -906,6 +906,7 @@ pub fn compile_subst_flags(
                 subst.ignore_case = true;
                 line.advance();
             }
+
             'm' | 'M' | 'e' => {
                 if context.posix {
                     return compilation_error(lines, line, "unknown option to 's'");
