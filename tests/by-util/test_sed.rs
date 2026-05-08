@@ -1303,3 +1303,13 @@ fn test_print_first_line_no_newline() {
         .succeeds()
         .stdout_is("foo");
 }
+
+//--posix should reject GNU substitute flags i/I https://github.com/uutils/sed/issues/401
+#[test]
+fn test_posix_reject_flags() {
+    new_ucmd!()
+        .args(&["--posix", "s/a/b/i"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
+}
