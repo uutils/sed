@@ -1254,6 +1254,63 @@ fn compile_text_command_posix(
     Ok(CommandHandling::Continue)
 }
 
+// Handle v
+fn compile_version_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    _cmd: &mut Command,
+    _context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    // GNU sed 4.9
+    const GNU_MAJOR: u8 = 4;
+    const GNU_MINOR: u8 = 9;
+    const GNU_PATCH: u8 = 0;
+
+    line.advance();
+    line.eat_spaces(); // Skip any leading whitespace.
+
+    let mut major = String::new();
+    let mut minor = String::new();
+    let mut patch = String::new();
+
+    let mut ver_semantic = 0;
+
+    while !line.eol() {
+        if line.current() == '.' {
+            ver_semantic += 1;
+            line.advance();
+        } else {
+            match ver_semantic {
+                0 => major.push(line.current()),
+                1 => minor.push(line.current()),
+                2 => patch.push(line.current()),
+                _ => return compilation_error(lines, line, "invalid version of sed"),
+            }
+            line.advance();
+        }
+    }
+
+    if patch.is_empty() {
+        patch = "0".to_string();
+    }
+
+    match major.parse::<u8>() {
+        Ok(major_int) => match minor.parse::<u8>() {
+            Ok(minor_int) => match patch.parse::<u8>() {
+                Ok(patch_int) => {
+                    if minor_int <= GNU_MINOR && major_int <= GNU_MAJOR && patch_int == GNU_PATCH {
+                        return Ok(CommandHandling::Continue);
+                    }
+                    compilation_error(lines, line, "expected newer version of sed")
+                }
+                Err(_) => compilation_error(lines, line, "invalid version of sed"),
+            },
+            Err(_) => compilation_error(lines, line, "invalid version of sed"),
+        },
+        Err(_) => compilation_error(lines, line, "invalid version of sed"),
+    }
+}
+
 // Return the specification for the command letter at the current line position
 // checking for diverse errors.
 fn get_verified_cmd_spec(
@@ -1355,6 +1412,10 @@ fn get_cmd_spec(
         'y' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_trans_command,
+        }),
+        'v' => Ok(CommandSpec {
+            n_addr: 0,
+            handler: compile_version_command,
         }),
         _ => compilation_error(lines, line, format!("invalid command code `{cmd_code}'")),
     }
