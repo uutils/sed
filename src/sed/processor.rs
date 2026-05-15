@@ -508,6 +508,10 @@ fn process_file(
                     pattern.clear();
                     break;
                 }
+                'F' => {
+                    let separator = if context.null_data { '\0' } else { '\n' };
+                    output.write_str(format!("{}{}", context.raw_input_name, separator))?;
+                }
                 'g' => {
                     // Replace pattern with the contents of the hold space.
                     pattern.set_to_string(context.hold.content.clone(), context.hold.has_newline);
@@ -705,6 +709,7 @@ pub fn process_all_files(
         }
 
         context.input_name = path.quote().to_string();
+        context.raw_input_name = path.to_string_lossy().to_string();
         process_file(commands.clone(), &mut reader, output, context)?;
 
         // Handle any N command remains.
