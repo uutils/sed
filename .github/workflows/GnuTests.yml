@@ -56,7 +56,7 @@ jobs:
         ## Build Rust sed binary
         cd 'sed'
         cargo build --config=profile.release.strip=true --profile=release #-fast
-        zstd -19 target/release/sed -o ../sed-x86_64-unknown-linux-gnu.zst
+        tar -C target/release -cf - sed | zstd -19 -o ../sed-x86_64-unknown-linux-gnu.tar.zst
     - name: Publish latest commit
       uses: softprops/action-gh-release@v3
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -67,7 +67,7 @@ jobs:
         draft: false
         prerelease: true
         files: |
-          sed-x86_64-unknown-linux-gnu.zst
+          sed-x86_64-unknown-linux-gnu.tar.zst
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

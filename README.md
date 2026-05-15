@@ -28,7 +28,8 @@ Further work aims to:
 
 ## Installation
 
-We provide binary for Linux x86_64 from main branch at https://github.com/uutils/sed/releases/tag/latest-commit .
+We provide a Linux x86_64 binary archive from the main branch at
+https://github.com/uutils/sed/releases/tag/latest-commit .
 
 For other platforms, ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).
 
