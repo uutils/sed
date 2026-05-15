@@ -19,7 +19,8 @@ use crate::sed::named_writer;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::io::{self, IsTerminal};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, IsTerminal};
 use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::display::Quotable;
@@ -584,6 +585,33 @@ fn process_file(
                     context
                         .append_elements
                         .push(AppendElement::Path(path.clone()));
+                }
+                'R' => {
+                    // Copy one line from the file to standard output later.
+                    match &command.data {
+                        CommandData::ReadLineFile(file_state) => {
+                            let mut file_state = file_state.borrow_mut();
+                            if !file_state.done {
+                                if file_state.reader.is_none() {
+                                    match File::open(&file_state.path) {
+                                        Ok(file) => file_state.reader = Some(BufReader::new(file)),
+                                        Err(_) => file_state.done = true,
+                                    }
+                                }
+
+                                if let Some(reader) = &mut file_state.reader {
+                                    let mut line = String::new();
+                                    match reader.read_line(&mut line) {
+                                        Ok(0) | Err(_) => file_state.done = true,
+                                        Ok(_) => context
+                                            .append_elements
+                                            .push(AppendElement::Text(Rc::from(line))),
+                                    }
+                                }
+                            }
+                        }
+                        _ => panic!("Expected ReadLineFile command data"),
+                    }
                 }
                 's' => {
                     substitute(&mut pattern, &command, context, output)?;

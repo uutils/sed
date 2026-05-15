@@ -776,6 +776,53 @@ check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
 check_output!(read_empty, ["6r input/empty", LINES1]);
 
 #[test]
+fn read_one_line_with_r_command() -> std::io::Result<()> {
+    let mut source = NamedTempFile::new()?;
+    source.write_all(b"1\n2\n")?;
+    let cmd = format!(
+        "1R{}\n2R{}",
+        source.path().display(),
+        source.path().display()
+    );
+
+    new_ucmd!()
+        .args(&["-e", &cmd])
+        .pipe_in("x\ny\n")
+        .succeeds()
+        .stdout_is("x\n1\ny\n2\n");
+
+    Ok(())
+}
+
+#[test]
+fn read_one_line_missing_and_eof_are_ignored() -> std::io::Result<()> {
+    let mut source = NamedTempFile::new()?;
+    source.write_all(b"1\n")?;
+    let cmd = format!(
+        "1R{}\n2R{}\n3R/xyzzyxyzy42",
+        source.path().display(),
+        source.path().display()
+    );
+
+    new_ucmd!()
+        .args(&["-e", &cmd])
+        .pipe_in("x\ny\nz\n")
+        .succeeds()
+        .stdout_is("x\n1\ny\nz\n");
+
+    Ok(())
+}
+
+#[test]
+fn read_one_line_rejected_in_posix_mode() {
+    new_ucmd!()
+        .args(&["--posix", "R /tmp/read-one-line"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `R'\n");
+}
+
+#[test]
 fn write_single_file() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
     let cmd = format!("3,12w {}", temp.path().display());

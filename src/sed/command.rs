@@ -16,6 +16,8 @@ use crate::sed::script_line_provider::ScriptLineProvider;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::PathBuf; // For file descriptors and equivalent
 use std::rc::Rc;
 use uucore::error::UResult;
@@ -66,6 +68,8 @@ pub struct ProcessingContext {
     pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
     /// Commands with a (latchable and resetable) address range
     pub range_commands: Vec<Rc<RefCell<Command>>>,
+    /// Files read line-by-line by the GNU R command
+    pub read_line_files: HashMap<PathBuf, Rc<RefCell<ReadLineFile>>>,
     /// True if a substitution was made as specified in the t command
     pub substitution_made: bool,
     /// Elements to append at the end of each command processing cycle
@@ -308,11 +312,20 @@ pub enum CommandData {
     BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't', '{'
     Label(Option<String>),                      // Label name for 'b', 't', ':'
     Path(PathBuf),                              // File path for 'r'
+    ReadLineFile(Rc<RefCell<ReadLineFile>>),    // File state for 'R'
     NamedWriter(Rc<RefCell<NamedWriter>>),      // File output for 'w'
     Number(usize),                              // Number for 'l', 'q', 'Q' (GNU)
     Substitution(Box<Substitution>),            // Substitute command 's'
     Text(Rc<str>),                              // Text for 'a', 'c', 'i'
     Transliteration(Box<Transliteration>),      // Transliteration command 'y'
+}
+
+#[derive(Debug)]
+/// Shared state for files read one line at a time by GNU sed's R command.
+pub struct ReadLineFile {
+    pub path: PathBuf,
+    pub reader: Option<BufReader<File>>,
+    pub done: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

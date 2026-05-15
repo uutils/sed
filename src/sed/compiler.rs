@@ -9,8 +9,8 @@
 // file that was distributed with this source code.
 
 use crate::sed::command::{
-    Address, Command, CommandData, ProcessingContext, ReplacementPart, ReplacementTemplate,
-    Substitution, Transliteration,
+    Address, Command, CommandData, ProcessingContext, ReadLineFile, ReplacementPart,
+    ReplacementTemplate, Substitution, Transliteration,
 };
 use crate::sed::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
@@ -1002,15 +1002,30 @@ fn compile_empty_command(
     Ok(CommandHandling::Continue)
 }
 
-// Handles r
+// Handles r, R
 fn compile_read_file_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    _context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     let path = read_file_path(lines, line)?;
-    cmd.data = CommandData::Path(path);
+    cmd.data = if cmd.code == 'R' {
+        let file_state = context
+            .read_line_files
+            .entry(path.clone())
+            .or_insert_with(|| {
+                Rc::new(RefCell::new(ReadLineFile {
+                    path,
+                    reader: None,
+                    done: false,
+                }))
+            })
+            .clone();
+        CommandData::ReadLineFile(file_state)
+    } else {
+        CommandData::Path(path)
+    };
     Ok(CommandHandling::Continue)
 }
 
@@ -1339,6 +1354,11 @@ fn get_cmd_spec(
         'Q' => Ok(CommandSpec {
             n_addr: 1,
             handler: compile_number_command,
+        }),
+        // R is a GNU extension
+        'R' if !posix => Ok(CommandSpec {
+            n_addr: 2,
+            handler: compile_read_file_command,
         }),
         'r' => Ok(CommandSpec {
             n_addr: if posix { 1 } else { 2 },
