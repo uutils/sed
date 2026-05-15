@@ -390,7 +390,6 @@ fn pattern_clear_with_z_preserves_substitution_flag() {
 fn pattern_clear_with_z_is_non_posix() {
     new_ucmd!()
         .args(&["--posix", "z"])
-        .pipe_in("a\n")
         .fails()
         .code_is(1)
         .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `z'\n");
