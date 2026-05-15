@@ -1115,6 +1115,17 @@ fn test_incomplete_test_command_posix() {
 }
 
 #[test]
+fn test_empty_text_commands_fail() {
+    for command in ["a", "c", "i"] {
+        new_ucmd!()
+            .args(&["-e", command])
+            .fails()
+            .code_is(1)
+            .stderr_contains(format!("command `{command}' expects \\ followed by text"));
+    }
+}
+
+#[test]
 fn test_addr0_non_posix() {
     new_ucmd!()
         .args(&["--posix", "0,/foo/p"])
