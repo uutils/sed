@@ -863,15 +863,9 @@ fn in_place_edit_backup() -> std::io::Result<()> {
     let path = temp.path().to_path_buf();
     let temp_path = temp.into_temp_path();
 
-    // Run the sed-like command with -i (in-place edit)
+    // Run the sed-like command with a backup suffix attached to -i.
     new_ucmd!()
-        .args(&[
-            "-i",
-            ".bak",
-            "-e",
-            "s/world/universe/",
-            path.to_str().unwrap(),
-        ])
+        .args(&["-i.bak", "-e", "s/world/universe/", path.to_str().unwrap()])
         .succeeds();
 
     // Read edited file
@@ -889,6 +883,31 @@ fn in_place_edit_backup() -> std::io::Result<()> {
     temp_path.close()?; // Cleanup
     std::fs::remove_file(backup_path)?; // Cleanup backup
 
+    Ok(())
+}
+
+#[test]
+fn in_place_separate_suffix_arg_is_script() -> std::io::Result<()> {
+    let mut temp = NamedTempFile::new()?;
+    writeln!(temp.as_file_mut(), "quick brown fox")?;
+
+    let path = temp.path().to_path_buf();
+    let temp_path = temp.into_temp_path();
+
+    new_ucmd!()
+        .args(&["-i", "s/fox/vox/", path.to_str().unwrap()])
+        .succeeds();
+
+    let actual = std::fs::read_to_string(&path)?;
+    assert_eq!(actual, "quick brown vox\n");
+
+    let backup_path = path.with_file_name(format!(
+        "{}s/fox/vox/",
+        path.file_name().unwrap().to_string_lossy()
+    ));
+    assert!(!backup_path.exists());
+
+    temp_path.close()?;
     Ok(())
 }
 
@@ -965,8 +984,7 @@ fn in_place_edit_follow_symlink_with_backup() -> Result<(), Box<dyn std::error::
     new_ucmd!()
         .args(&[
             "--follow-symlinks",
-            "-i",
-            ".bak",
+            "-i.bak",
             "-e",
             "s/world/universe/",
             link.path().to_str().unwrap(),
@@ -1001,8 +1019,7 @@ fn in_place_edit_symlink_replaced_with_backup() -> Result<(), Box<dyn std::error
 
     new_ucmd!()
         .args(&[
-            "-i",
-            ".bak",
+            "-i.bak",
             "-e",
             "s/world/universe/",
             link.path().to_str().unwrap(),

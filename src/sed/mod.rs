@@ -26,6 +26,7 @@ use crate::sed::processor::process_all_files;
 use crate::sed::script_line_provider::ScriptValue;
 use clap::{Arg, ArgMatches, Command, arg, crate_version};
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
 use uucore::format_usage;
@@ -35,13 +36,28 @@ const USAGE: &str = "sed [OPTION]... [script] [file]...";
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let matches = uu_app().try_get_matches_from(args)?;
+    let matches = uu_app().try_get_matches_from(normalize_in_place_args(args))?;
     let (scripts, files) = get_scripts_files(&matches)?;
     let mut context = build_context(&matches);
 
     let executable = compile(scripts, &mut context)?;
     process_all_files(executable, files, &mut context)?;
     Ok(())
+}
+
+/// Convert GNU-style attached `-iSUFFIX` to clap's long `--in-place=SUFFIX`.
+fn normalize_in_place_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
+    args.into_iter()
+        .map(|arg| {
+            if let Some(arg_str) = arg.to_str()
+                && let Some(suffix) = arg_str.strip_prefix("-i")
+                && !suffix.is_empty()
+            {
+                return OsString::from(format!("--in-place={suffix}"));
+            }
+            arg
+        })
+        .collect()
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -93,7 +109,9 @@ pub fn uu_app() -> Command {
                 .short('i')
                 .long("in-place")
                 .help("Edit files in place, making a backup if SUFFIX is supplied.")
+                .value_name("SUFFIX")
                 .num_args(0..=1)
+                .require_equals(true)
                 .default_missing_value(""),
             // Access with .get_one::<u32>("line-length")
             arg!(-l --length <NUM> "Specify the 'l' command line-wrap length.")
@@ -231,7 +249,11 @@ mod tests {
 
     // Helper function for supplying arguments
     fn get_test_matches(args: &[&str]) -> ArgMatches {
-        uu_app().get_matches_from(["myapp"].iter().chain(args.iter()))
+        let args = ["myapp"]
+            .into_iter()
+            .chain(args.iter().copied())
+            .map(OsString::from);
+        uu_app().get_matches_from(normalize_in_place_args(args))
     }
 
     #[test]
@@ -323,7 +345,11 @@ mod tests {
 
     // build_context
     fn test_matches(args: &[&str]) -> ArgMatches {
-        uu_app().get_matches_from(["sed"].into_iter().chain(args.iter().copied()))
+        let args = ["sed"]
+            .into_iter()
+            .chain(args.iter().copied())
+            .map(OsString::from);
+        uu_app().get_matches_from(normalize_in_place_args(args))
     }
 
     #[test]
@@ -391,11 +417,26 @@ mod tests {
 
     #[test]
     fn test_in_place_with_suffix() {
-        let matches = test_matches(&["-i", ".bak"]);
+        let matches = test_matches(&["-i.bak"]);
         let ctx = build_context(&matches);
 
         assert!(ctx.in_place);
         assert_eq!(ctx.in_place_suffix, Some(".bak".to_string()));
+    }
+
+    #[test]
+    fn test_in_place_with_separate_suffix_arg_leaves_suffix_as_script() {
+        let matches = test_matches(&["-i", "s/foo/bar/", "file"]);
+        let ctx = build_context(&matches);
+        let (scripts, files) = get_scripts_files(&matches).unwrap();
+
+        assert!(ctx.in_place);
+        assert!(ctx.in_place_suffix.is_none());
+        assert_eq!(
+            scripts,
+            vec![ScriptValue::StringVal("s/foo/bar/".to_string())]
+        );
+        assert_eq!(files, vec![PathBuf::from("file")]);
     }
 
     #[test]
