@@ -423,6 +423,26 @@ fn process_file(
     output: &mut OutputBuffer,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
+    // Prescan for zero-address which must produce output
+    // before any input line is read.
+    {
+        let mut current = commands.clone();
+        while let Some(cmd_rc) = current {
+            let cmd = cmd_rc.borrow();
+            if matches!(cmd.code, 'r')
+                && matches!(&cmd.addr1, Some(Address::Line(0)))
+                && cmd.addr2.is_none()
+            {
+                let path = extract_variant!(cmd, Path);
+                output.copy_file(path)?;
+            }
+            let next = cmd.next.clone();
+            // Release RefCell borrow before reassigning to 'current'
+            drop(cmd);
+            current = next;
+        }
+    }
+
     // Loop over the input lines as pattern space.
     'lines: while let Some(mut pattern) = reader.get_line()? {
         context.line_number += 1;
