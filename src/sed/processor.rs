@@ -392,8 +392,13 @@ fn list(output: &mut OutputBuffer, line: &IOChunk, max_width: usize) -> UResult<
             '\t' => Cow::Borrowed(r"\t"),
             c if c.is_ascii_control() => Cow::Owned(format!("\\{:03o}", ch as u8)),
             c if c == ' ' || c.is_ascii_graphic() => Cow::Borrowed(ch.encode_utf8(&mut char_buff)),
-            c if (c as u32) <= 0xFFFF => Cow::Owned(format!("\\u{:04X}", c as u32)),
-            _ => Cow::Owned(format!("\\U{:08X}", ch as u32)),
+            _ => Cow::Owned(
+                ch.to_string()
+                    .as_bytes()
+                    .iter()
+                    .map(|b| format!("\\{b:03o}"))
+                    .collect(),
+            ),
         };
 
         // See if folding is required before adding out_str and terminator.
