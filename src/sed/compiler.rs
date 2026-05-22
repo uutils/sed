@@ -655,6 +655,74 @@ fn bre_to_ere(pattern: &[u8]) -> Vec<u8> {
     result
 }
 
+fn escape_literal_open_brackets_in_classes(pattern: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(pattern.len());
+    let mut bytes = pattern.iter().copied().peekable();
+
+    while let Some(c) = bytes.next() {
+        match c {
+            b'\\' => {
+                result.push(b'\\');
+                if let Some(escaped) = bytes.next() {
+                    result.push(escaped);
+                }
+                continue;
+            }
+            b'[' => result.push(b'['),
+            _ => {
+                result.push(c);
+                continue;
+            }
+        }
+
+        if bytes.peek() == Some(&b'^') {
+            result.push(b'^');
+            bytes.next();
+        }
+
+        if bytes.peek() == Some(&b']') {
+            result.push(b']');
+            bytes.next();
+        }
+
+        while let Some(class_byte) = bytes.next() {
+            match class_byte {
+                b']' => {
+                    result.push(b']');
+                    break;
+                }
+                b'\\' => {
+                    result.push(b'\\');
+                    if let Some(escaped) = bytes.next() {
+                        result.push(escaped);
+                    }
+                }
+                b'[' => {
+                    if let Some(&marker @ (b':' | b'.' | b'=')) = bytes.peek() {
+                        bytes.next();
+                        result.push(b'[');
+                        result.push(marker);
+
+                        while let Some(posix_byte) = bytes.next() {
+                            result.push(posix_byte);
+                            if posix_byte == marker && bytes.peek() == Some(&b']') {
+                                result.push(b']');
+                                bytes.next();
+                                break;
+                            }
+                        }
+                    } else {
+                        result.extend_from_slice(br"\[");
+                    }
+                }
+                _ => result.push(class_byte),
+            }
+        }
+    }
+
+    result
+}
+
 /// Compile the provided regular expression string into a corresponding engine.
 /// An empty pattern results in None, which means that the last RE employed
 /// at runtime will be used.
@@ -677,6 +745,7 @@ fn compile_regex(
     } else {
         bre_to_ere(pattern)
     };
+    let pattern = escape_literal_open_brackets_in_classes(&pattern);
 
     // Add any required modifiers.
     let mut modifiers = Vec::new();
@@ -1950,6 +2019,65 @@ mod tests {
                 .is_match(&mut IOChunk::new_from_str("foo\nbar"))
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn test_compile_re_literal_open_bracket_in_classes() {
+        let (lines, chars) = dummy_providers();
+        let mut context = ctx();
+        context.regex_extended = true;
+
+        for (pattern, matching, non_matching) in [
+            ("[[]", "[", "x"),
+            ("[^[]", "x", "["),
+            ("[a[b]", "[", "x"),
+            ("[^a[b]", "x", "["),
+        ] {
+            let regex = compile_regex(&lines, &chars, pattern, &context, false, false)
+                .unwrap()
+                .expect("regex should be present");
+            assert!(
+                regex
+                    .is_match(&mut IOChunk::new_from_str(matching))
+                    .unwrap(),
+                "{pattern:?} should match {matching:?}"
+            );
+            assert!(
+                !regex
+                    .is_match(&mut IOChunk::new_from_str(non_matching))
+                    .unwrap(),
+                "{pattern:?} should not match {non_matching:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_compile_re_escaped_open_bracket_before_class() {
+        let (lines, chars) = dummy_providers();
+        let mut context = ctx();
+        context.regex_extended = true;
+
+        let regex = compile_regex(&lines, &chars, r"\[[a]", &context, false, false)
+            .unwrap()
+            .expect("regex should be present");
+        assert!(regex.is_match(&mut IOChunk::new_from_str("[a")).unwrap());
+        assert!(!regex.is_match(&mut IOChunk::new_from_str("[b")).unwrap());
+    }
+
+    #[test]
+    fn test_escape_literal_open_brackets_preserves_class_syntax() {
+        for (pattern, expected) in [
+            (r"[a\]b]", r"[a\]b]"),
+            (r"[[:alpha:][x]", r"[[:alpha:]\[x]"),
+            (r"[[=a=][x]", r"[[=a=]\[x]"),
+            (r"[[.ch.][x]", r"[[.ch.]\[x]"),
+        ] {
+            assert_eq!(
+                escape_literal_open_brackets_in_classes(pattern.as_bytes()),
+                expected.as_bytes(),
+                "{pattern:?}"
+            );
+        }
     }
 
     // compile_address
