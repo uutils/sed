@@ -628,6 +628,73 @@ fn bre_to_ere(pattern: &str) -> String {
     result
 }
 
+fn escape_literal_open_brackets_in_classes(pattern: &str) -> String {
+    let mut result = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                result.push('\\');
+                if let Some(escaped) = chars.next() {
+                    result.push(escaped);
+                }
+                continue;
+            }
+            '[' => result.push('['),
+            _ => {
+                result.push(c);
+                continue;
+            }
+        }
+
+        if chars.peek() == Some(&'^') {
+            result.push('^');
+            chars.next();
+        }
+
+        if chars.peek() == Some(&']') {
+            result.push(']');
+            chars.next();
+        }
+
+        while let Some(class_char) = chars.next() {
+            match class_char {
+                ']' => {
+                    result.push(']');
+                    break;
+                }
+                '\\' => {
+                    result.push('\\');
+                    if let Some(escaped) = chars.next() {
+                        result.push(escaped);
+                    }
+                }
+                '[' => match chars.peek() {
+                    Some(':') | Some('.') | Some('=') => {
+                        result.push('[');
+                        let marker = chars.next().unwrap();
+                        result.push(marker);
+
+                        while let Some(posix_char) = chars.next() {
+                            result.push(posix_char);
+                            if posix_char == marker && chars.peek() == Some(&']') {
+                                result.push(']');
+                                chars.next();
+                                break;
+                            }
+                        }
+                    }
+                    _ => result.push_str(r"\["),
+                },
+                _ => result.push(class_char),
+            }
+        }
+    }
+
+    result
+}
+
 /// Compile the provided regular expression string into a corresponding engine.
 /// An empty pattern results in None, which means that the last RE employed
 /// at runtime will be used.
@@ -644,15 +711,17 @@ fn compile_regex(
 
     // Convert basic to extended regular expression if needed.
     let pattern = if context.regex_extended {
-        pattern
+        pattern.to_string()
     } else {
-        &bre_to_ere(pattern)
+        bre_to_ere(pattern)
     };
+    let pattern = escape_literal_open_brackets_in_classes(&pattern);
+
     // Add case-insensitive modifier if needed.
     let pattern = if icase {
         format!("(?i){pattern}")
     } else {
-        pattern.to_string()
+        pattern
     };
 
     // Compile into engine.
@@ -1619,6 +1688,65 @@ mod tests {
         let (lines, chars) = dummy_providers();
         let result = compile_regex(&lines, &chars, "a[d", &ctx(), false);
         assert!(result.is_err()); // Should fail due to open bracketed expression
+    }
+
+    #[test]
+    fn test_compile_re_literal_open_bracket_in_classes() {
+        let (lines, chars) = dummy_providers();
+        let mut context = ctx();
+        context.regex_extended = true;
+
+        for (pattern, matching, non_matching) in [
+            ("[[]", "[", "x"),
+            ("[^[]", "x", "["),
+            ("[a[b]", "[", "x"),
+            ("[^a[b]", "x", "["),
+        ] {
+            let regex = compile_regex(&lines, &chars, pattern, &context, false)
+                .unwrap()
+                .expect("regex should be present");
+            assert!(
+                regex
+                    .is_match(&mut IOChunk::new_from_str(matching))
+                    .unwrap(),
+                "{pattern:?} should match {matching:?}"
+            );
+            assert!(
+                !regex
+                    .is_match(&mut IOChunk::new_from_str(non_matching))
+                    .unwrap(),
+                "{pattern:?} should not match {non_matching:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_compile_re_escaped_open_bracket_before_class() {
+        let (lines, chars) = dummy_providers();
+        let mut context = ctx();
+        context.regex_extended = true;
+
+        let regex = compile_regex(&lines, &chars, r"\[[a]", &context, false)
+            .unwrap()
+            .expect("regex should be present");
+        assert!(regex.is_match(&mut IOChunk::new_from_str("[a")).unwrap());
+        assert!(!regex.is_match(&mut IOChunk::new_from_str("[b")).unwrap());
+    }
+
+    #[test]
+    fn test_escape_literal_open_brackets_preserves_class_syntax() {
+        for (pattern, expected) in [
+            (r"[a\]b]", r"[a\]b]"),
+            (r"[[:alpha:][x]", r"[[:alpha:]\[x]"),
+            (r"[[=a=][x]", r"[[=a=]\[x]"),
+            (r"[[.ch.][x]", r"[[.ch.]\[x]"),
+        ] {
+            assert_eq!(
+                escape_literal_open_brackets_in_classes(pattern),
+                expected,
+                "{pattern:?}"
+            );
+        }
     }
 
     // compile_address
