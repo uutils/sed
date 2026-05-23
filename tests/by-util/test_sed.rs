@@ -54,9 +54,18 @@ fn test_silent_alias() {
 #[test]
 fn test_missing_script_argument() {
     new_ucmd!()
+        .args(&["-i", "file.txt"])
         .fails()
         .code_is(1)
         .stderr_contains("missing script");
+}
+
+#[test]
+fn test_no_arguments() {
+    new_ucmd!()
+        .fails()
+        .code_is(1)
+        .stdout_contains("Stream editor for filtering and transforming text");
 }
 
 #[test]
