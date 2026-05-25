@@ -774,6 +774,14 @@ check_output!(
 check_output!(read_ok, [format!("4r {LINES2}"), LINES1.to_string()]);
 check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
 check_output!(read_empty, ["6r input/empty", LINES1]);
+check_output!(
+    cmd_read_zero_addr,
+    [format!("0r {LINES2}"), LINES1.to_string()]
+);
+check_output!(
+    cmd_read_one_addr,
+    [format!("1r {LINES2}"), LINES1.to_string()]
+);
 
 #[test]
 fn write_single_file() -> std::io::Result<()> {

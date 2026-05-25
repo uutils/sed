@@ -403,8 +403,15 @@ fn compile_address_range(
         }
     }
 
+    // zero-address r command check
     if is_line0 && n_addr == 1 {
-        return compilation_error(lines, line, "address 0 requires a second address");
+        // after retrieval of first address, subsequent spaces
+        // are consumed unconditionally. By now, the position
+        // must be in non-whitespace character or eol.
+        let next_cmd = if line.eol() { '\0' } else { line.current() };
+        if !matches!(next_cmd, 'r') {
+            return compilation_error(lines, line, "address 0 requires a second address");
+        }
     }
 
     Ok(n_addr)
@@ -1802,6 +1809,51 @@ mod tests {
     // compile_sequence
     fn empty_line() -> ScriptCharProvider {
         ScriptCharProvider::new("")
+    }
+
+    #[test]
+    fn test_zero_addr_r_accepted() {
+        for input in ["0r", "0  r"] {
+            let (lines, mut chars) = make_providers(input);
+            let mut cmd = Rc::new(RefCell::new(Command::default()));
+            let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
+
+            assert_eq!(n_addr, 1);
+            assert!(matches!(cmd.borrow().addr1, Some(Address::Line(0))));
+            assert_eq!(chars.current(), 'r');
+        }
+    }
+
+    // Zero-address with no commands
+    #[test]
+    fn test_zero_addr_no_commands() {
+        let (lines, mut chars) = make_providers("0");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("address 0 requires a second addres")
+        );
+    }
+
+    // Zero-address with a command other than 'r' must still be rejected.
+    #[test]
+    fn test_zero_addr_non_r_rejected() {
+        let (lines, mut chars) = make_providers("0p");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("address 0 requires a second addres")
+        );
     }
 
     #[test]
