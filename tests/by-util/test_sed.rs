@@ -350,6 +350,89 @@ fn subst_write_file() -> std::io::Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_subst_e_flag_basic() {
+    new_ucmd!()
+        .arg("s/.*/echo hi/e")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\n");
+}
+
+#[test]
+fn test_subst_e_flag_preserves_unmatched_lines() {
+    new_ucmd!()
+        .args(&["-e", "s/^match$/echo replaced/e"])
+        .pipe_in("no\nmatch\nno\n")
+        .succeeds()
+        .stdout_is("no\nreplaced\nno\n");
+}
+
+#[test]
+fn test_subst_e_flag_strips_trailing_newline() {
+    // echo produces "hello\n", e flag should strip trailing newline
+    new_ucmd!()
+        .arg("s/.*/echo hello/e")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("hello\n");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_subst_e_flag_multiline_output() {
+    // Command that produces multiple lines
+    new_ucmd!()
+        .arg(r#"s/.*/printf 'a\nb'/e"#)
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+}
+
+#[test]
+fn test_subst_e_flag_combined_with_g() {
+    // e flag with other flags
+    new_ucmd!().arg("s/x/echo y/ge").pipe_in("x\n").succeeds();
+}
+
+#[test]
+fn test_subst_e_flag_rejected_with_posix() {
+    // e flag is rejected at compile time if --posix or --sandbox is provided.
+    new_ucmd!()
+        .args(&["--posix", "s/.*/echo hi/e"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[test]
+fn test_subst_e_flag_rejected_with_sandbox() {
+    new_ucmd!()
+        .args(&["--sandbox", "s/.*/echo hi/e"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[test]
+fn test_subst_e_flag_command_failure() {
+    // A non-existent command produces empty output but sed itself succeeds
+    // (matching GNU sed behavior: the shell runs, the command inside fails)
+    new_ucmd!()
+        .arg("s/.*/nonexistent_command/e")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("\n");
+}
+
+#[test]
+fn test_subst_e_flag_no_match_no_exec() {
+    // If substitution doesn't match, command should not execute
+    new_ucmd!()
+        .arg("s/nomatch/echo bad/e")
+        .pipe_in("hello\n")
+        .succeeds()
+        .stdout_is("hello\n");
+}
+
 ////////////////////////////////////////////////////////////
 // Transliteration: y
 check_output!(trans_simple, ["-e", r"y/0123456789/9876543210/", LINES1]);

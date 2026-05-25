@@ -202,6 +202,7 @@ pub struct Substitution {
     pub occurrence: usize,                            // Which occurrence to substitute
     pub print_flag: bool,                             // True if 'p' flag
     pub ignore_case: bool,                            // True if 'I' flag
+    pub execute: bool,                                // True if 'e' flag (GNU extension)
     pub write_file: Option<Rc<RefCell<NamedWriter>>>, // Writer to file if 'w' flag is used
 }
 
