@@ -19,6 +19,7 @@ use crate::sed::named_writer;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::fmt::Write as _;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -392,13 +393,13 @@ fn list(output: &mut OutputBuffer, line: &IOChunk, max_width: usize) -> UResult<
             '\t' => Cow::Borrowed(r"\t"),
             c if c.is_ascii_control() => Cow::Owned(format!("\\{:03o}", ch as u8)),
             c if c == ' ' || c.is_ascii_graphic() => Cow::Borrowed(ch.encode_utf8(&mut char_buff)),
-            _ => Cow::Owned(
-                ch.to_string()
-                    .as_bytes()
-                    .iter()
-                    .map(|b| format!("\\{b:03o}"))
-                    .collect(),
-            ),
+            _ => {
+                let mut escaped = String::new();
+                for b in ch.to_string().as_bytes() {
+                    let _ = write!(escaped, "\\{b:03o}");
+                }
+                Cow::Owned(escaped)
+            }
         };
 
         // See if folding is required before adding out_str and terminator.
