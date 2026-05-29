@@ -84,9 +84,14 @@ fn create_control_char(x: char) -> Option<char> {
 /// transliterarion) and return the corresponding char.
 /// At entry line.current() must have advanced after the `\\`.
 /// Advance line to the first character not part of the escape.
-/// Return `None` if an invalid escape has been specified.
-pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
-    match line.current() {
+/// Return `Ok(None)` if no recognized escape is present (the caller then
+/// treats the sequence literally). Return `Err` for escapes that are
+/// recognized but malformed, such as recursive escaping after `\c`.
+pub fn parse_char_escape(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+) -> UResult<Option<char>> {
+    let decoded = match line.current() {
         'a' => {
             line.advance();
             Some('\x07')
@@ -117,14 +122,39 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         }
 
         'c' => {
-            // Control character escape: \cC
+            // Control character escape: \cX. The character after \c is taken
+            // raw (no further escape processing). GNU sed allows exactly one
+            // exception: a backslash may be escaped as \\ to denote a literal
+            // backslash (so \c\\ yields Ctrl-\, i.e. 0x1c). Any other
+            // backslash escape after \c is rejected.
             line.advance(); // move past 'c'
-            match create_control_char(line.current()) {
-                Some(decoded) => {
-                    line.advance();
-                    Some(decoded)
+            if line.eol() {
+                // Nothing to control-escape; treat the lone 'c' literally.
+                Some('c')
+            } else if line.current() == '\\' {
+                line.advance(); // consume the first backslash
+                if line.eol() || line.current() != '\\' {
+                    return compilation_error(
+                        lines,
+                        line,
+                        "recursive escaping after \\c not allowed",
+                    );
                 }
-                None => Some('c'),
+                // \\ -> literal backslash as the control argument.
+                let decoded = create_control_char('\\');
+                line.advance(); // consume the second backslash
+                decoded
+            } else {
+                // Take the next char raw. If it is not control-mappable
+                // (e.g. non-ASCII), fall back to a literal 'c' without
+                // consuming the char, matching prior behavior.
+                match create_control_char(line.current()) {
+                    Some(decoded) => {
+                        line.advance();
+                        Some(decoded)
+                    }
+                    None => Some('c'),
+                }
             }
         }
 
@@ -173,7 +203,9 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
             }
         }
         _ => None,
-    }
+    };
+
+    Ok(decoded)
 }
 
 /// Parse a POSIX RE character class returning it as a string.
@@ -275,7 +307,7 @@ fn parse_character_class(
             if line.eol() {
                 break;
             }
-            if let Some(decoded) = parse_char_escape(line) {
+            if let Some(decoded) = parse_char_escape(lines, line)? {
                 result.push(decoded);
             } else {
                 result.push('\\');
@@ -332,7 +364,7 @@ pub fn parse_regex(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) ->
                     line.advance();
                     continue;
                 }
-                if let Some(decoded) = parse_char_escape(line) {
+                if let Some(decoded) = parse_char_escape(lines, line)? {
                     result.push(decoded);
                 } else {
                     // Pass through \<any> to RE engine for further treatment
@@ -373,7 +405,7 @@ pub fn parse_transliteration(
                     line.advance();
                     continue;
                 }
-                if let Some(decoded) = parse_char_escape(line) {
+                if let Some(decoded) = parse_char_escape(lines, line)? {
                     result.push(decoded);
                 } else {
                     // Pass through \<any> to tr for literal use
@@ -527,8 +559,9 @@ mod tests {
 
     // parse_char_escape
     fn escape_result_with_current(input: &str) -> (Option<char>, Option<char>) {
+        let lines = test_lines();
         let mut provider = ScriptCharProvider::new(input);
-        let result = parse_char_escape(&mut provider);
+        let result = parse_char_escape(&lines, &mut provider).unwrap();
         let current = if provider.eol() {
             None
         } else {
@@ -570,6 +603,48 @@ mod tests {
     #[test]
     fn test_control_escape_invalid() {
         assert_eq!(escape_result_with_current("cé"), (Some('c'), Some('é')));
+    }
+
+    #[test]
+    fn test_control_escape_lowercase() {
+        // \cx upcases to X then XORs 0x40 -> 0x18.
+        assert_eq!(escape_result_with_current("cx"), (Some('\x18'), None));
+    }
+
+    #[test]
+    fn test_control_escape_escaped_backslash() {
+        // \c\\ is Ctrl-\ (0x1c): the \\ denotes a single literal backslash
+        // and both backslashes are consumed.
+        assert_eq!(
+            escape_result_with_current("c\\\\;"),
+            (Some('\x1c'), Some(';'))
+        );
+    }
+
+    #[test]
+    fn test_control_escape_recursive_rejected() {
+        // \c\d (a backslash escape after \c) must be rejected.
+        let lines = test_lines();
+        let mut provider = ScriptCharProvider::new("c\\d");
+        let err = parse_char_escape(&lines, &mut provider).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("recursive escaping after \\c not allowed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_control_escape_trailing_backslash_rejected() {
+        // \c followed by a lone backslash at end of input is also rejected.
+        let lines = test_lines();
+        let mut provider = ScriptCharProvider::new("c\\");
+        let err = parse_char_escape(&lines, &mut provider).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("recursive escaping after \\c not allowed"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
