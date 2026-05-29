@@ -631,6 +631,10 @@ extra
     ]
 );
 
+// Text supplied on the same line as `a\` (GNU accepts this in POSIX mode
+// too; see issue #144). Runs under both --posix and GNU parsing.
+check_output_posix!(text_append_same_line, ["-e", r"4a\extra", LINES1]);
+
 check_output_posix!(
     text_insert_quit,
     [
