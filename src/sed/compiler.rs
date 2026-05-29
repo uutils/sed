@@ -203,8 +203,8 @@ fn resolve_branch_targets(
             resolve_branch_targets(Some(sub_head.clone()), context)?;
         }
 
-        // Only for 't' or 'b' commands:
-        if matches!(cmd.code, 't' | 'b') {
+        // Only for 't', 'T', or 'b' commands:
+        if matches!(cmd.code, 't' | 'T' | 'b') {
             // Take ownership of the current data
             let old_data = mem::replace(&mut cmd.data, CommandData::None);
 
@@ -1315,7 +1315,7 @@ fn get_cmd_spec(
             n_addr: if posix { 1 } else { 2 },
             handler: compile_text_command,
         }),
-        'b' | 't' => Ok(CommandSpec {
+        'b' | 't' | 'T' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_label_command,
         }),
@@ -1423,6 +1423,16 @@ mod tests {
         let (lines, line) = make_providers("123abc");
         let result = get_cmd_spec(&lines, &line, 'Z', false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_lookup_branch_commands() {
+        // b, t, and T all share compile_label_command and accept 2 addresses.
+        for code in ['b', 't', 'T'] {
+            let (lines, line) = make_providers("123abc");
+            let cmd = get_cmd_spec(&lines, &line, code, false).unwrap();
+            assert_eq!(cmd.n_addr, 2, "command `{code}` should accept 2 addresses");
+        }
     }
 
     // Utility to create a ScriptCharProvider from a &str

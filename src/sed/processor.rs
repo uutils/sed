@@ -602,6 +602,23 @@ fn process_file(
                     // Branch to the end of the script.
                     break;
                 }
+                'T' if context.substitution_made => {
+                    // A substitution was made since the last cycle or T,
+                    // so reset the flag and fall through without branching.
+                    context.substitution_made = false;
+                }
+                'T' => {
+                    // Branch to the specified label or end if none is given
+                    // if no substitution was made since last cycle or T.
+                    let target = extract_variant!(command, BranchTarget);
+                    if target.is_some() {
+                        // New command to execute
+                        current.clone_from(target);
+                        continue;
+                    }
+                    // Branch to the end of the script.
+                    break;
+                }
                 'w' => {
                     // Append the pattern space to the specified file.
                     let writer = extract_variant!(command, NamedWriter);
