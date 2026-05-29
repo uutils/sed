@@ -1151,6 +1151,14 @@ fn compile_text_command_gnu(
     // True after a \ at the end of a line
     let mut escaped_newline = false;
 
+    if line.eol() {
+        return compilation_error(
+            lines,
+            line,
+            format!("command `{}' expects \\ followed by text", cmd.code),
+        );
+    }
+
     // Skip optional \.
     if !line.eol() && line.current() == '\\' {
         line.advance();
@@ -2797,19 +2805,16 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_text_command_gnu_optional_backslash_eol_eof() {
+    fn test_compile_text_command_gnu_no_text() {
         let mut chars = make_char_provider("a");
         let mut lines = make_line_provider(&[]);
         let mut cmd = Command::default();
         let mut context = ProcessingContext::default();
 
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("expects \\ followed by text"));
     }
 
     #[test]
