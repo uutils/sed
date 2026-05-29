@@ -97,12 +97,79 @@ pub enum Address {
     StepEnd(usize),    // Range ending at specified step from first
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+/// GNU case-folding operation in a replacement (\U \L \u \l \E)
+pub enum CaseFold {
+    UpperRange, // \U: uppercase until \E or end
+    LowerRange, // \L: lowercase until \E or end
+    UpperOne,   // \u: uppercase the next output character only
+    LowerOne,   // \l: lowercase the next output character only
+    End,        // \E: end the current \U/\L range
+}
+
 #[derive(Debug)]
 /// A single part of an RE replacement
 pub enum ReplacementPart {
     Literal(String), // Normal text
     WholeMatch,      // &
     Group(u32),      // \1 to \9
+    Case(CaseFold),  // \U \L \u \l \E
+}
+
+/// Tracks the active case-folding state while rendering a replacement.
+/// `range` is the sticky \U/\L mode; `one_shot` is a pending \u/\l that
+/// applies to the next single character only.
+#[derive(Default)]
+struct CaseState {
+    range: Option<CaseFold>,    // Some(UpperRange) | Some(LowerRange) | None
+    one_shot: Option<CaseFold>, // Some(UpperOne) | Some(LowerOne) | None
+}
+
+impl CaseState {
+    /// Update the state for a case-folding directive.
+    fn apply_directive(&mut self, op: CaseFold) {
+        match op {
+            CaseFold::UpperRange | CaseFold::LowerRange => {
+                self.range = Some(op);
+                self.one_shot = None;
+            }
+            CaseFold::UpperOne | CaseFold::LowerOne => self.one_shot = Some(op),
+            CaseFold::End => {
+                self.range = None;
+                self.one_shot = None;
+            }
+        }
+    }
+
+    /// True if any case transformation is currently in effect.
+    fn is_active(&self) -> bool {
+        self.range.is_some() || self.one_shot.is_some()
+    }
+
+    /// Append `text` to `out`, applying the active case folding. A pending
+    /// one-shot (\u/\l) transforms the first character and is then cleared,
+    /// after which the sticky range (if any) governs the rest.
+    fn push_str(&mut self, out: &mut String, text: &str) {
+        if !self.is_active() {
+            out.push_str(text);
+            return;
+        }
+        for ch in text.chars() {
+            if let Some(op) = self.one_shot.take() {
+                match op {
+                    CaseFold::UpperOne => out.extend(ch.to_uppercase()),
+                    CaseFold::LowerOne => out.extend(ch.to_lowercase()),
+                    _ => unreachable!("one_shot holds only \\u or \\l"),
+                }
+                continue;
+            }
+            match self.range {
+                Some(CaseFold::UpperRange) => out.extend(ch.to_uppercase()),
+                Some(CaseFold::LowerRange) => out.extend(ch.to_lowercase()),
+                _ => out.push(ch),
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -157,18 +224,27 @@ impl ReplacementTemplate {
             );
         }
 
+        let mut case = CaseState::default();
         for part in &self.parts {
             match part {
-                ReplacementPart::Literal(s) => result.push_str(s),
+                ReplacementPart::Literal(s) => case.push_str(&mut result, s),
 
                 ReplacementPart::WholeMatch => {
-                    result.push_str(caps.get(0)?.map(|m| m.as_str()).unwrap_or_default());
+                    case.push_str(
+                        &mut result,
+                        caps.get(0)?.map(|m| m.as_str()).unwrap_or_default(),
+                    );
                 }
 
                 ReplacementPart::Group(n) => {
                     let i: usize = (*n).try_into().unwrap();
-                    result.push_str(caps.get(i)?.map(|m| m.as_str()).unwrap_or_default());
+                    case.push_str(
+                        &mut result,
+                        caps.get(i)?.map(|m| m.as_str()).unwrap_or_default(),
+                    );
                 }
+
+                ReplacementPart::Case(op) => case.apply_directive(*op),
             }
         }
 
@@ -179,11 +255,14 @@ impl ReplacementTemplate {
     pub fn apply_match(&self, m: &Match) -> String {
         let mut result = String::new();
 
+        let mut case = CaseState::default();
         for part in &self.parts {
             match part {
-                ReplacementPart::Literal(s) => result.push_str(s),
+                ReplacementPart::Literal(s) => case.push_str(&mut result, s),
 
-                ReplacementPart::WholeMatch => result.push_str(m.as_str()),
+                ReplacementPart::WholeMatch => case.push_str(&mut result, m.as_str()),
+
+                ReplacementPart::Case(op) => case.apply_directive(*op),
 
                 ReplacementPart::Group(_) => {
                     panic!("unexpected Regex group replacement")
