@@ -717,7 +717,7 @@ pub fn compile_replacement(
 
                         // other escape sequences
                         _ => {
-                            if let Some(decoded) = parse_char_escape(line) {
+                            if let Some(decoded) = parse_char_escape(lines, line)? {
                                 literal.push(decoded);
                             } else {
                                 literal.push('\\');
@@ -1187,7 +1187,7 @@ fn compile_text_command_gnu(
                 continue 'text_content;
             }
 
-            if let Some(decoded) = parse_char_escape(line) {
+            if let Some(decoded) = parse_char_escape(lines, line)? {
                 text.push(decoded);
             } else {
                 // Invalid escapes result in the escaped character.
