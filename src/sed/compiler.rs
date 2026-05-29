@@ -9,8 +9,8 @@
 // file that was distributed with this source code.
 
 use crate::sed::command::{
-    Address, Command, CommandData, ProcessingContext, ReplacementPart, ReplacementTemplate,
-    Substitution, Transliteration,
+    Address, CaseFold, Command, CommandData, ProcessingContext, ReplacementPart,
+    ReplacementTemplate, Substitution, Transliteration,
 };
 use crate::sed::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
@@ -660,6 +660,7 @@ fn compile_regex(
 pub fn compile_replacement(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
+    posix: bool,
 ) -> UResult<ReplacementTemplate> {
     let mut parts = Vec::new();
     let mut literal = String::new();
@@ -712,6 +713,25 @@ pub fn compile_replacement(
                         // Literal delimiter
                         v if v == delimiter => {
                             literal.push(line.current());
+                            line.advance();
+                        }
+
+                        // GNU case-folding escapes (not in POSIX mode).
+                        // These take precedence over \u/\U numeric escapes,
+                        // matching GNU, where \U/\L/\u/\l/\E fold case.
+                        c @ ('U' | 'L' | 'u' | 'l' | 'E') if !posix => {
+                            if !literal.is_empty() {
+                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
+                            }
+                            let op = match c {
+                                'U' => CaseFold::UpperRange,
+                                'L' => CaseFold::LowerRange,
+                                'u' => CaseFold::UpperOne,
+                                'l' => CaseFold::LowerOne,
+                                'E' => CaseFold::End,
+                                _ => unreachable!(),
+                            };
+                            parts.push(ReplacementPart::Case(op));
                             line.advance();
                         }
 
@@ -790,7 +810,7 @@ fn compile_subst_command(
 
     let mut subst = Box::new(Substitution::default());
 
-    subst.replacement = compile_replacement(lines, line)?;
+    subst.replacement = compile_replacement(lines, line, context.posix)?;
     compile_subst_flags(lines, line, &mut subst)?;
 
     if pattern.is_empty() && subst.ignore_case {
@@ -1935,7 +1955,7 @@ mod tests {
     #[test]
     fn test_compile_replacement_literal() {
         let (mut lines, mut chars) = make_providers("/hello/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement(&mut lines, &mut chars, false).unwrap();
 
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "hello"));
@@ -1944,7 +1964,7 @@ mod tests {
     #[test]
     fn test_compile_replacement_escaped_delimiter() {
         let (mut lines, mut chars) = make_providers(r"/hell\/o/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement(&mut lines, &mut chars, false).unwrap();
 
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "hell/o"));
@@ -1953,7 +1973,7 @@ mod tests {
     #[test]
     fn test_compile_replacement_backrefs_and_literal() {
         let (mut lines, mut chars) = make_providers("/prefix \\1 and \\2/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement(&mut lines, &mut chars, false).unwrap();
 
         assert_eq!(template.parts.len(), 4);
         assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "prefix "));
@@ -1963,9 +1983,44 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_replacement_case_fold_parts() {
+        // \U\1\E\2 -> Case(UpperRange), Group(1), Case(End), Group(2)
+        let (mut lines, mut chars) = make_providers(r"/\U\1\E\2/");
+        let template = compile_replacement(&mut lines, &mut chars, false).unwrap();
+
+        assert_eq!(template.parts.len(), 4);
+        assert!(matches!(
+            &template.parts[0],
+            ReplacementPart::Case(CaseFold::UpperRange)
+        ));
+        assert!(matches!(&template.parts[1], ReplacementPart::Group(1)));
+        assert!(matches!(
+            &template.parts[2],
+            ReplacementPart::Case(CaseFold::End)
+        ));
+        assert!(matches!(&template.parts[3], ReplacementPart::Group(2)));
+    }
+
+    #[test]
+    fn test_compile_replacement_case_fold_posix_passthrough() {
+        // In POSIX mode \l is not a case-fold; it falls through to literal.
+        let (mut lines, mut chars) = make_providers(r"/\l&/");
+        let template = compile_replacement(&mut lines, &mut chars, true).unwrap();
+
+        // No Case parts should be produced under POSIX.
+        assert!(
+            !template
+                .parts
+                .iter()
+                .any(|p| matches!(p, ReplacementPart::Case(_))),
+            "POSIX mode must not produce case-fold parts"
+        );
+    }
+
+    #[test]
     fn test_compile_replacement_whole_match() {
         let (mut lines, mut chars) = make_providers("/The match was: &/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement(&mut lines, &mut chars, false).unwrap();
 
         assert_eq!(template.parts.len(), 2);
         assert!(
@@ -1977,7 +2032,7 @@ mod tests {
     #[test]
     fn test_compile_replacement_whole_match_synonym() {
         let (mut lines, mut chars) = make_providers(r"/The match was: \0/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement(&mut lines, &mut chars, false).unwrap();
 
         assert_eq!(template.parts.len(), 2);
         assert!(
@@ -1989,7 +2044,7 @@ mod tests {
     #[test]
     fn test_compile_replacement_ampersand() {
         let (mut lines, mut chars) = make_providers("/Simon \\& Garfunkel/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement(&mut lines, &mut chars, false).unwrap();
 
         assert_eq!(template.parts.len(), 1);
         assert!(
@@ -2000,7 +2055,7 @@ mod tests {
     #[test]
     fn test_compile_replacement_escape_sequences() {
         let (mut lines, mut chars) = make_providers("/line\\nnewline\\tend/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement(&mut lines, &mut chars, false).unwrap();
 
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(
@@ -2019,7 +2074,7 @@ mod tests {
         let first_line = provider.next_line().unwrap().unwrap();
         let mut chars = ScriptCharProvider::new(&first_line);
 
-        let template = compile_replacement(&mut provider, &mut chars).unwrap();
+        let template = compile_replacement(&mut provider, &mut chars, false).unwrap();
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(
             &template.parts[0],
