@@ -14,7 +14,7 @@ and other extensions.
 
 ## Status
 
-At this state _sed_ implements all POSIX commands
+At this state _sed_ implements all [POSIX features](https://pubs.opengroup.org/onlinepubs/9799919799/)
 and can run correctly the two complex scripts of its integration tests:
 [hanoi.sed](https://github.com/uutils/sed/blob/main/tests/fixtures/sed/script/hanoi.sed) (solves the Towers of Hanoi puzzle) and
 [math.sed](https://github.com/uutils/sed/blob/main/tests/fixtures/sed/script/math.sed)  (implements an arbitrary precision integer math calculator).
