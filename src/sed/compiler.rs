@@ -1298,7 +1298,7 @@ fn compile_version_command(
         Ok(major_int) => match minor.parse::<u8>() {
             Ok(minor_int) => match patch.parse::<u8>() {
                 Ok(patch_int) => {
-                    if minor_int <= GNU_MINOR && major_int <= GNU_MAJOR && patch_int <= GNU_PATCH {
+                    if minor_int <= GNU_MINOR && major_int <= GNU_MAJOR && patch_int == GNU_PATCH {
                         return Ok(CommandHandling::Continue);
                     }
                     compilation_error(lines, line, "expected newer version of sed")
