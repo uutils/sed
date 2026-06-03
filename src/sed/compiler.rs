@@ -460,7 +460,7 @@ fn compile_address(
             }
 
             Ok(Address::Re(compile_regex(
-                lines, line, &re, context, icase,
+                lines, line, &re, context, icase, false,
             )?))
         }
         '$' => {
@@ -628,6 +628,7 @@ fn compile_regex(
     pattern: &str,
     context: &ProcessingContext,
     icase: bool,
+    multiline: bool,
 ) -> UResult<Option<Regex>> {
     if pattern.is_empty() {
         return Ok(None);
@@ -640,11 +641,17 @@ fn compile_regex(
         &bre_to_ere(pattern)
     };
 
-    // Add case-insensitive modifier if needed.
-    let pattern = if icase {
-        format!("(?i){pattern}")
-    } else {
+    let mut modifiers = String::new();
+    if icase {
+        modifiers.push('i');
+    }
+    if multiline {
+        modifiers.push('m');
+    }
+    let pattern = if modifiers.is_empty() {
         pattern.to_string()
+    } else {
+        format!("(?{modifiers}){pattern}")
     };
 
     // Compile into engine.
@@ -793,7 +800,7 @@ fn compile_subst_command(
     subst.replacement = compile_replacement(lines, line)?;
     compile_subst_flags(lines, line, &mut subst)?;
 
-    if pattern.is_empty() && subst.ignore_case {
+    if pattern.is_empty() && (subst.ignore_case || subst.multiline) {
         return compilation_error(
             lines,
             line,
@@ -801,8 +808,15 @@ fn compile_subst_command(
         );
     }
 
-    // Compile regex with now known ignore_case flag.
-    subst.regex = compile_regex(lines, line, &pattern, context, subst.ignore_case)?;
+    // Compile regex with now known modifier flags.
+    subst.regex = compile_regex(
+        lines,
+        line,
+        &pattern,
+        context,
+        subst.ignore_case,
+        subst.multiline,
+    )?;
 
     // Catch invalid group references at compile time, if possible.
     if let Some(regex) = &subst.regex
@@ -871,6 +885,7 @@ pub fn compile_subst_flags(
     subst.occurrence = 1; // default
     subst.print_flag = false;
     subst.ignore_case = false;
+    subst.multiline = false;
     subst.write_file = None;
 
     loop {
@@ -900,6 +915,11 @@ pub fn compile_subst_flags(
 
             'i' | 'I' => {
                 subst.ignore_case = true;
+                line.advance();
+            }
+
+            'm' | 'M' => {
+                subst.multiline = true;
                 line.advance();
             }
 
@@ -1570,7 +1590,7 @@ mod tests {
     #[test]
     fn test_compile_re_basic() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", &ctx(), false)
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), false, false)
             .unwrap()
             .expect("regex should be present");
         assert!(regex.is_match(&mut IOChunk::new_from_str("abc")).unwrap());
@@ -1580,7 +1600,7 @@ mod tests {
     #[test]
     fn test_compile_re_case_insensitive() {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "abc", &ctx(), true)
+        let regex = compile_regex(&lines, &chars, "abc", &ctx(), true, false)
             .unwrap()
             .expect("regex should be present");
         assert!(regex.is_match(&mut IOChunk::new_from_str("abc")).unwrap());
@@ -1591,8 +1611,21 @@ mod tests {
     #[test]
     fn test_compile_re_invalid() {
         let (lines, chars) = dummy_providers();
-        let result = compile_regex(&lines, &chars, "a[d", &ctx(), false);
+        let result = compile_regex(&lines, &chars, "a[d", &ctx(), false, false);
         assert!(result.is_err()); // Should fail due to open bracketed expression
+    }
+
+    #[test]
+    fn test_compile_re_multiline() {
+        let (lines, chars) = dummy_providers();
+        let regex = compile_regex(&lines, &chars, "^bar", &ctx(), false, true)
+            .unwrap()
+            .expect("regex should be present");
+        assert!(
+            regex
+                .is_match(&mut IOChunk::new_from_str("foo\nbar"))
+                .unwrap()
+        );
     }
 
     // compile_address
@@ -2070,6 +2103,24 @@ mod tests {
 
         compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
         assert!(subst.ignore_case);
+    }
+
+    #[test]
+    fn test_compile_subst_flag_uppercase_m() {
+        let (lines, mut chars) = make_providers("M");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        assert!(subst.multiline);
+    }
+
+    #[test]
+    fn test_compile_subst_flag_m_lowercase() {
+        let (lines, mut chars) = make_providers("m");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        assert!(subst.multiline);
     }
 
     #[test]
