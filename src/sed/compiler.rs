@@ -628,6 +628,14 @@ fn bre_to_ere(pattern: &str) -> String {
     result
 }
 
+/// Escape literal `[` characters that appear inside a bracket expression.
+///
+/// Within a bracket expression a `[` only begins a sub-construct when followed
+/// by `:`, `.`, or `=` (e.g. `[:alpha:]`); elsewhere it is an ordinary
+/// character. The `regex` crate rejects such a bare `[`, so we escape those
+/// occurrences (`[` becomes `\[`) before handing the pattern to the engine. See
+/// POSIX 9.3.5 RE Bracket Expression:
+/// <https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap09.html#tag_09_03_05>
 fn escape_literal_open_brackets_in_classes(pattern: &str) -> String {
     let mut result = String::with_capacity(pattern.len());
     let mut chars = pattern.chars().peekable();
