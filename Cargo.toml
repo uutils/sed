@@ -81,7 +81,7 @@ tempfile = { workspace = true }
 terminal_size = { workspace = true }
 textwrap = { workspace = true }
 uucore = { workspace = true }
-rustix = { workspace = true }
+rustix = { workspace = true, features = ["fs", "pipe"] }
 
 [dev-dependencies]
 assert_fs = { workspace = true }
