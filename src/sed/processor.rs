@@ -195,6 +195,26 @@ fn re_or_saved_re<'a>(
     }
 }
 
+#[cfg(unix)]
+fn shell_command(cmd: &str) -> std::process::Command {
+    let mut c = std::process::Command::new("/bin/sh");
+    c.arg("-c").arg(cmd);
+    c
+}
+
+#[cfg(windows)]
+fn shell_command(cmd: &str) -> std::process::Command {
+    let mut c = std::process::Command::new("cmd.exe");
+    c.arg("/C").arg(cmd);
+    c
+}
+
+// Fallback if the target OS is neither Windows nor UNIX-like
+#[cfg(not(any(unix, windows)))]
+fn shell_command(_cmd: &str) -> std::process::Command {
+    unimplemented!("the 'e' substitute flag requires a platform shell (/bin/sh or cmd.exe)");
+}
+
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
@@ -305,6 +325,28 @@ fn substitute(
         result.push_str(&text.unwrap()[last_end..]);
 
         pattern.set_to_string(result, pattern.is_newline_terminated());
+
+        // Execute the pattern space as a shell command if the 'e' flag is set
+        if sub.execute {
+            let cmd_str = pattern.as_str()?.to_string();
+            let output_bytes = shell_command(&cmd_str).output().map_err(|e| {
+                input_runtime_error::<()>(
+                    &command.location,
+                    context,
+                    format!("failed to execute shell command: {e}"),
+                )
+                .unwrap_err()
+            })?;
+            let mut shell_out = String::from_utf8_lossy(&output_bytes.stdout).into_owned();
+            if shell_out.ends_with("\r\n") {
+                // On windows, both return carriage and newline characters are used
+                shell_out.truncate(shell_out.len() - 2);
+            } else if shell_out.ends_with('\n') {
+                // Strip the trailing newline, as GNU sed does
+                shell_out.pop();
+            }
+            pattern.set_to_string(shell_out, pattern.is_newline_terminated());
+        }
 
         if sub.print_flag {
             write_chunk(output, context, pattern)?;
