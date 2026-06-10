@@ -646,16 +646,15 @@ fn compile_regex(
 
     // Convert basic to extended regular expression if needed.
     let pattern = if context.regex_extended {
-        &pattern.replace("{,}", "*")
+        pattern
     } else {
         &bre_to_ere(pattern)
     };
-
     // Add case-insensitive modifier if needed.
     let pattern = if icase {
         format!("(?i){pattern}")
     } else {
-        pattern.clone()
+        pattern.to_string()
     };
 
     // Compile into engine.
@@ -1596,7 +1595,7 @@ mod tests {
         let (lines, chars) = make_providers("acaa\nbbb\nccc");
         let mut ctx = ctx();
         ctx.regex_extended = true;
-        let regex = compile_regex(&lines, &chars, "cc{,}", &ctx, false)
+        let regex = compile_regex(&lines, &chars, "cc{0,}", &ctx, false)
             .unwrap()
             .expect("regex should be present");
         assert!(

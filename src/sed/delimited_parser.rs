@@ -484,7 +484,7 @@ fn validate_quantifier_numbers(
     if line.current() == ',' {
         line.advance();
         if line.current() == '}' {
-            return Ok(",".to_string());
+            return Ok("0,".to_string());
         }
 
         // Continue to parse n value
@@ -1231,7 +1231,7 @@ mod tests {
     fn test_validate_quantifier_numbers_with_single_comma() {
         let (lines, mut line) = make_providers("{,}");
         let result = validate_quantifier_numbers(&lines, &mut line).unwrap();
-        assert_eq!(result, ",");
+        assert_eq!(result, "0,");
         assert_eq!(line.current(), '}');
     }
 
