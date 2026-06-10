@@ -9,12 +9,10 @@
 // file that was distributed with this source code.
 
 use crate::sed::command::{
-    Address, Command, CommandData, ProcessingContext, ReplacementPart, ReplacementTemplate,
-    Substitution, Transliteration,
+    Address, Command, CommandData, ProcessingContext, RegexMode, ReplacementPart,
+    ReplacementTemplate, Substitution, Transliteration,
 };
-use crate::sed::delimited_parser::{
-    RegexMode, parse_char_escape, parse_regex, parse_transliteration,
-};
+use crate::sed::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
 use crate::sed::fast_regex::Regex;
 use crate::sed::named_writer::NamedWriter;

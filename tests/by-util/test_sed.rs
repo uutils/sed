@@ -384,7 +384,7 @@ fn test_ere_quantifier_invalid_m() {
 #[test]
 fn test_ere_quantifier_m_too_big() {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{300,}/p"])
+        .args(&["-E", "-e", "/l{32768,}/p"])
         .fails()
         .code_is(1)
         .stderr_contains("Regular expression too big");

@@ -8,20 +8,13 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+use crate::sed::command::{RE_DUP_MAX, RegexMode};
 use crate::sed::error_handling::compilation_error;
 use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::ScriptLineProvider;
 
 use std::char;
 use uucore::error::UResult;
-
-/// Defines whether regex patterns use Basic Regular Expression (BRE) or
-/// Extended Regular Expression (ERE) syntax.
-#[derive(Copy, Clone, Debug)]
-pub enum RegexMode {
-    Basic,
-    Extended,
-}
 
 /// Return true if c is a valid octal digit
 fn is_ascii_octal_digit(c: char) -> bool {
@@ -503,9 +496,9 @@ fn validate_quantifier_numbers(
         m.push(line.current());
         line.advance();
     }
-    let m_val: u32 = match m.parse() {
+    let m_val: usize = match m.parse() {
         Ok(val) => {
-            if val > 255 {
+            if val > RE_DUP_MAX {
                 return compilation_error(lines, line, "Regular expression too big");
             }
             val
@@ -524,12 +517,12 @@ fn validate_quantifier_numbers(
             line.advance();
         }
     }
-    let n_val: Option<u32> = if n.is_empty() {
+    let n_val: Option<usize> = if n.is_empty() {
         None
     } else {
-        match n.parse::<u32>() {
+        match n.parse::<usize>() {
             Ok(val) => {
-                if val > 255 {
+                if val > RE_DUP_MAX {
                     return compilation_error(lines, line, "Regular expression too big");
                 }
                 Some(val)
@@ -1253,14 +1246,14 @@ mod tests {
 
     #[test]
     fn test_validate_quantifier_numbers_with_m_too_big() {
-        let (lines, mut line) = make_providers("{256}");
+        let (lines, mut line) = make_providers("{32768}");
         let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
         assert!(err.to_string().contains("Regular expression too big"));
     }
 
     #[test]
     fn test_validate_quantifier_numbers_with_n_too_big() {
-        let (lines, mut line) = make_providers("{2,256}");
+        let (lines, mut line) = make_providers("{2,32768}");
         let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
         assert!(err.to_string().contains("Regular expression too big"));
     }
