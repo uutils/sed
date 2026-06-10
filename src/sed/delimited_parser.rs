@@ -409,20 +409,19 @@ fn validate_quantifier_structure(
                     }
                     found_closing_brace = true;
                     break;
-                } else {
-                    // Entering means there is no } immediately after the {
-                    is_quantifier_empty = false;
-                    // Only digits and one comma allowed
-                    if line.current() == ',' {
-                        if seen_comma {
-                            invalid_content_detected = true;
-                        }
-                        seen_comma = true;
-                    } else if !line.current().is_ascii_digit() {
+                }
+                // Entering means there is no } immediately after the {
+                is_quantifier_empty = false;
+                // Only digits and one comma allowed
+                if line.current() == ',' {
+                    if seen_comma {
                         invalid_content_detected = true;
                     }
-                    line.advance();
+                    seen_comma = true;
+                } else if !line.current().is_ascii_digit() {
+                    invalid_content_detected = true;
                 }
+                line.advance();
             }
             RegexMode::Basic => {
                 // In BRE mode, look for \}
@@ -433,22 +432,21 @@ fn validate_quantifier_structure(
                             invalid_content_detected = true;
                         }
                         found_closing_brace = true;
-                        break;
                     } else {
                         invalid_content_detected = true;
                     }
-                } else {
-                    is_quantifier_empty = false;
-                    if line.current() == ',' {
-                        if seen_comma {
-                            invalid_content_detected = true;
-                        }
-                        seen_comma = true;
-                    } else if !line.current().is_ascii_digit() {
+                    break;
+                }
+                is_quantifier_empty = false;
+                if line.current() == ',' {
+                    if seen_comma {
                         invalid_content_detected = true;
                     }
-                    line.advance();
+                    seen_comma = true;
+                } else if !line.current().is_ascii_digit() {
+                    invalid_content_detected = true;
                 }
+                line.advance();
             }
         }
     }
