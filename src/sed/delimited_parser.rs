@@ -472,7 +472,7 @@ fn validate_quantifier_structure(
     Ok(initial_pos)
 }
 
-// Peforms validations on m and/or n values of the quantifier
+// Performs validations on m and/or n values of the quantifier
 // and returns the valid content as a string (without braces).
 fn validate_quantifier_numbers(
     lines: &ScriptLineProvider,
