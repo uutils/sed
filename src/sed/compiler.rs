@@ -1356,7 +1356,7 @@ fn get_cmd_spec(
             n_addr: 2,
             handler: compile_subst_command,
         }),
-        'w' => Ok(CommandSpec {
+        'w' | 'W' if !posix => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_write_file_command,
         }),
