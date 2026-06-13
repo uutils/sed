@@ -1231,6 +1231,9 @@ fn compile_text_command_posix(
     line.advance(); // Skip \.
     line.eat_spaces(); // Skip any whitespace at the end of \.
     if !line.eol() {
+        // POSIX (and Seventh Edition Unix sed) do not allow text after the
+        // `a\`/`c\`/`i\` command on the same line. Same-line text is a GNU
+        // extension, handled by compile_text_command_gnu in non-POSIX mode.
         return compilation_error(
             lines,
             line,
@@ -2742,6 +2745,8 @@ mod tests {
 
     #[test]
     fn test_compile_text_command_posix_spaces_single_line() {
+        // Under --posix, `a \ ` skips the whitespace after `\`; the text comes
+        // from the following script line(s), not the same line.
         let mut chars = make_char_provider("a \\ ");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
@@ -2898,8 +2903,10 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_text_command_posix_with_trailing_chars() {
-        let mut chars = make_char_provider("a \\ foo");
+    fn test_compile_text_command_posix_same_line_text() {
+        // Under --posix, text after `a\` on the same line is rejected (it is a
+        // GNU extension). Cf. dspinellis review on uutils/sed#451.
+        let mut chars = make_char_provider("a\\bar");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
         let mut context = ProcessingContext {
@@ -2910,7 +2917,23 @@ mod tests {
         let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("extra characters after \\"));
+        assert!(err.contains("extra characters after"));
+    }
+
+    #[test]
+    fn test_compile_text_command_posix_same_line_continuation() {
+        // Same-line text, even with a trailing `\` continuation, is rejected
+        // under --posix; only `a\` followed by a newline is valid.
+        let mut chars = make_char_provider("a\\bar\\");
+        let mut lines = make_line_provider(&["baz", "next"]);
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext {
+            posix: true,
+            ..Default::default()
+        };
+
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
+        assert!(result.is_err());
     }
 
     // read_file_path
