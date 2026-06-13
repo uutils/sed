@@ -397,6 +397,41 @@ check_output!(pattern_next_output, ["-e", r"4n", LINES1]);
 check_output!(pattern_next_no_output, ["-n", "-e", r"4n", LINES1]);
 check_output!(pattern_next_print_output, ["-e", r"4n;p", LINES1]);
 check_output!(pattern_next_print_no_output, ["-n", "-e", r"4n;p", LINES1]);
+
+#[test]
+fn pattern_print_filename_with_f_command() {
+    new_ucmd!()
+        .args(&["-n", "F", LINES1])
+        .succeeds()
+        .stdout_is("input/lines1\n".repeat(14));
+}
+
+#[test]
+fn pattern_print_filename_with_f_command_stdin() {
+    new_ucmd!()
+        .args(&["-n", "F"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("-\n-\n");
+}
+
+#[test]
+fn pattern_print_filename_with_f_command_null_data() {
+    new_ucmd!()
+        .args(&["-z", "-n", "F"])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .stdout_is("-\0");
+}
+
+#[test]
+fn pattern_print_filename_with_f_command_is_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "F"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `F'\n");
+}
 check_output!(pattern_quit, [r"5q", LINES1]);
 check_output!(pattern_quit_2, [r"5q", LINES1, LINES2]);
 check_output!(pattern_re_reuse, ["-n", r"/_1/p;//p", LINES1]);
