@@ -611,6 +611,50 @@ tb"#,
     ]
 );
 
+// T branches when NO substitution was made (inverse of t).
+// Lines not ending in "2" leave s/2$/X/ with no match, so T branches to
+// :skip and keeps the original line; lines ending in "2" fall through and
+// get the "SUB " mark.
+check_output!(
+    branch_no_sub_simple,
+    [
+        "-n",
+        "-e",
+        r#"
+s/2$/X/
+Tskip
+s/^/SUB /
+:skip
+p
+"#,
+        LINES1
+    ]
+);
+
+// Check that T also clears the substitution-done flag, matching t.
+// After s/// sets the flag, the first T sees a substitution so it does
+// not branch but still clears the flag; the second T then sees no
+// substitution and branches to :y. Reaching :y (CLEARED) rather than
+// falling through to :x (NOTCLEARED) proves the first T cleared the flag.
+check_output!(
+    branch_no_sub_clears,
+    [
+        "-n",
+        "-e",
+        r#"
+s/^/^/
+Tx
+Ty
+:x
+s/^/NOTCLEARED /p
+b
+:y
+s/^/CLEARED /p
+"#,
+        LINES1
+    ]
+);
+
 ////////////////////////////////////////////////////////////
 // Text: a, c, i
 
