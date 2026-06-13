@@ -1221,41 +1221,31 @@ fn compile_text_command_posix(
     }
 
     line.advance(); // Skip \.
-
-    let mut text = String::new();
-
-    // GNU also accepts text on the same line as `a\`, e.g. `a\bar`. The
-    // remainder of the current line is the first appended line, with leading
-    // whitespace preserved. A trailing `\` escapes the newline so the text
-    // continues on the following line.
-    let mut needs_more = true;
+    line.eat_spaces(); // Skip any whitespace at the end of \.
     if !line.eol() {
-        let mut first = String::new();
-        while !line.eol() {
-            first.push(line.current());
-            line.advance();
-        }
-        if let Some(stripped) = first.strip_suffix('\\') {
-            text.push_str(stripped);
-            text.push('\n');
-        } else {
-            text.push_str(&first);
-            text.push('\n');
-            needs_more = false;
-        }
+        // POSIX (and Seventh Edition Unix sed) do not allow text after the
+        // `a\`/`c\`/`i\` command on the same line. Same-line text is a GNU
+        // extension, handled by compile_text_command_gnu in non-POSIX mode.
+        return compilation_error(
+            lines,
+            line,
+            format!(
+                "extra characters after \\ at the end of `{}' command",
+                cmd.code
+            ),
+        );
     }
 
-    if needs_more {
-        while let Some(line) = lines.next_line()? {
-            if line.ends_with('\\') {
-                // Line ends with \ to escape \n; remove the trailing \.
-                text.push_str(&line[..line.len() - 1]);
-                text.push('\n');
-            } else {
-                text.push_str(&line);
-                text.push('\n');
-                break;
-            }
+    let mut text = String::new();
+    while let Some(line) = lines.next_line()? {
+        if line.ends_with('\\') {
+            // Line ends with \ to escape \n; remove the trailing \.
+            text.push_str(&line[..line.len() - 1]);
+            text.push('\n');
+        } else {
+            text.push_str(&line);
+            text.push('\n');
+            break;
         }
     }
 
@@ -2747,10 +2737,9 @@ mod tests {
 
     #[test]
     fn test_compile_text_command_posix_spaces_single_line() {
-        // `a\ ` (backslash followed by a single space): GNU treats the space
-        // as same-line text with leading whitespace preserved, so the text is
-        // a single space, not the next script line.
-        let mut chars = make_char_provider("a\\ ");
+        // Under --posix, `a \ ` skips the whitespace after `\`; the text comes
+        // from the following script line(s), not the same line.
+        let mut chars = make_char_provider("a \\ ");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
         let mut context = ProcessingContext {
@@ -2761,7 +2750,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.to_string(), " \n");
+                assert_eq!(text.to_string(), "line1\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -2910,10 +2899,9 @@ mod tests {
 
     #[test]
     fn test_compile_text_command_posix_same_line_text() {
-        // `a \ foo`: the outer handler eats the space after `a`, then `\`
-        // introduces same-line text. GNU keeps the text after `\` verbatim
-        // (here a leading space then "foo"), rather than rejecting it.
-        let mut chars = make_char_provider("a \\ foo");
+        // Under --posix, text after `a\` on the same line is rejected (it is a
+        // GNU extension). Cf. dspinellis review on uutils/sed#451.
+        let mut chars = make_char_provider("a\\bar");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
         let mut context = ProcessingContext {
@@ -2921,18 +2909,16 @@ mod tests {
             ..Default::default()
         };
 
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.to_string(), " foo\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("extra characters after"));
     }
 
     #[test]
     fn test_compile_text_command_posix_same_line_continuation() {
-        // Same-line text ending in `\` continues onto the next script line.
+        // Same-line text, even with a trailing `\` continuation, is rejected
+        // under --posix; only `a\` followed by a newline is valid.
         let mut chars = make_char_provider("a\\bar\\");
         let mut lines = make_line_provider(&["baz", "next"]);
         let mut cmd = Command::default();
@@ -2941,13 +2927,8 @@ mod tests {
             ..Default::default()
         };
 
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "bar\nbaz\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
+        assert!(result.is_err());
     }
 
     // read_file_path
