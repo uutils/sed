@@ -291,6 +291,13 @@ check_output!(subst_escaped_magic_separator, ["-e", r"s.\..X.g", LINES1]);
 check_output!(subst_escaped_braced_separator, ["-e", r"s/[\/]/Q/", LINES1]);
 check_output!(subst_escaped_separator, ["-e", r"s_\__X_", LINES1]);
 check_output!(subst_whole_match_group, ["-e", r"s/./(&)/g", LINES1]);
+// GNU case-folding escapes in the replacement (\U \L \u \l \E).
+check_output!(subst_case_upper_range, ["-e", r"s/.*/\U&/", LINES1]);
+check_output!(subst_case_lower_one, ["-e", r"s/.*/\l&/", LINES1]);
+check_output!(
+    subst_case_range_end,
+    ["-e", r"s/\(.\)\(.*\)/\U\1\E\2/", LINES1]
+);
 check_output!(subst_print, ["-ne", "s/1_1/S&/p", LINES1]);
 check_output!(
     subst_escaped_whole_match_group,
