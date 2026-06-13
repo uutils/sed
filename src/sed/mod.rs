@@ -227,6 +227,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         parsed_block_nesting: 0,
         label_to_command_map: HashMap::new(),
         range_commands: Vec::new(),
+        read_line_files: HashMap::new(),
         substitution_made: false,
         append_elements: Vec::new(),
     }
