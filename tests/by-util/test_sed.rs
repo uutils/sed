@@ -1323,3 +1323,19 @@ fn test_print_first_line_no_newline() {
         .succeeds()
         .stdout_is("foo");
 }
+
+#[test]
+fn test_expected_newer_version() {
+    new_ucmd!()
+        .args(&["v4.10"])
+        .fails()
+        .stderr_is("sed: <script argument 1>:1:6: error: expected newer version of sed\n");
+}
+
+#[test]
+fn test_invalid_version() {
+    new_ucmd!()
+        .args(&["v4.a"])
+        .fails()
+        .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
+}
