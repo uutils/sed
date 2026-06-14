@@ -435,6 +435,45 @@ fn test_bre_quantifier_unmatched_brace() {
         .stderr_contains("Unmatched \\{");
 }
 
+#[test]
+fn test_ere_quantifier_leading_comma_n_too_big() {
+    // The {,n} form must enforce the RE_DUP_MAX upper bound on n.
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{,32768}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Regular expression too big");
+}
+
+// A closing brace used as the regex delimiter must terminate the regex
+// rather than being treated as a literal quantifier brace.
+#[test]
+fn ere_closing_brace_delimiter() {
+    new_ucmd!()
+        .args(&["-E", "-e", "s}x}-}g"])
+        .pipe_in("axbxc\n")
+        .succeeds()
+        .stdout_is("a-b-c\n");
+}
+
+#[test]
+fn ere_opening_brace_delimiter() {
+    new_ucmd!()
+        .args(&["-E", "-e", "s{x{-{g"])
+        .pipe_in("axbxc\n")
+        .succeeds()
+        .stdout_is("a-b-c\n");
+}
+
+#[test]
+fn bre_closing_brace_delimiter() {
+    new_ucmd!()
+        .args(&["-e", "s}x}-}g"])
+        .pipe_in("axbxc\n")
+        .succeeds()
+        .stdout_is("a-b-c\n");
+}
+
 // Substitution: s
 check_output!(subst_any, ["-e", r"s/./X/g", LINES1]);
 check_output!(subst_any_global, ["-e", r"s,.,X,g", LINES1]);

@@ -362,14 +362,14 @@ pub fn parse_regex(
                 }
                 continue;
             }
-            '{' if matches!(regex_mode, RegexMode::Extended) => {
+            '{' if delimiter != '{' && matches!(regex_mode, RegexMode::Extended) => {
                 validate_quantifier_structure(lines, line, delimiter, RegexMode::Extended)?;
                 let quantifier = validate_quantifier_numbers(lines, line)?;
                 result.push('{');
                 result.push_str(&quantifier);
                 continue;
             }
-            '}' => {
+            '}' if delimiter != '}' => {
                 result.push('}');
                 line.advance();
                 continue;
@@ -389,7 +389,7 @@ fn validate_quantifier_structure(
     line: &mut ScriptCharProvider,
     delimiter: char,
     regex_mode: RegexMode,
-) -> UResult<usize> {
+) -> UResult<()> {
     let invalid_content_error_msg = "Invalid content of \\{\\}";
     let mut found_closing_brace = false;
     let mut seen_comma = false;
@@ -460,7 +460,22 @@ fn validate_quantifier_structure(
     }
 
     line.set_position(initial_pos);
-    Ok(initial_pos)
+    Ok(())
+}
+
+// Parse an already-structure-validated run of digits into a quantifier bound.
+// `validate_quantifier_structure` guarantees the run contains only ASCII
+// digits, so the sole failure mode is a value exceeding what fits, which sed
+// reports as "Regular expression too big" (same as exceeding RE_DUP_MAX).
+fn parse_quantifier_bound(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    digits: &str,
+) -> UResult<usize> {
+    match digits.parse::<usize>() {
+        Ok(val) if val <= RE_DUP_MAX => Ok(val),
+        _ => compilation_error(lines, line, "Regular expression too big"),
+    }
 }
 
 // Performs validations on m and/or n values of the quantifier
@@ -469,45 +484,19 @@ fn validate_quantifier_numbers(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
 ) -> UResult<String> {
-    line.advance();
+    line.advance(); // Skip the opening brace.
 
-    // Handle {,} (zero or more) special case
-    if line.current() == ',' {
-        line.advance();
-        if line.current() == '}' {
-            return Ok("0,".to_string());
-        }
-
-        // Continue to parse n value
-        let mut result = String::new();
-        result.push('0');
-        result.push(',');
-        while line.current() != '}' && line.current() != '\\' {
-            result.push(line.current());
-            line.advance();
-        }
-        return Ok(result);
-    }
-    // Parse m value
+    // Collect m. It may be empty for the {,n} and {,} forms, which mean {0,n}
+    // and {0,} respectively.
     let mut m = String::new();
     while line.current() != ',' && line.current() != '}' && line.current() != '\\' {
         m.push(line.current());
         line.advance();
     }
-    let m_val: usize = match m.parse() {
-        Ok(val) => {
-            if val > RE_DUP_MAX {
-                return compilation_error(lines, line, "Regular expression too big");
-            }
-            val
-        }
-        //never happens due to previous validation, but needed to satisfy the type checker
-        Err(_) => return compilation_error(lines, line, "Invalid content of \\{\\}"),
-    };
 
-    // Parse n if comma is present
-    let mut n = String::new();
+    // Collect n when a comma is present.
     let has_comma = line.current() == ',';
+    let mut n = String::new();
     if has_comma {
         line.advance();
         while line.current() != '}' && line.current() != '\\' {
@@ -515,34 +504,32 @@ fn validate_quantifier_numbers(
             line.advance();
         }
     }
-    let n_val: Option<usize> = if n.is_empty() {
+
+    // An absent m defaults to 0; both m and n are bounded by RE_DUP_MAX.
+    let m_val = if m.is_empty() {
+        0
+    } else {
+        parse_quantifier_bound(lines, line, &m)?
+    };
+    let n_val = if n.is_empty() {
         None
     } else {
-        match n.parse::<usize>() {
-            Ok(val) => {
-                if val > RE_DUP_MAX {
-                    return compilation_error(lines, line, "Regular expression too big");
-                }
-                Some(val)
-            }
-            Err(_) => return compilation_error(lines, line, "Invalid content of \\{\\}"),
-        }
+        Some(parse_quantifier_bound(lines, line, &n)?)
     };
 
-    // Validate m <= n if both present
+    // Validate m <= n if both present.
     if let Some(n_val) = n_val
         && m_val > n_val
     {
         return compilation_error(lines, line, "Invalid content of \\{\\}");
     }
 
-    // Valid quantifier content (without braces)
-    let mut result = m.clone();
+    // Rebuild the validated content (without braces), defaulting an absent m
+    // to 0 so the emitted pattern stays well-formed.
+    let mut result = if m.is_empty() { "0".to_string() } else { m };
     if has_comma {
         result.push(',');
-        if !n.is_empty() {
-            result.push_str(&n);
-        }
+        result.push_str(&n);
     }
 
     Ok(result)
@@ -1129,9 +1116,7 @@ mod tests {
     #[test]
     fn test_validate_quantifier_structure_bre_valid() {
         let (lines, mut line) = make_providers("{2,3\\}");
-        let result =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap();
-        assert_eq!(result, 0);
+        validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap();
         assert_eq!(line.current(), '{'); // Line should be back on the opening brace
     }
 
@@ -1171,9 +1156,7 @@ mod tests {
     #[test]
     fn test_validate_quantifier_structure_ere_valid() {
         let (lines, mut line) = make_providers("{2,3}");
-        let result =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap();
-        assert_eq!(result, 0);
+        validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap();
         assert_eq!(line.current(), '{'); // Line should be back on the opening brace
     }
 
@@ -1261,6 +1244,23 @@ mod tests {
         let (lines, mut line) = make_providers("{3,2}");
         let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
         assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_numbers_with_leading_comma_n_too_big() {
+        // The {,n} form must bound n by RE_DUP_MAX just like {m,n}.
+        let (lines, mut line) = make_providers("{,32768}");
+        let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
+        assert!(err.to_string().contains("Regular expression too big"));
+    }
+
+    #[test]
+    fn test_validate_quantifier_numbers_with_overflowing_m() {
+        // A digit run too large for usize is reported as too big, not as
+        // invalid content.
+        let (lines, mut line) = make_providers("{99999999999999999999999}");
+        let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
+        assert!(err.to_string().contains("Regular expression too big"));
     }
 
     // parse_transliteration
