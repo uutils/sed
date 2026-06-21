@@ -43,7 +43,7 @@ libc = "0.2.153"
 memchr = "2.7.4"
 memmap2 = "0.9"
 phf = "0.14.0"
-phf_codegen = "0.13.0"
+phf_codegen = "0.14.0"
 predicates = "3.1.3"
 rand = { version = "0.10.0" }
 regex = "1.10.4"
