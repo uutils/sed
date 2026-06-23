@@ -250,8 +250,26 @@ checksum = "57af92d1db7f6871b7e82c79cd87f2501db66f36b0eab924be6ea83dd6b2f3f3"
 dependencies = [
  "anyhow",
  "cc",
- "colored",
+ "colored 2.2.0",
  "getrandom 0.2.17",
+ "glob",
+ "libc",
+ "nix",
+ "serde",
+ "serde_json",
+ "statrs",
+]
+
+[[package]]
+name = "codspeed"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea0fb765e7d2f2f24c2eb54537b7f1e172644ba6079f3a219ca86f5a2df99eff"
+dependencies = [
+ "anyhow",
+ "cc",
+ "colored 3.1.1",
+ "getrandom 0.4.2",
  "glob",
  "libc",
  "nix",
@@ -267,9 +285,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4ea79fd0b1f2128cfac6308369013dba92df47baf4a4f66b57d8158224a361d"
 dependencies = [
  "clap",
- "codspeed",
- "codspeed-divan-compat-macros",
- "codspeed-divan-compat-walltime",
+ "codspeed 4.7.0",
+ "codspeed-divan-compat-macros 4.7.0",
+ "codspeed-divan-compat-walltime 4.7.0",
+ "regex",
+]
+
+[[package]]
+name = "codspeed-divan-compat"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89276c4bd8c74194a511652233a74097648f7bbf0fa19b9f3ecce3f0d2772692"
+dependencies = [
+ "clap",
+ "codspeed 5.0.0",
+ "codspeed-divan-compat-macros 5.0.0",
+ "codspeed-divan-compat-walltime 5.0.0",
  "regex",
 ]
 
@@ -288,6 +319,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codspeed-divan-compat-macros"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8b0dcdb5a2cc3469fd6625db381149d4caa42009864b8e1877b9f67fc3b2e02"
+dependencies = [
+ "divan-macros",
+ "itertools",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "codspeed-divan-compat-walltime"
 version = "4.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -295,7 +340,22 @@ checksum = "490c04f6076be6eacfafb496b8b237f3efbbed93838f2689115cc6f35fcf81c9"
 dependencies = [
  "cfg-if",
  "clap",
- "codspeed",
+ "codspeed 4.7.0",
+ "condtype",
+ "divan-macros",
+ "libc",
+ "regex-lite",
+]
+
+[[package]]
+name = "codspeed-divan-compat-walltime"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d54a197bce62fc237bfbc17b299fedf2a091ac62f0a0c24b885a9e6c85abdd30"
+dependencies = [
+ "cfg-if",
+ "clap",
+ "codspeed 5.0.0",
  "condtype",
  "divan-macros",
  "libc",
@@ -316,6 +376,15 @@ checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "colored"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
+dependencies = [
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1201,7 +1270,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
- "codspeed-divan-compat",
+ "codspeed-divan-compat 5.0.0",
  "ctor",
  "fancy-regex",
  "hex",
@@ -1571,7 +1640,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "069b34217c27f611e1589f540f58118dbf226a9e407d38ab472052ff075a1dc2"
 dependencies = [
  "clap",
- "codspeed-divan-compat",
+ "codspeed-divan-compat 4.7.0",
  "dns-lookup",
  "fluent",
  "fluent-syntax",

@@ -36,7 +36,7 @@ chrono = { version = "0.4.37", default-features = false, features = [
 clap = { version = "4.4", features = ["wrap_help", "cargo"] }
 clap_complete = "4.5"
 clap_mangen = "0.3"
-divan = { package = "codspeed-divan-compat", version = "4.0.5" }
+divan = { package = "codspeed-divan-compat", version = "5.0.0" }
 fancy-regex = "0.18.0"
 hex = "0.4"
 libc = "0.2.153"
