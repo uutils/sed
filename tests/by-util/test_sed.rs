@@ -1017,6 +1017,32 @@ fn write_two_files() -> std::io::Result<()> {
     Ok(())
 }
 
+#[test]
+fn write_first_line_with_w_command() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("N;W {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["-n", "-e", &cmd])
+        .pipe_in("abc\ndef\n")
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert_eq!(actual, "abc\n");
+
+    Ok(())
+}
+
+#[test]
+fn write_first_line_with_w_command_is_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "W /tmp/out"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `W'\n");
+}
+
 ////////////////////////////////////////////////////////////
 // =, l commands
 check_output!(number_continuous, ["/l2_/=", LINES1, LINES2]);
