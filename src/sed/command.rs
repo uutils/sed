@@ -312,11 +312,11 @@ impl Command {
 
 #[derive(Debug)]
 /// Command-specific data
-/// After parsing, t, b Label elements are converted into BranchTarget ones.
+/// After parsing, t, T, b Label elements are converted into BranchTarget ones.
 pub enum CommandData {
     None,
-    BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't', '{'
-    Label(Option<String>),                      // Label name for 'b', 't', ':'
+    BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't', 'T', '{'
+    Label(Option<String>),                      // Label name for 'b', 't', 'T', ':'
     Path(PathBuf),                              // File path for 'r'
     NamedWriter(Rc<RefCell<NamedWriter>>),      // File output for 'w'
     Number(usize),                              // Number for 'l', 'q', 'Q' (GNU)
