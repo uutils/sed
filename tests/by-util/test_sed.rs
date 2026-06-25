@@ -283,6 +283,17 @@ check_output!(addr_range_odd, ["-n", "1~2p", LINES1]);
 check_output!(addr_range_step_zero, ["-n", "10~0p", LINES1]);
 check_output!(addr_range_end_multiple, ["-n", "/l1_2/,~10p", LINES1]);
 
+#[test]
+fn command_may_end_before_closing_brace() {
+    for script in ["{p}", "1{p}", "/a/{p}"] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is("a\na\n");
+    }
+}
+
 ////////////////////////////////////////////////////////////
 
 // Quantifiers: {m,n}

@@ -521,6 +521,10 @@ fn parse_command_ending(
         return Ok(());
     }
 
+    if !line.eol() && line.current() == '}' {
+        return Ok(());
+    }
+
     if !line.eol() {
         return compilation_error(
             lines,
