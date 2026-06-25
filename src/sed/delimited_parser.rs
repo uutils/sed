@@ -263,10 +263,9 @@ fn parse_character_class(
 
                 continue;
             }
-            // Not a POSIX construct — treat as literal
+            // Not a POSIX construct: '[' is literal, and the next character
+            // may still terminate or otherwise participate in the class.
             result.push('[');
-            result.push(marker);
-            line.advance();
             continue;
         }
 
@@ -844,6 +843,38 @@ mod tests {
         let lines = test_lines();
         let result = parse_character_class(&lines, &mut line).unwrap();
         assert_eq!(result, "[^]abc]");
+    }
+
+    #[test]
+    fn test_literal_open_bracket() {
+        let mut line = char_provider_from("[[]");
+        let lines = test_lines();
+        let result = parse_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[[]");
+    }
+
+    #[test]
+    fn test_negated_literal_open_bracket() {
+        let mut line = char_provider_from("[^[]");
+        let lines = test_lines();
+        let result = parse_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[^[]");
+    }
+
+    #[test]
+    fn test_literal_open_bracket_in_class() {
+        let mut line = char_provider_from("[a[b]");
+        let lines = test_lines();
+        let result = parse_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[a[b]");
+    }
+
+    #[test]
+    fn test_negated_literal_open_bracket_in_class() {
+        let mut line = char_provider_from("[^a[b]");
+        let lines = test_lines();
+        let result = parse_character_class(&lines, &mut line).unwrap();
+        assert_eq!(result, "[^a[b]");
     }
 
     #[test]

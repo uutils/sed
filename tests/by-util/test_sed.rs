@@ -517,6 +517,23 @@ check_output!(subst_re_reuse, ["-e", r"2s//M/;1s/l/L/", LINES1]);
 check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
 check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
 
+#[test]
+fn test_subst_literal_open_bracket_in_character_classes() {
+    for (script, input, expected) in [
+        (r"s/[[]/X/", "x\n", "x\n"),
+        (r"s/[^[]/X/", "x\n", "X\n"),
+        (r"s/[a[b]/X/", "x\n", "x\n"),
+        (r"s/[^a[b]/X/", "x\n", "X\n"),
+        (r"s/\[[a]/X/", "[a\n", "X\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-E", script])
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
