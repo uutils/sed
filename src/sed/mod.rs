@@ -213,6 +213,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
 
         // Other context
         input_name: "<stdin>".to_string(),
+        raw_input_name: "-".to_string(),
         line_number: 0,
         last_address: false,
         last_line: false,

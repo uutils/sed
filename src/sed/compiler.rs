@@ -1346,6 +1346,10 @@ fn get_cmd_spec(
             n_addr: 2,
             handler: compile_empty_command,
         }),
+        'F' if !posix => Ok(CommandSpec {
+            n_addr: 2,
+            handler: compile_empty_command,
+        }),
         'l' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_number_command,

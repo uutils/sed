@@ -42,6 +42,9 @@ pub struct ProcessingContext {
     // Other context
     /// Currently processed input file name (not script) in quoted form
     pub input_name: String,
+    /// Currently processed input file name as supplied, for commands that
+    /// print it directly.
+    pub raw_input_name: String,
     /// Current input line number
     pub line_number: usize,
     /// True if this is the last address of a range
