@@ -6,7 +6,6 @@
 [package]
 name = "sed"
 version = "0.1.1"
-authors = ["uutils developers"]
 license = "MIT"
 description = "sed ~ implemented as universal (cross-platform) utils, written in Rust"
 default-run = "sed"
@@ -135,7 +134,7 @@ must_use_candidate = "allow"                 # 56
 needless_raw_string_hashes = "allow"         # 20
 needless_pass_by_value = "allow"             # 15
 missing_panics_doc = "allow"                 # 12
-cast_possible_truncation = "allow"           # 7
+# cast_possible_truncation = "allow"           # 7
 unnecessary_wraps = "allow"                  # 6
 match_wildcard_for_single_variants = "allow" # 4
 cast_sign_loss = "allow"                     # 4
