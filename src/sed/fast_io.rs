@@ -30,6 +30,11 @@ use std::marker::PhantomData;
 use std::os::fd::RawFd;
 
 #[cfg(unix)]
+use rustix::fd::BorrowedFd;
+#[cfg(target_os = "linux")]
+use rustix::fs::copy_file_range as rustix_copy_file_range;
+
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
 use std::str;
@@ -391,6 +396,19 @@ impl FastCopy {
             is_regular: ftype as libc::mode_t == libc::S_IFREG,
             block_size: st.st_blksize as usize,
         }
+    }
+
+    /// Return a borrowed file descriptor.
+    ///
+    /// # Safety invariant
+    ///
+    /// `FastCopy` only stores file descriptors obtained from open
+    /// [`File`](std::fs::File) objects.  Those `File`s are kept alive
+    /// by the owning [`MmapLineCursor`] / output-buffer, guaranteeing
+    /// the fd remains valid for the duration of any borrow.
+    pub fn as_fd(&self) -> BorrowedFd<'_> {
+        // SAFETY: self.fd is a valid file descriptor owned by a live File.
+        unsafe { BorrowedFd::borrow_raw(self.fd) }
     }
 }
 
@@ -774,10 +792,10 @@ impl OutputBuffer {
                 if chunk.in_fast_copy.is_regular && self.fast_copy.is_regular {
                     portable_copy_file_range(
                         chunk.out_ptr,
-                        chunk.in_fast_copy.fd,
+                        chunk.in_fast_copy.as_fd(),
                         // Input file offset
                         unsafe { chunk.out_ptr.offset_from(chunk.base_ptr) } as libc::off_t,
-                        self.fast_copy.fd,
+                        self.fast_copy.as_fd(),
                         chunk.len,
                         // Alignment block size: the largest of the two
                         chunk.in_fast_copy.block_size.max(self.fast_copy.block_size),
@@ -892,9 +910,9 @@ fn reliable_write(fd: i32, ptr: *const u8, len: usize) -> std::io::Result<usize>
 #[allow(unused_variables)]
 fn portable_copy_file_range(
     in_ptr: *const u8,
-    in_fd: i32,
+    in_fd: BorrowedFd<'_>,
     in_off: libc::off_t,
-    out_fd: i32,
+    out_fd: BorrowedFd<'_>,
     len: usize,
     block_size: usize,
     cover: WriteRange,
@@ -909,7 +927,7 @@ fn portable_copy_file_range(
     }
     #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
     {
-        reliable_write(out_fd, in_ptr, len)
+        reliable_write(out_fd.as_raw_fd(), in_ptr, len)
     }
 }
 
@@ -920,37 +938,34 @@ fn portable_copy_file_range(
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn reliable_copy_file_range(
     in_ptr: *const u8,
-    in_fd: i32,
+    in_fd: BorrowedFd<'_>,
     mut in_off: libc::off_t,
-    out_fd: i32,
+    out_fd: BorrowedFd<'_>,
     len: usize,
 ) -> std::io::Result<usize> {
     let mut pending = len;
     while pending > 0 {
-        let ret = unsafe {
-            libc::copy_file_range(
-                in_fd,
-                &raw mut in_off,
-                out_fd,
-                std::ptr::null_mut(), // Use and update output offset
-                pending,
-                0,
-            )
-        };
-        if ret < 0 {
-            let err = io::Error::last_os_error();
-            return match err.raw_os_error() {
-                Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP) | Some(libc::EXDEV) => {
-                    // Fallback to write(2).
-                    reliable_write(out_fd, in_ptr, pending)
-                }
-                _ => Err(err),
-            };
-        } else if ret == 0 {
-            // EOF reached
-            break;
+        let mut in_off_u64 = in_off as u64;
+        let result: std::io::Result<usize> =
+            rustix_copy_file_range(in_fd, Some(&mut in_off_u64), out_fd, None, pending)
+                .map_err(std::io::Error::from);
+
+        match result {
+            Ok(0) => break,
+            Ok(ret) => {
+                pending -= ret;
+                in_off = in_off_u64 as libc::off_t;
+            }
+            Err(err) => {
+                return match err.raw_os_error() {
+                    Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP) | Some(libc::EXDEV) => {
+                        // Fallback to write(2).
+                        reliable_write(out_fd.as_raw_fd(), in_ptr, pending)
+                    }
+                    _ => Err(err),
+                };
+            }
         }
-        pending -= ret as usize;
     }
     Ok(len)
 }
@@ -962,19 +977,15 @@ fn reliable_copy_file_range(
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn aligned_copy_file_range(
     mut in_ptr: *const u8,
-    in_fd: i32,
+    in_fd: BorrowedFd<'_>,
     mut in_off: libc::off_t,
-    out_fd: i32,
+    out_fd: BorrowedFd<'_>,
     len: usize,
     block_size: usize,
     cover: WriteRange,
 ) -> std::io::Result<usize> {
-    // 1. Get current output offset.
-    let res = unsafe { libc::lseek(out_fd, 0, libc::SEEK_CUR) as i64 };
-    if res < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    let out_off = res as usize;
+    //  Get current output offset.
+    let out_off = rustix::fs::tell(out_fd)? as usize;
     let mut pending = len;
 
     // Obtain head alignment.
@@ -991,7 +1002,7 @@ fn aligned_copy_file_range(
     if head_align > 0 {
         // Align the two files on a block boundary.
         let head_len = head_align.min(pending);
-        reliable_write(out_fd, in_ptr, head_len)?;
+        reliable_write(out_fd.as_raw_fd(), in_ptr, head_len)?;
         in_ptr = unsafe { in_ptr.add(head_len) };
         in_off += head_len as i64;
         pending -= head_len;
@@ -1005,7 +1016,7 @@ fn aligned_copy_file_range(
     // Copy tail if needed.
     if pending > 0 && cover == WriteRange::Complete {
         in_ptr = unsafe { in_ptr.add(aligned_len) };
-        pending -= reliable_write(out_fd, in_ptr, pending)?;
+        pending -= reliable_write(out_fd.as_raw_fd(), in_ptr, pending)?;
     }
 
     Ok(len - pending)
@@ -1038,6 +1049,8 @@ mod tests {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     use std::io::{self, Write};
     use std::io::{Seek, SeekFrom};
+    #[cfg(target_os = "linux")]
+    use std::os::unix::io::AsFd;
     use tempfile::NamedTempFile;
     use tempfile::tempfile;
 
@@ -1773,8 +1786,8 @@ mod tests {
         infile.write_all(data).unwrap();
         infile.rewind().unwrap();
 
-        let in_fd = infile.as_raw_fd();
-        let out_fd = outfile.as_raw_fd();
+        let in_fd = infile.as_fd();
+        let out_fd = outfile.as_fd();
         let in_ptr = data.as_ptr();
 
         // Copy with block size 4, cover = Complete
@@ -1809,8 +1822,8 @@ mod tests {
         infile.write_all(data).unwrap();
         infile.rewind().unwrap();
 
-        let in_fd = infile.as_raw_fd();
-        let out_fd = outfile.as_raw_fd();
+        let in_fd = infile.as_fd();
+        let out_fd = outfile.as_fd();
         let in_ptr = data.as_ptr();
 
         // Copy with block size 4, cover = Blocks
@@ -1826,6 +1839,94 @@ mod tests {
         let mut buf = Vec::new();
         outfile.read_to_end(&mut buf).unwrap();
         assert_eq!(&buf, b"abcdefgh");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_aligned_copy_respects_existing_out_offset() {
+        let mut infile = tempfile().unwrap();
+        let mut outfile = tempfile().unwrap();
+
+        // Write a prefix into the output file so tell() returns a non-zero offset.
+        let prefix = b"HEADER";
+        outfile.write_all(prefix).unwrap();
+        outfile.flush().unwrap();
+
+        // Input data = 12 bytes (3 blocks of 4 when block_size=4).
+        let data = b"abcdefghijkl";
+        infile.write_all(data).unwrap();
+        infile.rewind().unwrap();
+
+        let in_fd = infile.as_fd();
+        let out_fd = outfile.as_fd();
+        let in_ptr = data.as_ptr();
+
+        let copied = aligned_copy_file_range(
+            in_ptr,
+            in_fd,
+            0,
+            out_fd,
+            data.len(),
+            4,
+            WriteRange::Complete,
+        )
+        .unwrap();
+
+        assert_eq!(copied, data.len());
+
+        outfile.rewind().unwrap();
+        let mut buf = Vec::new();
+        outfile.read_to_end(&mut buf).unwrap();
+
+        assert_eq!(&buf, b"HEADERabcdefghijkl");
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_reliable_copy_file_range_rustix_path() {
+        let mut infile = tempfile().unwrap();
+        let mut outfile = tempfile().unwrap();
+
+        let data = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        infile.write_all(data).unwrap();
+        infile.rewind().unwrap();
+
+        let in_fd = infile.as_fd();
+        let out_fd = outfile.as_fd();
+        let in_ptr = data.as_ptr();
+
+        // Copy a subrange starting at offset 10.
+        let copied = reliable_copy_file_range(in_ptr, in_fd, 10, out_fd, 16).unwrap();
+
+        assert_eq!(copied, 16);
+
+        outfile.rewind().unwrap();
+        let mut buf = Vec::new();
+        outfile.read_to_end(&mut buf).unwrap();
+        assert_eq!(&buf, b"ABCDEFGHIJKLMNOP");
+
+        // Now verify that copying into a file with existing data appends correctly.
+        let mut infile2 = tempfile().unwrap();
+        let mut outfile2 = tempfile().unwrap();
+        let input_data = b"abcdefghijklmnopqrstuvwxyz";
+        infile2.write_all(input_data).unwrap();
+        infile2.rewind().unwrap();
+
+        outfile2.write_all(b"PRE:").unwrap();
+        outfile2.flush().unwrap();
+
+        let in_fd2 = infile2.as_fd();
+        let out_fd2 = outfile2.as_fd();
+        let in_ptr2 = input_data.as_ptr();
+
+        let copied2 = reliable_copy_file_range(in_ptr2, in_fd2, 5, out_fd2, 10).unwrap();
+
+        assert_eq!(copied2, 10);
+
+        outfile2.rewind().unwrap();
+        let mut buf2 = Vec::new();
+        outfile2.read_to_end(&mut buf2).unwrap();
+        assert_eq!(&buf2, b"PRE:fghijklmno");
     }
 
     ///////////////////////////////
