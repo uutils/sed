@@ -29,6 +29,9 @@ use uucore::error::{UResult, USimpleError};
 
 const DEFAULT_OUTPUT_WIDTH: usize = 60;
 
+const ERR_ADDRESS_0_USAGE: &str =
+    "address 0 can only be used with ~step, a second regular expression, or a read command";
+
 // Handling required after processing a command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandHandling {
@@ -380,11 +383,7 @@ fn compile_address_range(
             };
 
             if is_line0 && !matches!(addr2, Address::Re(_)) && !is_step_match {
-                return compilation_error(
-                    lines,
-                    line,
-                    "address 0 can only be used with a regular expression or ~step",
-                );
+                return compilation_error(lines, line, ERR_ADDRESS_0_USAGE);
             }
 
             // If needed, transform Address::Line into Address::Step*.
@@ -399,14 +398,13 @@ fn compile_address_range(
         }
     }
 
-    // zero-address r command check
+    // Zero-address read command check
     if is_line0 && n_addr == 1 {
-        // after retrieval of first address, subsequent spaces
+        // After retrieval of first address, subsequent spaces
         // are consumed unconditionally. By now, the position
-        // must be in non-whitespace character or eol.
-        let next_cmd = if line.eol() { '\0' } else { line.current() };
-        if !matches!(next_cmd, 'r') {
-            return compilation_error(lines, line, "address 0 requires a second address");
+        // must be in non-whitespace character or EOL.
+        if line.eol() || !matches!(line.current(), 'r' | 'R') {
+            return compilation_error(lines, line, ERR_ADDRESS_0_USAGE);
         }
     }
 
@@ -1881,7 +1879,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("address 0 requires a second addres")
+                .contains(ERR_ADDRESS_0_USAGE)
         );
     }
 
@@ -1897,7 +1895,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("address 0 requires a second addres")
+                .contains(ERR_ADDRESS_0_USAGE)
         );
     }
 
