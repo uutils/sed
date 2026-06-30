@@ -105,6 +105,16 @@ pub enum ReplacementPart {
     Group(u32),      // \1 to \9
 }
 
+// The maximum value allowed in regex quantifier
+pub const RE_DUP_MAX: usize = 32767;
+
+/// Regex modes (BRE or ERE)
+#[derive(Copy, Clone, Debug)]
+pub enum RegexMode {
+    Basic,
+    Extended,
+}
+
 #[derive(Debug)]
 /// All specified replacements for an RE
 pub struct ReplacementTemplate {
