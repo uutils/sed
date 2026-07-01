@@ -924,13 +924,13 @@ pub fn compile_subst_flags(
                 subst.ignore_case = true;
                 line.advance();
             }
-          
+
             'm' | 'M' => {
                 if context.posix {
                     return compilation_error(lines, line, "unknown option to 's'");
                 }
             }
-          
+
             'e' => {
                 if posix || sandbox {
                     return compilation_error(
