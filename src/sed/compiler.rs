@@ -31,6 +31,7 @@ const DEFAULT_OUTPUT_WIDTH: usize = 60;
 
 const ERR_ADDRESS_0_USAGE: &str =
     "address 0 can only be used with ~step, a second regular expression, or a read command";
+const ERR_SANDBOX: &str = "command not allowed with --sandbox";
 
 // Handling required after processing a command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -964,6 +965,9 @@ pub fn compile_subst_flags(
             }
 
             'w' => {
+                if sandbox {
+                    return compilation_error(lines, line, ERR_SANDBOX);
+                }
                 let location = ScriptLocation::at_position(lines, line);
                 let path = read_file_path(lines, line)?;
                 subst.write_file = Some(NamedWriter::new(path, location)?);
@@ -1038,8 +1042,11 @@ fn compile_read_file_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    _context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
+    if context.sandbox {
+        return compilation_error(lines, line, ERR_SANDBOX);
+    }
     let path = read_file_path(lines, line)?;
     cmd.data = CommandData::Path(path);
     Ok(CommandHandling::Continue)
@@ -1050,8 +1057,11 @@ fn compile_write_file_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    _context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
+    if context.sandbox {
+        return compilation_error(lines, line, ERR_SANDBOX);
+    }
     let location = ScriptLocation::at_position(lines, line);
     let path = read_file_path(lines, line)?;
     cmd.data = CommandData::NamedWriter(NamedWriter::new(path, location)?);
@@ -2235,6 +2245,15 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_subst_flag_w_rejected_under_sandbox() {
+        let (lines, mut chars) = make_providers("w out.txt");
+        let mut subst = Substitution::default();
+
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, true).unwrap_err();
+        assert!(err.to_string().contains(ERR_SANDBOX));
+    }
+
+    #[test]
     fn test_compile_subst_flag_e() {
         let (lines, mut chars) = make_providers("e");
         let mut subst = Substitution::default();
@@ -2531,6 +2550,32 @@ mod tests {
         assert_eq!(collect_codes(head), vec!['a', '{', 'b']);
         assert_eq!(collect_codes(outer), vec!['{', 'b']);
         assert_eq!(collect_codes(inner), vec!['x', 'b']);
+    }
+
+    // compile_read_file_command
+    #[test]
+    fn test_compile_read_file_command_rejected_under_sandbox() {
+        let (mut lines, mut chars) = make_providers("r input.txt");
+        let mut cmd = Command::default();
+        let mut context = ctx();
+        context.sandbox = true;
+
+        let err =
+            compile_read_file_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
+        assert!(err.to_string().contains(ERR_SANDBOX));
+    }
+
+    // compile_write_file_command
+    #[test]
+    fn test_compile_write_file_command_rejected_under_sandbox() {
+        let (mut lines, mut chars) = make_providers("w out.txt");
+        let mut cmd = Command::default();
+        let mut context = ctx();
+        context.sandbox = true;
+
+        let err =
+            compile_write_file_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
+        assert!(err.to_string().contains(ERR_SANDBOX));
     }
 
     // compile_label_command
