@@ -36,14 +36,14 @@ chrono = { version = "0.4.37", default-features = false, features = [
 clap = { version = "4.4", features = ["wrap_help", "cargo"] }
 clap_complete = "4.5"
 clap_mangen = "0.3"
-divan = { package = "codspeed-divan-compat", version = "4.0.5" }
+divan = { package = "codspeed-divan-compat", version = "5.0.0" }
 fancy-regex = "0.18.0"
 hex = "0.4"
 libc = "0.2.153"
 memchr = "2.7.4"
 memmap2 = "0.9"
-phf = "0.13.0"
-phf_codegen = "0.13.0"
+phf = "0.14.0"
+phf_codegen = "0.14.0"
 predicates = "3.1.3"
 rand = { version = "0.10.0" }
 regex = "1.10.4"
@@ -52,7 +52,7 @@ sysinfo = "0.38"
 tempfile = "3.10.1"
 terminal_size = "0.4.2"
 textwrap = { version = "0.16.1", features = ["terminal_size"] }
-uucore = { version = "0.8.0", features = ["libc"] }
+uucore = { version = "0.9.0", features = ["libc"] }
 xattr = "1.3.1"
 
 
@@ -85,7 +85,7 @@ regex = { workspace = true }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
 uucore = { workspace = true, features = ["entries", "process", "signals", "benchmark"] }
-uutests = "0.8.0"
+uutests = "0.9.0"
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }
@@ -111,7 +111,7 @@ harness = false
 lto = true
 panic = "abort"
 # should be dropped to 1 for binary size without performance drop
-codegen-units = 7 
+codegen-units = 7
 
 # A release-like profile that is as small as possible.
 [profile.release-small]

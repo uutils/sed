@@ -14,7 +14,7 @@ and other extensions.
 
 ## Status
 
-At this state _sed_ implements all POSIX commands
+At this state _sed_ implements all [POSIX features](https://pubs.opengroup.org/onlinepubs/9799919799/)
 and can run correctly the two complex scripts of its integration tests:
 [hanoi.sed](https://github.com/uutils/sed/blob/main/tests/fixtures/sed/script/hanoi.sed) (solves the Towers of Hanoi puzzle) and
 [math.sed](https://github.com/uutils/sed/blob/main/tests/fixtures/sed/script/math.sed)  (implements an arbitrary precision integer math calculator).
@@ -26,9 +26,10 @@ Further work aims to:
 * Implement more GNU extensions,
 * Improve performance where possible.
 
-## Installation
+## Installation and Use
 
-We provide binary for Linux x86_64 from main branch at https://github.com/uutils/sed/releases/tag/latest-commit .
+We provide a Linux x86_64 binary archive from the main branch at
+https://github.com/uutils/sed/releases/tag/latest-commit .
 
 For other platforms, ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).
 
@@ -42,6 +43,10 @@ cargo run --release
 ```
 
 The binary is named `sed` in `target/release/sed`.
+
+You can also try *sed* on the web
+through the [uutils Playground](https://uutils.org//playground/)
+by clicking on the `Load sed` button.
 
 ## Testing
 
@@ -96,6 +101,7 @@ cargo test
   active on line 1 and can finish with the specified regular expression.
 * Address steps can be specified in the form of start~step and start,~step
   ranges.
+* Address 0 can be used in the `r` command to prepend a file.
 
 ### Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.

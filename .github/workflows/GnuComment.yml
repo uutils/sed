@@ -32,12 +32,12 @@ jobs:
             var matchArtifact = artifacts.data.artifacts.filter((artifact) => {
               return artifact.name == "comment"
             })[0];
-            
+
             if (!matchArtifact) {
               console.log('No comment artifact found');
               return;
             }
-            
+
             var download = await github.rest.actions.downloadArtifact({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -54,7 +54,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             var fs = require('fs');
-            
+
             // Check if files exist
             if (!fs.existsSync('./NR')) {
               console.log('No NR file found, skipping comment');
@@ -64,10 +64,10 @@ jobs:
               console.log('No result.txt file found, skipping comment');
               return;
             }
-            
+
             var issue_number = Number(fs.readFileSync('./NR'));
             var content = fs.readFileSync('./result.txt');
-            
+
             if (content.toString().trim().length > 7) { // 7 because we have backquote + \n
               await github.rest.issues.createComment({
                 owner: context.repo.owner,

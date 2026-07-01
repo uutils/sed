@@ -9,8 +9,8 @@
 // file that was distributed with this source code.
 
 use crate::sed::command::{
-    Address, Command, CommandData, ProcessingContext, ReplacementPart, ReplacementTemplate,
-    Substitution, Transliteration,
+    Address, Command, CommandData, ProcessingContext, RegexMode, ReplacementPart,
+    ReplacementTemplate, Substitution, Transliteration,
 };
 use crate::sed::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
@@ -28,6 +28,9 @@ use terminal_size::{Width, terminal_size};
 use uucore::error::{UResult, USimpleError};
 
 const DEFAULT_OUTPUT_WIDTH: usize = 60;
+
+const ERR_ADDRESS_0_USAGE: &str =
+    "address 0 can only be used with ~step, a second regular expression, or a read command";
 
 // Handling required after processing a command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,7 +289,6 @@ fn compile_sequence(
         let n_addr = compile_address_range(lines, line, &mut cmd, context)?;
         line.eat_spaces();
         let mut cmd_spec = get_verified_cmd_spec(lines, line, n_addr, context.posix)?;
-
         // Compile the command according to its specification.
         let mut cmd_mut = cmd.borrow_mut();
         cmd_mut.code = line.current();
@@ -331,10 +333,8 @@ fn compile_address_range(
     let mut is_line0 = false;
 
     line.eat_spaces();
-    if !line.eol()
-        && is_address_char(line.current())
-        && let Ok(addr1) = compile_address(lines, line, context)
-    {
+    if !line.eol() && is_address_char(line.current()) {
+        let addr1 = compile_address(lines, line, context)?;
         is_line0 = matches!(addr1, Address::Line(0));
         cmd.addr1 = Some(addr1);
         if is_line0 && context.posix {
@@ -364,9 +364,8 @@ fn compile_address_range(
         }
 
         // Look for second address.
-        if !line.eol()
-            && let Ok(addr2) = compile_address(lines, line, context)
-        {
+        if !line.eol() {
+            let addr2 = compile_address(lines, line, context)?;
             // Set step_n to the number specified in the (required numeric) address.
             let step_n = if is_step_match || is_step_end {
                 match addr2 {
@@ -384,11 +383,7 @@ fn compile_address_range(
             };
 
             if is_line0 && !matches!(addr2, Address::Re(_)) && !is_step_match {
-                return compilation_error(
-                    lines,
-                    line,
-                    "address 0 can only be used with a regular expression or ~step",
-                );
+                return compilation_error(lines, line, ERR_ADDRESS_0_USAGE);
             }
 
             // If needed, transform Address::Line into Address::Step*.
@@ -403,8 +398,14 @@ fn compile_address_range(
         }
     }
 
+    // Zero-address read command check
     if is_line0 && n_addr == 1 {
-        return compilation_error(lines, line, "address 0 requires a second address");
+        // After retrieval of first address, subsequent spaces
+        // are consumed unconditionally. By now, the position
+        // must be in non-whitespace character or EOL.
+        if line.eol() || line.current() != 'r' {
+            return compilation_error(lines, line, ERR_ADDRESS_0_USAGE);
+        }
     }
 
     Ok(n_addr)
@@ -449,7 +450,12 @@ fn compile_address(
                 // The next character is an arbitrary delimiter
                 line.advance();
             }
-            let re = parse_regex(lines, line)?;
+            let regex_mode = if context.regex_extended {
+                RegexMode::Extended
+            } else {
+                RegexMode::Basic
+            };
+            let re = parse_regex(lines, line, regex_mode)?;
             // Skip over delimiter
             line.advance();
 
@@ -532,7 +538,7 @@ fn parse_command_ending(
 }
 
 /// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
-/// - Replaces `\(`, `\)`, `\?`, `\+` and `\|` with `(`, `)`, `?`, `+` and `|`.
+/// - Replaces `\(`, `\)`, `\?`, `\+`, `\|`, `\{` and `\}` with `(`, `)`, `?`, `+`, `|`, `{` and `}`.
 /// - Puts single-digit back-references in non-capturing groups..
 /// - Escapes ERE-only metacharacters: `+ ? { } | ( )`.
 /// - Leaves all other characters as-is.
@@ -564,6 +570,14 @@ fn bre_to_ere(pattern: &str) -> String {
                 Some('|') => {
                     chars.next();
                     result.push('|'); // Alternation operator
+                }
+                Some('{') => {
+                    chars.next();
+                    result.push('{'); // Brace quantifier start
+                }
+                Some('}') => {
+                    chars.next();
+                    result.push('}'); // Brace quantifier end
                 }
                 Some(v) if v.is_ascii_digit() => {
                     // Back-reference.  In sed BREs these are single-digit
@@ -639,7 +653,6 @@ fn compile_regex(
     } else {
         &bre_to_ere(pattern)
     };
-
     // Add case-insensitive modifier if needed.
     let pattern = if icase {
         format!("(?i){pattern}")
@@ -786,12 +799,16 @@ fn compile_subst_command(
         );
     }
 
-    let pattern = parse_regex(lines, line)?;
-
+    let regex_mode = if context.regex_extended {
+        RegexMode::Extended
+    } else {
+        RegexMode::Basic
+    };
+    let pattern = parse_regex(lines, line, regex_mode)?;
     let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line)?;
-    compile_subst_flags(lines, line, &mut subst, context)?;
+    compile_subst_flags(lines, line, &mut subst, context.posix, context.sandbox)?;
 
     if pattern.is_empty() && subst.ignore_case {
         return compilation_error(
@@ -817,7 +834,6 @@ fn compile_subst_command(
             ),
         );
     }
-
     cmd.data = CommandData::Substitution(subst);
 
     parse_command_ending(lines, line, cmd)?;
@@ -865,13 +881,15 @@ pub fn compile_subst_flags(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     subst: &mut Substitution,
-    context: &mut ProcessingContext,
+    posix: bool,
+    sandbox: bool,
 ) -> UResult<()> {
     let mut seen_g_or_n = false;
 
     subst.occurrence = 1; // default
     subst.print_flag = false;
     subst.ignore_case = false;
+    subst.execute = false;
     subst.write_file = None;
 
     loop {
@@ -906,11 +924,23 @@ pub fn compile_subst_flags(
                 subst.ignore_case = true;
                 line.advance();
             }
-
-            'm' | 'M' | 'e' => {
+          
+            'm' | 'M' => {
                 if context.posix {
                     return compilation_error(lines, line, "unknown option to 's'");
                 }
+            }
+          
+            'e' => {
+                if posix || sandbox {
+                    return compilation_error(
+                        lines,
+                        line,
+                        "the 'e' substitute flag is not allowed with --posix or --sandbox",
+                    );
+                }
+                subst.execute = true;
+                line.advance();
             }
 
             _c @ '1'..='9' => {
@@ -1160,6 +1190,14 @@ fn compile_text_command_gnu(
 ) -> UResult<CommandHandling> {
     // True after a \ at the end of a line
     let mut escaped_newline = false;
+
+    if line.eol() {
+        return compilation_error(
+            lines,
+            line,
+            format!("command `{}' expects \\ followed by text", cmd.code),
+        );
+    }
 
     // Skip optional \.
     if !line.eol() && line.current() == '\\' {
@@ -1580,6 +1618,21 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_re_extended() {
+        let (lines, chars) = make_providers("acaa\nbbb\nccc");
+        let mut ctx = ctx();
+        ctx.regex_extended = true;
+        let regex = compile_regex(&lines, &chars, "cc{0,}", &ctx, false)
+            .unwrap()
+            .expect("regex should be present");
+        assert!(
+            regex
+                .is_match(&mut IOChunk::new_from_str("acaa\nccc"))
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn test_compile_re_case_insensitive() {
         let (lines, chars) = dummy_providers();
         let regex = compile_regex(&lines, &chars, "abc", &ctx(), true)
@@ -1809,9 +1862,65 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_compile_address_range_error_propagation() {
+        let (lines, mut chars) = make_providers("1,/abc");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("unterminated regular expression"));
+    }
+
     // compile_sequence
     fn empty_line() -> ScriptCharProvider {
         ScriptCharProvider::new("")
+    }
+
+    #[test]
+    fn test_zero_addr_r_accepted() {
+        for input in ["0r", "0  r"] {
+            let (lines, mut chars) = make_providers(input);
+            let mut cmd = Rc::new(RefCell::new(Command::default()));
+            let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
+
+            assert_eq!(n_addr, 1);
+            assert!(matches!(cmd.borrow().addr1, Some(Address::Line(0))));
+            assert_eq!(chars.current(), 'r');
+        }
+    }
+
+    // Zero-address with no commands
+    #[test]
+    fn test_zero_addr_no_commands() {
+        let (lines, mut chars) = make_providers("0");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_ADDRESS_0_USAGE)
+        );
+    }
+
+    // Zero-address with a command other than 'r' must still be rejected.
+    #[test]
+    fn test_zero_addr_non_r_rejected() {
+        let (lines, mut chars) = make_providers("0p");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_ADDRESS_0_USAGE)
+        );
     }
 
     #[test]
@@ -2043,7 +2152,7 @@ mod tests {
         let (lines, mut chars) = make_providers("g");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert_eq!(subst.occurrence, 0); // 'g' means all occurrences
     }
 
@@ -2052,7 +2161,7 @@ mod tests {
         let (lines, mut chars) = make_providers("p");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert!(subst.print_flag);
     }
 
@@ -2061,7 +2170,7 @@ mod tests {
         let (lines, mut chars) = make_providers("I");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert!(subst.ignore_case);
     }
 
@@ -2070,7 +2179,7 @@ mod tests {
         let (lines, mut chars) = make_providers("i");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert!(subst.ignore_case);
     }
 
@@ -2079,7 +2188,7 @@ mod tests {
         let (lines, mut chars) = make_providers("3");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert_eq!(subst.occurrence, 3);
     }
 
@@ -2088,7 +2197,7 @@ mod tests {
         let (lines, mut chars) = make_providers("g3");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(
             err.to_string()
                 .contains("multiple 'g' or numeric flags in substitute command")
@@ -2100,7 +2209,7 @@ mod tests {
         let (lines, mut chars) = make_providers("2g");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(
             err.to_string()
                 .contains("multiple 'g' or numeric flags in substitute command")
@@ -2112,7 +2221,7 @@ mod tests {
         let (lines, mut chars) = make_providers("w ");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(err.to_string().contains("missing file path"));
     }
 
@@ -2123,10 +2232,43 @@ mod tests {
         let (lines, mut chars) = make_providers(&format!("w {}", out.display()));
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert_eq!(
             subst.write_file.as_ref().map(|w| w.borrow().path.clone()),
             Some(out)
+        );
+    }
+
+    #[test]
+    fn test_compile_subst_flag_e() {
+        let (lines, mut chars) = make_providers("e");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        assert!(subst.execute);
+    }
+
+    #[test]
+    fn test_compile_subst_flag_e_rejected_under_posix() {
+        let (lines, mut chars) = make_providers("e");
+        let mut subst = Substitution::default();
+
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, true, false).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("not allowed with --posix or --sandbox")
+        );
+    }
+
+    #[test]
+    fn test_compile_subst_flag_e_rejected_under_sandbox() {
+        let (lines, mut chars) = make_providers("e");
+        let mut subst = Substitution::default();
+
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, true).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("not allowed with --posix or --sandbox")
         );
     }
 
@@ -2135,7 +2277,7 @@ mod tests {
         let (lines, mut chars) = make_providers("z");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
 
@@ -2214,6 +2356,11 @@ mod tests {
     fn test_bre_group_translation() {
         assert_eq!(bre_to_ere(r"\(a\?b\+c\|\)"), "(a?b+c|)");
         assert_eq!(bre_to_ere(r"a\(b\)c"), "a(b)c");
+    }
+
+    #[test]
+    fn test_bre_brace_quantifier_translation() {
+        assert_eq!(bre_to_ere(r"\{1,4\}"), "{1,4}");
     }
 
     #[test]
@@ -2807,19 +2954,16 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_text_command_gnu_optional_backslash_eol_eof() {
+    fn test_compile_text_command_gnu_no_text() {
         let mut chars = make_char_provider("a");
         let mut lines = make_line_provider(&[]);
         let mut cmd = Command::default();
         let mut context = ProcessingContext::default();
 
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
+        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("expects \\ followed by text"));
     }
 
     #[test]

@@ -54,9 +54,18 @@ fn test_silent_alias() {
 #[test]
 fn test_missing_script_argument() {
     new_ucmd!()
+        .args(&["-n"])
         .fails()
         .code_is(1)
         .stderr_contains("missing script");
+}
+
+#[test]
+fn test_no_arguments() {
+    new_ucmd!()
+        .fails()
+        .code_is(1)
+        .stdout_contains("Stream editor for filtering and transforming text");
 }
 
 #[test]
@@ -275,6 +284,196 @@ check_output!(addr_range_step_zero, ["-n", "10~0p", LINES1]);
 check_output!(addr_range_end_multiple, ["-n", "/l1_2/,~10p", LINES1]);
 
 ////////////////////////////////////////////////////////////
+
+// Quantifiers: {m,n}
+// m and n are considered to be the first and second numbers in the interval, respectively.
+
+const REGEX_QUANTIFIERS_INPUT: &str =
+    "Hello World\nHelo World\nHelllllo World\nHeo Word\nHeo Worl}d\n";
+
+#[test]
+fn ere_quantifier_exactly_m() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{2}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Hello World\nHelllllo World\n");
+}
+
+#[test]
+fn ere_quantifier_minimum_m() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{1,}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Hello World\nHelo World\nHelllllo World\nHeo Worl}d\n");
+}
+
+#[test]
+fn ere_quantifier_m_to_n() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{3,4}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Helllllo World\n");
+}
+
+#[test]
+fn ere_quantifier_comma_n() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{,4}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is(REGEX_QUANTIFIERS_INPUT);
+}
+
+#[test]
+fn bre_quantifier_minimum_m() {
+    new_ucmd!()
+        .args(&["-n", "-e", "/l\\{3,\\}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Helllllo World\n");
+}
+
+#[test]
+fn bre_quantifier_comma() {
+    new_ucmd!()
+        .args(&["-n", "-e", "/l\\{,\\}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is(REGEX_QUANTIFIERS_INPUT);
+}
+
+#[test]
+fn bre_quantifier_only_closing_brace() {
+    new_ucmd!()
+        .args(&["-n", "-e", "/l\\}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Heo Worl}d\n");
+}
+
+#[test]
+fn test_ere_quantifier_n_gt_m() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{3,2}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_negative_m() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{-2,4}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_invalid_m() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{d,}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_m_too_big() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{32768,}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Regular expression too big");
+}
+
+#[test]
+fn test_ere_quantifier_empty() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_whitespace() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{ }/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_unmatched_brace() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{,/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Unmatched \\{");
+}
+
+#[test]
+fn test_ere_quantifier_unmatched_brace_2() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{m,n/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Unmatched \\{");
+}
+
+#[test]
+fn test_bre_quantifier_unmatched_brace() {
+    new_ucmd!()
+        .args(&["-e", "/l\\{1,2}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Unmatched \\{");
+}
+
+#[test]
+fn test_ere_quantifier_leading_comma_n_too_big() {
+    // The {,n} form must enforce the RE_DUP_MAX upper bound on n.
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{,32768}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Regular expression too big");
+}
+
+// A closing brace used as the regex delimiter must terminate the regex
+// rather than being treated as a literal quantifier brace.
+#[test]
+fn ere_closing_brace_delimiter() {
+    new_ucmd!()
+        .args(&["-E", "-e", "s}x}-}g"])
+        .pipe_in("axbxc\n")
+        .succeeds()
+        .stdout_is("a-b-c\n");
+}
+
+#[test]
+fn ere_opening_brace_delimiter() {
+    new_ucmd!()
+        .args(&["-E", "-e", "s{x{-{g"])
+        .pipe_in("axbxc\n")
+        .succeeds()
+        .stdout_is("a-b-c\n");
+}
+
+#[test]
+fn bre_closing_brace_delimiter() {
+    new_ucmd!()
+        .args(&["-e", "s}x}-}g"])
+        .pipe_in("axbxc\n")
+        .succeeds()
+        .stdout_is("a-b-c\n");
+}
+
 // Substitution: s
 check_output!(subst_any, ["-e", r"s/./X/g", LINES1]);
 check_output!(subst_any_global, ["-e", r"s,.,X,g", LINES1]);
@@ -348,6 +547,89 @@ fn subst_write_file() -> std::io::Result<()> {
     assert_eq!(actual, expected, "Output did not match fixture");
 
     Ok(())
+}
+
+#[test]
+fn test_subst_e_flag_basic() {
+    new_ucmd!()
+        .arg("s/.*/echo hi/e")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\n");
+}
+
+#[test]
+fn test_subst_e_flag_preserves_unmatched_lines() {
+    new_ucmd!()
+        .args(&["-e", "s/^match$/echo replaced/e"])
+        .pipe_in("no\nmatch\nno\n")
+        .succeeds()
+        .stdout_is("no\nreplaced\nno\n");
+}
+
+#[test]
+fn test_subst_e_flag_strips_trailing_newline() {
+    // echo produces "hello\n", e flag should strip trailing newline
+    new_ucmd!()
+        .arg("s/.*/echo hello/e")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("hello\n");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_subst_e_flag_multiline_output() {
+    // Command that produces multiple lines
+    new_ucmd!()
+        .arg(r#"s/.*/printf 'a\nb'/e"#)
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+}
+
+#[test]
+fn test_subst_e_flag_combined_with_g() {
+    // e flag with other flags
+    new_ucmd!().arg("s/x/echo y/ge").pipe_in("x\n").succeeds();
+}
+
+#[test]
+fn test_subst_e_flag_rejected_with_posix() {
+    // e flag is rejected at compile time if --posix or --sandbox is provided.
+    new_ucmd!()
+        .args(&["--posix", "s/.*/echo hi/e"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[test]
+fn test_subst_e_flag_rejected_with_sandbox() {
+    new_ucmd!()
+        .args(&["--sandbox", "s/.*/echo hi/e"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[test]
+fn test_subst_e_flag_command_failure() {
+    // A non-existent command produces empty output but sed itself succeeds
+    // (matching GNU sed behavior: the shell runs, the command inside fails)
+    new_ucmd!()
+        .arg("s/.*/nonexistent_command/e")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("\n");
+}
+
+#[test]
+fn test_subst_e_flag_no_match_no_exec() {
+    // If substitution doesn't match, command should not execute
+    new_ucmd!()
+        .arg("s/nomatch/echo bad/e")
+        .pipe_in("hello\n")
+        .succeeds()
+        .stdout_is("hello\n");
 }
 
 ////////////////////////////////////////////////////////////
@@ -774,6 +1056,14 @@ check_output!(
 check_output!(read_ok, [format!("4r {LINES2}"), LINES1.to_string()]);
 check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
 check_output!(read_empty, ["6r input/empty", LINES1]);
+check_output!(
+    cmd_read_zero_addr,
+    [format!("0r {LINES2}"), LINES1.to_string()]
+);
+check_output!(
+    cmd_read_one_addr,
+    [format!("1r {LINES2}"), LINES1.to_string()]
+);
 
 #[test]
 fn write_single_file() -> std::io::Result<()> {
@@ -1115,6 +1405,17 @@ fn test_incomplete_test_command_posix() {
 }
 
 #[test]
+fn test_empty_text_commands_fail() {
+    for command in ["a", "c", "i"] {
+        new_ucmd!()
+            .args(&["-e", command])
+            .fails()
+            .code_is(1)
+            .stderr_contains(format!("command `{command}' expects \\ followed by text"));
+    }
+}
+
+#[test]
 fn test_addr0_non_posix() {
     new_ucmd!()
         .args(&["--posix", "0,/foo/p"])
@@ -1129,7 +1430,7 @@ fn test_addr0_second_required() {
         .args(&["0p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:2: error: address 0 requires a second address\n");
+        .stderr_is("sed: <script argument 1>:1:2: error: address 0 can only be used with ~step, a second regular expression, or a read command\n");
 }
 
 #[test]
@@ -1138,7 +1439,7 @@ fn test_addr0_second_re_only() {
         .args(&["0,4p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with a regular expression or ~step\n");
+        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with ~step, a second regular expression, or a read command\n");
 }
 
 #[test]
