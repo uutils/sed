@@ -808,7 +808,7 @@ fn compile_subst_command(
     let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line)?;
-    compile_subst_flags(lines, line, &mut subst)?;
+    compile_subst_flags(lines, line, &mut subst, context.posix, context.sandbox)?;
 
     if pattern.is_empty() && subst.ignore_case {
         return compilation_error(
@@ -881,12 +881,15 @@ pub fn compile_subst_flags(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     subst: &mut Substitution,
+    posix: bool,
+    sandbox: bool,
 ) -> UResult<()> {
     let mut seen_g_or_n = false;
 
     subst.occurrence = 1; // default
     subst.print_flag = false;
     subst.ignore_case = false;
+    subst.execute = false;
     subst.write_file = None;
 
     loop {
@@ -916,6 +919,18 @@ pub fn compile_subst_flags(
 
             'i' | 'I' => {
                 subst.ignore_case = true;
+                line.advance();
+            }
+
+            'e' => {
+                if posix || sandbox {
+                    return compilation_error(
+                        lines,
+                        line,
+                        "the 'e' substitute flag is not allowed with --posix or --sandbox",
+                    );
+                }
+                subst.execute = true;
                 line.advance();
             }
 
@@ -2128,7 +2143,7 @@ mod tests {
         let (lines, mut chars) = make_providers("g");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert_eq!(subst.occurrence, 0); // 'g' means all occurrences
     }
 
@@ -2137,7 +2152,7 @@ mod tests {
         let (lines, mut chars) = make_providers("p");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert!(subst.print_flag);
     }
 
@@ -2146,7 +2161,7 @@ mod tests {
         let (lines, mut chars) = make_providers("I");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert!(subst.ignore_case);
     }
 
@@ -2155,7 +2170,7 @@ mod tests {
         let (lines, mut chars) = make_providers("i");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert!(subst.ignore_case);
     }
 
@@ -2164,7 +2179,7 @@ mod tests {
         let (lines, mut chars) = make_providers("3");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert_eq!(subst.occurrence, 3);
     }
 
@@ -2173,7 +2188,7 @@ mod tests {
         let (lines, mut chars) = make_providers("g3");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(
             err.to_string()
                 .contains("multiple 'g' or numeric flags in substitute command")
@@ -2185,7 +2200,7 @@ mod tests {
         let (lines, mut chars) = make_providers("2g");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(
             err.to_string()
                 .contains("multiple 'g' or numeric flags in substitute command")
@@ -2197,7 +2212,7 @@ mod tests {
         let (lines, mut chars) = make_providers("w ");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(err.to_string().contains("missing file path"));
     }
 
@@ -2208,10 +2223,43 @@ mod tests {
         let (lines, mut chars) = make_providers(&format!("w {}", out.display()));
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
         assert_eq!(
             subst.write_file.as_ref().map(|w| w.borrow().path.clone()),
             Some(out)
+        );
+    }
+
+    #[test]
+    fn test_compile_subst_flag_e() {
+        let (lines, mut chars) = make_providers("e");
+        let mut subst = Substitution::default();
+
+        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        assert!(subst.execute);
+    }
+
+    #[test]
+    fn test_compile_subst_flag_e_rejected_under_posix() {
+        let (lines, mut chars) = make_providers("e");
+        let mut subst = Substitution::default();
+
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, true, false).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("not allowed with --posix or --sandbox")
+        );
+    }
+
+    #[test]
+    fn test_compile_subst_flag_e_rejected_under_sandbox() {
+        let (lines, mut chars) = make_providers("e");
+        let mut subst = Substitution::default();
+
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, true).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("not allowed with --posix or --sandbox")
         );
     }
 
@@ -2220,7 +2268,7 @@ mod tests {
         let (lines, mut chars) = make_providers("z");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
 
