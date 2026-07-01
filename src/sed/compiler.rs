@@ -918,7 +918,7 @@ pub fn compile_subst_flags(
             }
 
             'i' | 'I' => {
-                if context.posix {
+                if posix {
                     return compilation_error(lines, line, "unknown option to 's'");
                 }
                 subst.ignore_case = true;
@@ -926,7 +926,7 @@ pub fn compile_subst_flags(
             }
 
             'm' | 'M' => {
-                if context.posix {
+                if posix {
                     return compilation_error(lines, line, "unknown option to 's'");
                 }
             }
