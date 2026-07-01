@@ -930,7 +930,7 @@ pub fn compile_subst_flags(
 
             'm' | 'M' => {
                 if posix {
-                    return compilation_error(lines, line, "unknown option to 's'");
+                    return compilation_error(lines, line, ERR_UNKNOWN_OPTION_TO_S);
                 }
             }
 
