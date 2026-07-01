@@ -97,6 +97,7 @@ cargo test
   active on line 1 and can finish with the specified regular expression.
 * Address steps can be specified in the form of start~step and start,~step
   ranges.
+* Address 0 can be used in the `r` command to prepend a file.
 
 ### Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.
