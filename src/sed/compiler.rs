@@ -29,6 +29,9 @@ use uucore::error::{UResult, USimpleError};
 
 const DEFAULT_OUTPUT_WIDTH: usize = 60;
 
+const ERR_ADDRESS_0_USAGE: &str =
+    "address 0 can only be used with ~step, a second regular expression, or a read command";
+
 // Handling required after processing a command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandHandling {
@@ -380,11 +383,7 @@ fn compile_address_range(
             };
 
             if is_line0 && !matches!(addr2, Address::Re(_)) && !is_step_match {
-                return compilation_error(
-                    lines,
-                    line,
-                    "address 0 can only be used with a regular expression or ~step",
-                );
+                return compilation_error(lines, line, ERR_ADDRESS_0_USAGE);
             }
 
             // If needed, transform Address::Line into Address::Step*.
@@ -399,8 +398,14 @@ fn compile_address_range(
         }
     }
 
+    // Zero-address read command check
     if is_line0 && n_addr == 1 {
-        return compilation_error(lines, line, "address 0 requires a second address");
+        // After retrieval of first address, subsequent spaces
+        // are consumed unconditionally. By now, the position
+        // must be in non-whitespace character or EOL.
+        if line.eol() || line.current() != 'r' {
+            return compilation_error(lines, line, ERR_ADDRESS_0_USAGE);
+        }
     }
 
     Ok(n_addr)
@@ -1847,6 +1852,51 @@ mod tests {
     // compile_sequence
     fn empty_line() -> ScriptCharProvider {
         ScriptCharProvider::new("")
+    }
+
+    #[test]
+    fn test_zero_addr_r_accepted() {
+        for input in ["0r", "0  r"] {
+            let (lines, mut chars) = make_providers(input);
+            let mut cmd = Rc::new(RefCell::new(Command::default()));
+            let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
+
+            assert_eq!(n_addr, 1);
+            assert!(matches!(cmd.borrow().addr1, Some(Address::Line(0))));
+            assert_eq!(chars.current(), 'r');
+        }
+    }
+
+    // Zero-address with no commands
+    #[test]
+    fn test_zero_addr_no_commands() {
+        let (lines, mut chars) = make_providers("0");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_ADDRESS_0_USAGE)
+        );
+    }
+
+    // Zero-address with a command other than 'r' must still be rejected.
+    #[test]
+    fn test_zero_addr_non_r_rejected() {
+        let (lines, mut chars) = make_providers("0p");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains(ERR_ADDRESS_0_USAGE)
+        );
     }
 
     #[test]

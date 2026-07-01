@@ -415,6 +415,35 @@ fn list(output: &mut OutputBuffer, line: &IOChunk, max_width: usize) -> UResult<
     Ok(())
 }
 
+/// Handle address 0 read at the beginning of each file.
+fn process_address_0(
+    commands: Option<Rc<RefCell<Command>>>,
+    output: &mut OutputBuffer,
+) -> UResult<()> {
+    // Prescan for zero-address which must produce output
+    // before any input line is read.
+    {
+        let mut current = commands;
+        while let Some(cmd_rc) = current {
+            let next = {
+                let cmd = cmd_rc.borrow();
+
+                if cmd.code == 'r'
+                    && matches!(cmd.addr1, Some(Address::Line(0)))
+                    && cmd.addr2.is_none()
+                {
+                    let path = extract_variant!(cmd, Path);
+                    output.copy_file(path)?;
+                }
+
+                cmd.next.clone()
+            };
+            current = next;
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::cognitive_complexity)]
 /// Process a single input file
 fn process_file(
@@ -423,6 +452,8 @@ fn process_file(
     output: &mut OutputBuffer,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
+    process_address_0(commands.clone(), output)?;
+
     // Loop over the input lines as pattern space.
     'lines: while let Some(mut pattern) = reader.get_line()? {
         context.line_number += 1;

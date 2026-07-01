@@ -973,6 +973,14 @@ check_output!(
 check_output!(read_ok, [format!("4r {LINES2}"), LINES1.to_string()]);
 check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
 check_output!(read_empty, ["6r input/empty", LINES1]);
+check_output!(
+    cmd_read_zero_addr,
+    [format!("0r {LINES2}"), LINES1.to_string()]
+);
+check_output!(
+    cmd_read_one_addr,
+    [format!("1r {LINES2}"), LINES1.to_string()]
+);
 
 #[test]
 fn write_single_file() -> std::io::Result<()> {
@@ -1339,7 +1347,7 @@ fn test_addr0_second_required() {
         .args(&["0p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:2: error: address 0 requires a second address\n");
+        .stderr_is("sed: <script argument 1>:1:2: error: address 0 can only be used with ~step, a second regular expression, or a read command\n");
 }
 
 #[test]
@@ -1348,7 +1356,7 @@ fn test_addr0_second_re_only() {
         .args(&["0,4p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with a regular expression or ~step\n");
+        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with ~step, a second regular expression, or a read command\n");
 }
 
 #[test]
