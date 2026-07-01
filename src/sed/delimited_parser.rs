@@ -157,7 +157,7 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         }
 
         'U' => {
-            // Short Unicode escape \UXXXXXXXX (exactly eight heax digits)
+            // Short Unicode escape \UXXXXXXXX (exactly eight hex digits)
             line.advance(); // move past 'x'
             match parse_numeric_escape(line, |c| c.is_ascii_hexdigit(), 8, 16) {
                 Some(decoded) => Some(decoded),
