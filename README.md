@@ -26,7 +26,7 @@ Further work aims to:
 * Implement more GNU extensions,
 * Improve performance where possible.
 
-## Installation
+## Installation and Use
 
 We provide a Linux x86_64 binary archive from the main branch at
 https://github.com/uutils/sed/releases/tag/latest-commit .
@@ -43,6 +43,10 @@ cargo run --release
 ```
 
 The binary is named `sed` in `target/release/sed`.
+
+You can also try *sed* on the web
+through the [uutils Playground](https://uutils.org//playground/)
+by clicking on the `Load sed` button.
 
 ## Testing
 
