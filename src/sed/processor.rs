@@ -19,7 +19,7 @@ use crate::sed::named_writer;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::display::Quotable;
@@ -215,6 +215,49 @@ fn shell_command(_cmd: &str) -> std::process::Command {
     unimplemented!("the 'e' substitute flag requires a platform shell (/bin/sh or cmd.exe)");
 }
 
+/// Run `cmd` in a shell, returning its standard output. The child's
+/// standard error is left connected to this process's own, matching GNU
+/// sed's behavior of letting shell errors surface directly rather than
+/// being silently captured.
+fn shell_stdout(cmd: &str) -> io::Result<Vec<u8>> {
+    let mut child = shell_command(cmd)
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
+    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut buf = Vec::new();
+    stdout.read_to_end(&mut buf)?;
+    child.wait()?;
+    Ok(buf)
+}
+
+/// Execute the pattern space as a shell command, replacing its contents
+/// with the command's standard output, minus one trailing newline.
+fn execute_pattern_as_shell(
+    pattern: &mut IOChunk,
+    command: &Command,
+    context: &mut ProcessingContext,
+) -> UResult<()> {
+    let cmd_str = pattern.as_str()?.to_string();
+    let stdout_bytes = shell_stdout(&cmd_str).map_err(|e| {
+        input_runtime_error::<()>(
+            &command.location,
+            context,
+            format!("failed to execute shell command: {e}"),
+        )
+        .unwrap_err()
+    })?;
+    let mut shell_out = String::from_utf8_lossy(&stdout_bytes).into_owned();
+    if shell_out.ends_with("\r\n") {
+        // On windows, both return carriage and newline characters are used
+        shell_out.truncate(shell_out.len() - 2);
+    } else if shell_out.ends_with('\n') {
+        // Strip the trailing newline, as GNU sed does
+        shell_out.pop();
+    }
+    pattern.set_to_string(shell_out, pattern.is_newline_terminated());
+    Ok(())
+}
+
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
@@ -328,24 +371,7 @@ fn substitute(
 
         // Execute the pattern space as a shell command if the 'e' flag is set
         if sub.execute {
-            let cmd_str = pattern.as_str()?.to_string();
-            let output_bytes = shell_command(&cmd_str).output().map_err(|e| {
-                input_runtime_error::<()>(
-                    &command.location,
-                    context,
-                    format!("failed to execute shell command: {e}"),
-                )
-                .unwrap_err()
-            })?;
-            let mut shell_out = String::from_utf8_lossy(&output_bytes.stdout).into_owned();
-            if shell_out.ends_with("\r\n") {
-                // On windows, both return carriage and newline characters are used
-                shell_out.truncate(shell_out.len() - 2);
-            } else if shell_out.ends_with('\n') {
-                // Strip the trailing newline, as GNU sed does
-                shell_out.pop();
-            }
-            pattern.set_to_string(shell_out, pattern.is_newline_terminated());
+            execute_pattern_as_shell(pattern, command, context)?;
         }
 
         if sub.print_flag {
@@ -581,6 +607,23 @@ fn process_file(
                     pattern.clear();
                     break;
                 }
+                'e' => match &command.data {
+                    CommandData::None => {
+                        execute_pattern_as_shell(&mut pattern, &command, context)?;
+                    }
+                    CommandData::Text(cmd_str) => {
+                        let stdout_bytes = shell_stdout(cmd_str).map_err(|e| {
+                            input_runtime_error::<()>(
+                                &command.location,
+                                context,
+                                format!("failed to execute shell command: {e}"),
+                            )
+                            .unwrap_err()
+                        })?;
+                        output.write_str(String::from_utf8_lossy(&stdout_bytes).into_owned())?;
+                    }
+                    _ => panic!("invalid 'e' command data"),
+                },
                 'g' => {
                     // Replace pattern with the contents of the hold space.
                     pattern.set_to_string(context.hold.content.clone(), context.hold.has_newline);
