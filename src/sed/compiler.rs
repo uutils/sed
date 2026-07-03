@@ -32,6 +32,8 @@ const DEFAULT_OUTPUT_WIDTH: usize = 60;
 const ERR_ADDRESS_0_USAGE: &str =
     "address 0 can only be used with ~step, a second regular expression, or a read command";
 
+const ERR_UNKNOWN_OPTION_TO_S: &str = "unknown option to 's'";
+
 // Handling required after processing a command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandHandling {
@@ -918,8 +920,17 @@ pub fn compile_subst_flags(
             }
 
             'i' | 'I' => {
+                if posix {
+                    return compilation_error(lines, line, ERR_UNKNOWN_OPTION_TO_S);
+                }
                 subst.ignore_case = true;
                 line.advance();
+            }
+
+            'm' | 'M' => {
+                if posix {
+                    return compilation_error(lines, line, ERR_UNKNOWN_OPTION_TO_S);
+                }
             }
 
             'e' => {
@@ -1461,6 +1472,10 @@ fn get_cmd_spec(
             handler: compile_text_command,
         }),
         'd' | 'D' | 'g' | 'G' | 'h' | 'H' | 'n' | 'N' | 'p' | 'P' | 'x' => Ok(CommandSpec {
+            n_addr: 2,
+            handler: compile_empty_command,
+        }),
+        'z' if !posix => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_empty_command,
         }),

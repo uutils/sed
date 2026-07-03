@@ -845,6 +845,42 @@ check_output!(
     ["-e", r"y10\123456789198765432\101", LINES1]
 );
 check_output!(trans_no_new_line, ["-e", r"y/l/L/", NO_NEW_LINE]);
+
+#[test]
+fn pattern_clear_with_z_command() {
+    new_ucmd!()
+        .arg("z")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("\n\n");
+}
+
+#[test]
+fn pattern_clear_with_z_command_silent_print() {
+    new_ucmd!()
+        .args(&["-n", "z;p"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("\n\n");
+}
+
+#[test]
+fn pattern_clear_with_z_preserves_substitution_flag() {
+    new_ucmd!()
+        .args(&["-n", "s/a/b/;z;t changed;b;:changed;c\\\nchanged"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("changed\n");
+}
+
+#[test]
+fn pattern_clear_with_z_is_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "z"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `z'\n");
+}
 check_output!(trans_newline, ["-e", r"1N;2y/\n/X/", LINES1]);
 
 ////////////////////////////////////////////////////////////
@@ -1808,4 +1844,20 @@ fn test_print_first_line_no_newline() {
         .pipe_in("foo")
         .succeeds()
         .stdout_is("foo");
+}
+
+//--posix should reject GNU substitute flags i/I https://github.com/uutils/sed/issues/401
+#[test]
+fn test_posix_reject_flags() {
+    new_ucmd!()
+        .args(&["--posix", "s/a/b/i"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
+
+    new_ucmd!()
+        .args(&["--posix", "s/a/b/m"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
 }

@@ -737,6 +737,12 @@ fn process_file(
                     let trans = extract_variant!(command, Transliteration);
                     transliterate(&mut pattern, trans)?;
                 }
+                'z' => {
+                    // Clear the pattern contents, but preserve newline state
+                    // so automatic printing still emits an empty record.
+                    let (pat_content, _) = pattern.fields_mut()?;
+                    pat_content.clear();
+                }
                 ':' => {
                     // Branch target; do nothing.
                 }
