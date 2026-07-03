@@ -634,10 +634,13 @@ fn test_subst_e_flag_no_match_no_exec() {
 
 ////////////////////////////////////////////////////////////
 // e command (execute)
+#[cfg(unix)]
 #[test]
 fn test_e_command_with_arg_basic() {
     // With an argument, the command runs immediately and its output is
     // written to the stream before the (unmodified) pattern space.
+    // Unix-only: this asserts the shell's raw, unmodified output byte for
+    // byte, which is LF-terminated on Unix but CRLF-terminated on Windows.
     new_ucmd!()
         .arg("e echo hi")
         .pipe_in("a\n")
@@ -645,6 +648,7 @@ fn test_e_command_with_arg_basic() {
         .stdout_is("hi\na\n");
 }
 
+#[cfg(unix)]
 #[test]
 fn test_e_command_with_arg_no_space_required() {
     // No whitespace is required between 'e' and its argument.
@@ -695,6 +699,7 @@ fn test_e_command_no_arg_strips_one_trailing_newline() {
         .stdout_is("a\nb\n");
 }
 
+#[cfg(unix)]
 #[test]
 fn test_e_command_with_arg_does_not_strip_trailing_newline() {
     // Unlike the no-argument form, e-with-argument writes the child's
@@ -706,6 +711,7 @@ fn test_e_command_with_arg_does_not_strip_trailing_newline() {
         .stdout_is("hi\na\n");
 }
 
+#[cfg(unix)]
 #[test]
 fn test_e_command_with_address() {
     new_ucmd!()
