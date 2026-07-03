@@ -633,6 +633,211 @@ fn test_subst_e_flag_no_match_no_exec() {
 }
 
 ////////////////////////////////////////////////////////////
+// e command (execute)
+#[test]
+fn test_e_command_with_arg_basic() {
+    // With an argument, the command runs immediately and its output is
+    // written to the stream before the (unmodified) pattern space.
+    new_ucmd!()
+        .arg("e echo hi")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\na\n");
+}
+
+#[test]
+fn test_e_command_with_arg_no_space_required() {
+    // No whitespace is required between 'e' and its argument.
+    new_ucmd!()
+        .arg("eecho hi")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\na\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_with_arg_runs_real_shell_command() -> Result<(), Box<dyn std::error::Error>> {
+    // The argument is executed and not just its output captured.
+    // Verify a real filesystem side effect, matching GNU sed's own
+    // testsuite check for this command (testsuite/sandbox.sh).
+    let temp_dir = assert_fs::TempDir::new()?;
+    let marker = temp_dir.child("marker");
+
+    new_ucmd!()
+        .arg(format!("etouch {}", marker.path().display()))
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n");
+
+    assert!(marker.path().exists());
+    Ok(())
+}
+
+#[test]
+fn test_e_command_no_arg_pattern_space_becomes_command() {
+    // With no argument, the pattern space itself is executed and replaced
+    // by the command's output.
+    new_ucmd!()
+        .arg("e")
+        .pipe_in("echo hi\n")
+        .succeeds()
+        .stdout_is("hi\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_no_arg_strips_one_trailing_newline() {
+    new_ucmd!()
+        .arg("e")
+        .pipe_in("printf \"a\\nb\\n\"\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+}
+
+#[test]
+fn test_e_command_with_arg_does_not_strip_trailing_newline() {
+    // Unlike the no-argument form, e-with-argument writes the child's
+    // stdout unmodified (echo's own newline is preserved).
+    new_ucmd!()
+        .arg("e echo hi")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\na\n");
+}
+
+#[test]
+fn test_e_command_with_address() {
+    new_ucmd!()
+        .arg("1e echo address")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("address\na\nb\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_semicolon_is_part_of_argument() {
+    // Unlike most commands, ';' does not terminate e's argument.
+    // Rest of the line is consumed unconditionally, so the shell (not
+    // sed) is what splits on the ';' here.
+    new_ucmd!()
+        .arg("e echo hi; echo bye")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\nbye\na\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_recognized_escape_decoded() {
+    // Escape sequences in the argument are decoded by sed itself (\t is
+    // the tab character) before the shell ever sees them, same as a/c/i.
+    new_ucmd!()
+        .arg(r#"e echo "hi\tthere""#)
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\tthere\na\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_unrecognized_escape_falls_back_to_literal() {
+    // '\;' is not a recognized escape, so the backslash is dropped and
+    // ';' is kept literally. It's then the shell's own ';' that splits
+    // the resulting single-line command into two statements.
+    new_ucmd!()
+        .arg(r"e echo hi\;there")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\na\n")
+        .stderr_contains("there");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_backslash_continuation() {
+    // A trailing backslash continues the argument onto the next script
+    // line, joined by an embedded newline. The shell then treats that
+    // as two separate statements.
+    new_ucmd!()
+        .arg("e echo hi \\\nthere")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("hi\nx\n")
+        .stderr_contains("there");
+}
+
+#[test]
+fn test_e_command_dangling_backslash_falls_back_to_no_arg() {
+    // A leading backslash with nothing left to continue into at the end
+    // of the script is treated the same as no argument at all.
+    new_ucmd!()
+        .arg(r"e\")
+        .pipe_in("echo hi\n")
+        .succeeds()
+        .stdout_is("hi\n");
+}
+
+#[test]
+fn test_e_command_rejected_with_posix() {
+    new_ucmd!()
+        .args(&["--posix", "e echo hi"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[test]
+fn test_e_command_rejected_with_sandbox() {
+    new_ucmd!()
+        .args(&["--sandbox", "e echo hi"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_rejected_with_sandbox_no_side_effect() -> Result<(), Box<dyn std::error::Error>> {
+    // Rejection happens at compile time, before any input is processed, so
+    // the shell command must never run.
+    let temp_dir = assert_fs::TempDir::new()?;
+    let marker = temp_dir.child("marker");
+
+    new_ucmd!()
+        .args(&[
+            "--sandbox",
+            "-e",
+            &format!("etouch {}", marker.path().display()),
+        ])
+        .pipe_in("a\n")
+        .fails();
+
+    assert!(!marker.path().exists());
+    Ok(())
+}
+
+#[test]
+fn test_e_command_with_arg_command_failure() {
+    // A failing command's own error goes to stderr. sed itself succeeds.
+    new_ucmd!()
+        .arg("e nonexistent_command")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n")
+        .stderr_contains("nonexistent_command");
+}
+
+#[test]
+fn test_e_command_no_arg_command_failure() {
+    new_ucmd!()
+        .arg("e")
+        .pipe_in("nonexistent_command\n")
+        .succeeds()
+        .stdout_is("\n")
+        .stderr_contains("nonexistent_command");
+}
+
+////////////////////////////////////////////////////////////
 // Transliteration: y
 check_output!(trans_simple, ["-e", r"y/0123456789/9876543210/", LINES1]);
 check_output!(
