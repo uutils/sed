@@ -1102,6 +1102,48 @@ check_output!(
 );
 
 #[test]
+fn sandbox_rejects_read_command() {
+    new_ucmd!()
+        .args(&["--sandbox", &format!("1r {LINES2}"), LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+}
+
+#[test]
+fn sandbox_rejects_subst_write_flag() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("s/l1/x/w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["--sandbox", &cmd, LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert!(actual.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn sandbox_rejects_write_command() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["--sandbox", &cmd, LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert!(actual.is_empty());
+
+    Ok(())
+}
+
+#[test]
 fn write_single_file() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
     let cmd = format!("3,12w {}", temp.path().display());
