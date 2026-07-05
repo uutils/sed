@@ -213,6 +213,7 @@ pub struct Substitution {
     pub print_flag: bool,                             // True if 'p' flag
     pub ignore_case: bool,                            // True if 'I' flag
     pub execute: bool,                                // True if 'e' flag (GNU extension)
+    pub multiline: bool,                              // True if 'm' or 'M' flag (GNU extension)
     pub write_file: Option<Rc<RefCell<NamedWriter>>>, // Writer to file if 'w' flag is used
 }
 

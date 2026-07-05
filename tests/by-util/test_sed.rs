@@ -517,6 +517,42 @@ check_output!(subst_re_reuse, ["-e", r"2s//M/;1s/l/L/", LINES1]);
 check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
 check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
 
+#[test]
+fn subst_dot_matches_newline() {
+    new_ucmd!()
+        .arg("N;s/foo.*bar/X/")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("X\n");
+}
+
+#[test]
+fn subst_multiline_dot_does_not_match_newline() {
+    new_ucmd!()
+        .arg("N;s/foo.*bar/X/m")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("foo\nbar\n");
+}
+
+#[test]
+fn subst_multiline_flag_matches_embedded_line_start() {
+    new_ucmd!()
+        .arg("N;s/^./X/gm")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("Xoo\nXar\n");
+}
+
+#[test]
+fn subst_multiline_flag_matches_embedded_line_end() {
+    new_ucmd!()
+        .arg("N;s/.$/X/gM")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("foX\nbaX\n");
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
