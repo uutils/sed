@@ -85,6 +85,7 @@ cargo test
 * Spaces can precede a regular expression modifier.
 * `I` can be used in as a synonym for the `i` (case insensitive) substitution
   flag.
+* `M` and `m` substitution flags allow multi-line matching.
 * In addition to `\n`, other escape sequences (octal, hex, C) are supported
   in the strings of the `y` command.
   Under POSIX these yield undefined behavior.

@@ -664,8 +664,6 @@ fn compile_regex(
     }
     if multiline {
         modifiers.push('m');
-    } else {
-        modifiers.push('s');
     }
     let pattern = if modifiers.is_empty() {
         pattern.to_string()
