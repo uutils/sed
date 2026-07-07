@@ -1233,6 +1233,15 @@ check_output!(list_ascii, ["-n", "l 60", "input/ascii"]);
 check_output!(list_empty, ["-n", "l 60", "input/empty"]);
 check_output!(list_unicode, ["l 60", "input/unicode"]);
 
+#[test]
+fn list_non_ascii_uses_octal_bytes() {
+    new_ucmd!()
+        .arg("l")
+        .pipe_in("cÃ🧰y\n")
+        .succeeds()
+        .stdout_is("c\\303\\203\\360\\237\\247\\260y$\ncÃ🧰y\n");
+}
+
 ////////////////////////////////////////////////////////////
 // In-place editing
 #[test]
