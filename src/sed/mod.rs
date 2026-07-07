@@ -24,14 +24,15 @@ use crate::sed::command::{ProcessingContext, StringSpace};
 use crate::sed::compiler::compile;
 use crate::sed::processor::process_all_files;
 use crate::sed::script_line_provider::ScriptValue;
-use clap::{Arg, ArgMatches, Command, arg, crate_version};
+use clap::{Arg, ArgMatches, Command, arg};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uucore::error::{UResult, UUsageError};
 use uucore::format_usage;
 
-const ABOUT: &str = "Stream editor for filtering and transforming text";
+const ABOUT: &str = "Stream editor for filtering and transforming text (part of uutils)";
 const USAGE: &str = "sed [OPTION]... [script] [file]...";
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (uutils)");
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
@@ -61,7 +62,7 @@ pub fn uu_app() -> Command {
     let util_name = uucore::util_name();
 
     Command::new(util_name)
-        .version(crate_version!())
+        .version(VERSION)
         .about(ABOUT)
         .override_usage(format_usage(USAGE))
         .args_override_self(true)
