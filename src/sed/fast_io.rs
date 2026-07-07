@@ -244,9 +244,13 @@ impl<'a> IOChunk<'a> {
                     // Use cached result
                     Ok(unsafe { self.content.as_str_unchecked() })
                 } else {
-                    let result = str::from_utf8(content);
-                    self.utf8_verified.set(true);
-                    result.map_err(|e| USimpleError::new(2, e.to_string()))
+                    match str::from_utf8(content) {
+                        Ok(s) => {
+                            self.utf8_verified.set(true);
+                            Ok(s)
+                        }
+                        Err(e) => Err(USimpleError::new(2, e.to_string())),
+                    }
                 }
             }
             IOChunkContent::Owned { content, .. } => Ok(content),
