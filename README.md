@@ -85,6 +85,7 @@ cargo test
 * Spaces can precede a regular expression modifier.
 * `I` can be used in as a synonym for the `i` (case insensitive) substitution
   flag.
+* `M` and `m` substitution flags allow multi-line matching.
 * In addition to `\n`, other escape sequences (octal, hex, C) are supported
   in the strings of the `y` command.
   Under POSIX these yield undefined behavior.
@@ -96,7 +97,8 @@ cargo test
 * A `Q` command (optionally followed by an exit code) quits immediately.
 * The `q` command can be optionally followed by an exit code.
 * The `l` command can be optionally followed by the output width.
-* The `--follow-symlinks` flag for in-place editing.
+* The `--follow-symlinks` option for in-place editing.
+* The `--sandbox` option that limits potentially destructive commands.
 * Address 0 can be used to specify an address range that is already
   active on line 1 and can finish with the specified regular expression.
 * Address steps can be specified in the form of start~step and start,~step

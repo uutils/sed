@@ -517,6 +517,42 @@ check_output!(subst_re_reuse, ["-e", r"2s//M/;1s/l/L/", LINES1]);
 check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
 check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
 
+#[test]
+fn subst_dot_matches_newline() {
+    new_ucmd!()
+        .arg("N;s/foo.*bar/X/")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("X\n");
+}
+
+#[test]
+fn subst_multiline_dot_does_not_match_newline() {
+    new_ucmd!()
+        .arg("N;s/foo.*bar/X/m")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("foo\nbar\n");
+}
+
+#[test]
+fn subst_multiline_flag_matches_embedded_line_start() {
+    new_ucmd!()
+        .arg("N;s/^./X/gm")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("Xoo\nXar\n");
+}
+
+#[test]
+fn subst_multiline_flag_matches_embedded_line_end() {
+    new_ucmd!()
+        .arg("N;s/.$/X/gM")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("foX\nbaX\n");
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
@@ -1311,6 +1347,48 @@ check_output!(
     cmd_read_one_addr,
     [format!("1r {LINES2}"), LINES1.to_string()]
 );
+
+#[test]
+fn sandbox_rejects_read_command() {
+    new_ucmd!()
+        .args(&["--sandbox", &format!("1r {LINES2}"), LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+}
+
+#[test]
+fn sandbox_rejects_subst_write_flag() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("s/l1/x/w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["--sandbox", &cmd, LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert!(actual.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn sandbox_rejects_write_command() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["--sandbox", &cmd, LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert!(actual.is_empty());
+
+    Ok(())
+}
 
 #[test]
 fn write_single_file() -> std::io::Result<()> {

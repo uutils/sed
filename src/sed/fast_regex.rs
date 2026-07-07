@@ -209,13 +209,36 @@ pub enum Regex {
     Fancy(FancyRegex),       // Slowest: RE supporting UTF-8 and back-references
 }
 
+/// Ensure that a regex matches GNU sed's default semantics for `.`
+/// through the appropriate use of the s flag.
+pub fn ensure_dotall(pattern: &str) -> String {
+    // Add (?s) if no flags present.
+    if !pattern.starts_with("(?") {
+        return format!("(?s){pattern}");
+    }
+
+    let Some(close) = pattern.find(')') else {
+        // Malformed inline flag group.
+        return pattern.to_owned();
+    };
+
+    // Add s flag to ?(...) unless 's' or its complement 'm' is there.
+    let flags = &pattern[2..close];
+
+    if flags.contains('m') || flags.contains('s') {
+        pattern.to_owned()
+    } else {
+        format!("(?{flags}s){}", &pattern[close + 1..])
+    }
+}
+
 impl Regex {
     /// Construct the most efficient RE-like matching engine possible.
     pub fn new(pattern: &str) -> Result<Self, Box<dyn Error>> {
         if NEEDS_FANCY_RE.is_match(pattern) {
-            Ok(Self::Fancy(FancyRegex::new(pattern)?))
+            Ok(Self::Fancy(FancyRegex::new(&ensure_dotall(pattern))?))
         } else if NEEDS_RE.is_match(pattern) {
-            Ok(Self::Byte(ByteRegex::new(pattern)?))
+            Ok(Self::Byte(ByteRegex::new(&ensure_dotall(pattern))?))
         } else {
             Ok(Self::Literal(LiteralMatcher::new(&remove_escapes(pattern))))
         }
@@ -676,5 +699,34 @@ mod tests {
         assert!(!matcher.is_match(haystack));
         assert!(matcher.find(haystack).is_none());
         assert_eq!(matcher.iter(haystack).count(), 0);
+    }
+
+    #[test]
+    fn prepends_s_when_no_flag_group() {
+        assert_eq!(ensure_dotall("abc"), "(?s)abc");
+    }
+
+    #[test]
+    fn adds_s_when_no_m_or_s() {
+        assert_eq!(ensure_dotall("(?i)abc"), "(?is)abc");
+        assert_eq!(ensure_dotall("(?)abc"), "(?s)abc");
+    }
+
+    #[test]
+    fn leaves_m_unchanged() {
+        assert_eq!(ensure_dotall("(?m)abc"), "(?m)abc");
+        assert_eq!(ensure_dotall("(?im)abc"), "(?im)abc");
+        assert_eq!(ensure_dotall("(?mi)abc"), "(?mi)abc");
+    }
+
+    #[test]
+    fn leaves_existing_s_unchanged() {
+        assert_eq!(ensure_dotall("(?s)abc"), "(?s)abc");
+        assert_eq!(ensure_dotall("(?is)abc"), "(?is)abc");
+    }
+
+    #[test]
+    fn leaves_malformed_flag_group_unchanged() {
+        assert_eq!(ensure_dotall("(?iabc"), "(?iabc");
     }
 }
