@@ -37,7 +37,6 @@ use std::str;
 use std::path::PathBuf;
 use uucore::error::UError;
 
-#[cfg(unix)]
 use uucore::error::USimpleError;
 
 #[cfg(unix)]
@@ -112,7 +111,7 @@ impl<'a> MmapLineCursor<'a> {
 /// Buffered line reader from any BufRead input.
 pub struct ReadLineCursor {
     reader: Box<dyn BufRead>,
-    buffer: String,
+    buffer: Vec<u8>,
 }
 
 impl ReadLineCursor {
@@ -121,20 +120,20 @@ impl ReadLineCursor {
         let buf = BufReader::new(r);
         Self {
             reader: Box::new(buf),
-            buffer: String::new(),
+            buffer: Vec::new(),
         }
     }
 
     /// If a line is available, return it and its \n termination.
-    fn get_line(&mut self) -> io::Result<Option<(String, bool)>> {
+    fn get_line(&mut self) -> io::Result<Option<(Vec<u8>, bool)>> {
         self.buffer.clear();
         // read_line *includes* the '\n' if present
-        let bytes_read = self.reader.read_line(&mut self.buffer)?;
+        let bytes_read = self.reader.read_until(b'\n', &mut self.buffer)?;
         if bytes_read == 0 {
             return Ok(None);
         }
         // O(1) check whether it ended in '\n'
-        let has_newline = self.buffer.ends_with('\n');
+        let has_newline = self.buffer.ends_with(b"\n");
         // strip it if you don’t want to expose it to the caller
         if has_newline {
             self.buffer.pop();
@@ -181,7 +180,7 @@ impl<'a> IOChunk<'a> {
             }
             #[cfg(unix)]
             _ => {
-                self.content = IOChunkContent::new_owned(String::new(), false);
+                self.content = IOChunkContent::new_owned(Vec::new(), false);
             }
         }
     }
@@ -210,7 +209,7 @@ impl<'a> IOChunk<'a> {
     /// Create an Owned newline-terminated IOChunk from a string.
     pub fn new_from_str(s: &str) -> Self {
         IOChunk {
-            content: IOChunkContent::new_owned(s.to_string(), true),
+            content: IOChunkContent::new_owned(s.as_bytes().to_vec(), true),
             utf8_verified: Cell::new(false),
         }
     }
@@ -218,7 +217,14 @@ impl<'a> IOChunk<'a> {
     /// Set the object's contents to the specified string.
     /// Convert it into Owned if needed.
     pub fn set_to_string(&mut self, new_content: String, add_newline: bool) {
+        self.set_to_bytes(new_content.into_bytes(), add_newline);
         self.utf8_verified.set(true);
+    }
+
+    /// Set the object's contents to the specified bytes.
+    /// Convert it into Owned if needed.
+    pub fn set_to_bytes(&mut self, new_content: Vec<u8>, add_newline: bool) {
+        self.utf8_verified.set(false);
         match &mut self.content {
             IOChunkContent::Owned {
                 content,
@@ -242,14 +248,23 @@ impl<'a> IOChunk<'a> {
             IOChunkContent::MmapInput { content, .. } => {
                 if self.utf8_verified.get() {
                     // Use cached result
+                    // SAFETY: `utf8_verified` is set only if `content`
+                    // is derived from a String or if it has been
+                    // successfully verified.
                     Ok(unsafe { self.content.as_str_unchecked() })
                 } else {
-                    let result = str::from_utf8(content);
-                    self.utf8_verified.set(true);
-                    result.map_err(|e| USimpleError::new(2, e.to_string()))
+                    match str::from_utf8(content) {
+                        Ok(s) => {
+                            self.utf8_verified.set(true);
+                            Ok(s)
+                        }
+                        Err(e) => Err(USimpleError::new(2, e.to_string())),
+                    }
                 }
             }
-            IOChunkContent::Owned { content, .. } => Ok(content),
+            IOChunkContent::Owned { content, .. } => {
+                str::from_utf8(content).map_err(|e| USimpleError::new(2, e.to_string()))
+            }
         }
     }
 
@@ -258,32 +273,28 @@ impl<'a> IOChunk<'a> {
         match &self.content {
             #[cfg(unix)]
             IOChunkContent::MmapInput { content, .. } => content,
-            IOChunkContent::Owned { content, .. } => content.as_bytes(),
+            IOChunkContent::Owned { content, .. } => content,
         }
     }
 
     /// Convert content to the Owned variant if it's not already.
-    /// Fails if the conversion to UTF-8 fails.
     pub fn ensure_owned(&mut self) -> Result<(), Box<dyn UError>> {
         match &self.content {
             IOChunkContent::Owned { .. } => Ok(()), // already owned
             #[cfg(unix)]
             IOChunkContent::MmapInput {
                 content, full_span, ..
-            } => match std::str::from_utf8(content) {
-                Ok(valid_str) => {
-                    let has_newline = full_span.last().copied() == Some(b'\n');
-                    self.content = IOChunkContent::new_owned(valid_str.to_string(), has_newline);
-                    self.utf8_verified.set(true);
-                    Ok(())
-                }
-                Err(e) => Err(USimpleError::new(2, e.to_string())),
-            },
+            } => {
+                let has_newline = full_span.last().copied() == Some(b'\n');
+                self.content = IOChunkContent::new_owned(content.to_vec(), has_newline);
+                self.utf8_verified.set(false);
+                Ok(())
+            }
         }
     }
 
     /// Return mutable access to the content and has_newline fields.
-    pub fn fields_mut(&mut self) -> Result<(&mut String, &mut bool), Box<dyn UError>> {
+    pub fn fields_mut(&mut self) -> Result<(&mut Vec<u8>, &mut bool), Box<dyn UError>> {
         self.ensure_owned()?;
 
         match &mut self.content {
@@ -312,7 +323,7 @@ enum IOChunkContent<'a> {
         full_span: &'a [u8], // Line including original newline, if any
     },
     Owned {
-        content: String,   // Line content without newline
+        content: Vec<u8>,  // Line content without newline
         has_newline: bool, // True if \n-terminated
         #[cfg(not(unix))]
         _phantom: PhantomData<&'a ()>, // Silence E0392 warning
@@ -321,7 +332,7 @@ enum IOChunkContent<'a> {
 
 impl IOChunkContent<'_> {
     /// Construct a new Owned chunk.
-    pub fn new_owned(content: String, has_newline: bool) -> Self {
+    pub fn new_owned(content: Vec<u8>, has_newline: bool) -> Self {
         #[cfg(unix)]
         return IOChunkContent::Owned {
             content,
@@ -343,7 +354,9 @@ impl IOChunkContent<'_> {
             IOChunkContent::MmapInput { content, .. } => unsafe {
                 std::str::from_utf8_unchecked(content)
             },
-            IOChunkContent::Owned { content, .. } => content,
+            IOChunkContent::Owned { content, .. } => unsafe {
+                std::str::from_utf8_unchecked(content)
+            },
         }
     }
 
@@ -627,7 +640,20 @@ impl OutputBuffer {
             s.truncate(s.len() - 1);
         }
         self.write_chunk(&IOChunk::from_content(IOChunkContent::new_owned(
-            s,
+            s.into_bytes(),
+            has_newline,
+        )))
+    }
+
+    /// Schedule the specified bytes for eventual output.
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let (content, has_newline) = if bytes.ends_with(b"\n") {
+            (&bytes[..bytes.len() - 1], true)
+        } else {
+            (bytes, false)
+        };
+        self.write_chunk(&IOChunk::from_content(IOChunkContent::new_owned(
+            content.to_vec(),
             has_newline,
         )))
     }
@@ -654,9 +680,7 @@ impl OutputBuffer {
 /// Implementation of the std::io::Write trait
 impl Write for OutputBuffer {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let s =
-            std::str::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        self.write_str(s)?;
+        self.write_bytes(buf)?;
         Ok(buf.len())
     }
 
@@ -741,7 +765,7 @@ impl OutputBuffer {
                 ..
             } => {
                 self.flush_mmap(WriteRange::Complete)?;
-                self.out.write_all(content.as_bytes())?;
+                self.out.write_all(content)?;
                 if *has_newline {
                     self.out.write_all(b"\n")?;
                 }
@@ -830,7 +854,7 @@ impl OutputBuffer {
                 has_newline,
                 ..
             } => {
-                self.out.write_all(content.as_bytes())?;
+                self.out.write_all(content)?;
                 if *has_newline {
                     self.out.write_all(b"\n")?;
                 }
@@ -1388,7 +1412,7 @@ mod tests {
             ..
         }) = reader.get_line()?
         {
-            assert_eq!(content, "first line");
+            assert_eq!(content, b"first line");
             assert_eq!(content.len(), 10);
             assert!(has_newline);
             assert!(!utf8_verified.get());
@@ -1407,7 +1431,7 @@ mod tests {
             ..
         }) = reader.get_line()?
         {
-            assert_eq!(content, "second line");
+            assert_eq!(content, b"second line");
             assert!(has_newline);
             assert!(!reader.last_line().unwrap());
         } else {
@@ -1492,21 +1516,21 @@ mod tests {
     // is_newline_terminated, is_empty
     #[test]
     fn test_owned_newline_terminated_non_empty() {
-        let chunk = IOChunk::from_content(IOChunkContent::new_owned("line".to_string(), true));
+        let chunk = IOChunk::from_content(IOChunkContent::new_owned(b"line".to_vec(), true));
         assert!(chunk.is_newline_terminated());
         assert!(!chunk.is_empty());
     }
 
     #[test]
     fn test_owned_newline_terminated_empty() {
-        let chunk = IOChunk::from_content(IOChunkContent::new_owned(String::new(), true));
+        let chunk = IOChunk::from_content(IOChunkContent::new_owned(Vec::new(), true));
         assert!(chunk.is_newline_terminated());
         assert!(chunk.is_empty());
     }
 
     #[test]
     fn test_owned_not_newline_terminated() {
-        let chunk = IOChunk::from_content(IOChunkContent::new_owned("line".to_string(), false));
+        let chunk = IOChunk::from_content(IOChunkContent::new_owned(b"line".to_vec(), false));
         assert!(!chunk.is_newline_terminated());
     }
 
@@ -1541,7 +1565,7 @@ mod tests {
     #[test]
     fn test_ensure_owned_on_owned() {
         let mut chunk =
-            IOChunk::from_content(IOChunkContent::new_owned("already owned".to_string(), true));
+            IOChunk::from_content(IOChunkContent::new_owned(b"already owned".to_vec(), true));
 
         let result = chunk.ensure_owned();
         assert!(result.is_ok());
@@ -1553,7 +1577,7 @@ mod tests {
                 has_newline,
                 ..
             } => {
-                assert_eq!(content, "already owned");
+                assert_eq!(content, b"already owned");
                 assert!(*has_newline);
             }
             #[cfg(unix)]
@@ -1578,7 +1602,7 @@ mod tests {
                 has_newline,
                 ..
             } => {
-                assert_eq!(content, "mmap string");
+                assert_eq!(content, b"mmap string");
                 assert!(*has_newline);
             }
             _ => panic!("Expected Owned variant after ensure_owned"),
@@ -1602,7 +1626,7 @@ mod tests {
                 has_newline,
                 ..
             } => {
-                assert_eq!(content, "no newline");
+                assert_eq!(content, b"no newline");
                 assert!(!*has_newline);
             }
             _ => panic!("Expected Owned variant after ensure_owned"),
@@ -1618,23 +1642,18 @@ mod tests {
         let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
 
         let result = chunk.ensure_owned();
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("invalid utf-8"),
-            "Unexpected error message: {}",
-            err_msg
-        );
+        assert!(result.is_ok());
+        assert_eq!(chunk.as_bytes(), b"bad\xFFutf8");
+        assert!(chunk.as_str().is_err());
     }
 
     // fields_mut
     #[test]
     fn test_fields_mut_on_owned() {
-        let mut chunk =
-            IOChunk::from_content(IOChunkContent::new_owned("hello".to_string(), false));
+        let mut chunk = IOChunk::from_content(IOChunkContent::new_owned(b"hello".to_vec(), false));
 
         let (s, _) = chunk.fields_mut().unwrap();
-        s.push_str(" world");
+        s.extend_from_slice(b" world");
 
         assert_eq!(chunk.as_str().unwrap(), "hello world");
     }
@@ -1648,7 +1667,7 @@ mod tests {
 
         {
             let (s, _) = chunk.fields_mut().unwrap();
-            s.push_str("bar");
+            s.extend_from_slice(b"bar");
         }
 
         assert_eq!(chunk.as_str().unwrap(), "foobar");
@@ -1662,7 +1681,7 @@ mod tests {
         let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
 
         let (s, _) = chunk.fields_mut().unwrap();
-        s.push_str(" Δεδομένα");
+        s.extend_from_slice(" Δεδομένα".as_bytes());
 
         assert_eq!(chunk.as_str().unwrap(), "Ζωντανά! Δεδομένα");
     }
@@ -1675,8 +1694,9 @@ mod tests {
         let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
 
         let result = chunk.fields_mut();
-        assert!(result.is_err());
-        assert!(format!("{}", result.unwrap_err()).contains("invalid utf-8"));
+        assert!(result.is_ok());
+        assert_eq!(chunk.as_bytes(), b"abc\xFF");
+        assert!(chunk.as_str().is_err());
     }
 
     #[cfg(unix)]
@@ -1873,7 +1893,7 @@ mod tests {
         IOChunk {
             utf8_verified: Cell::new(true),
             content: IOChunkContent::Owned {
-                content: s.to_string(),
+                content: s.as_bytes().to_vec(),
                 has_newline: has_nl,
                 #[cfg(not(unix))]
                 _phantom: std::marker::PhantomData,
