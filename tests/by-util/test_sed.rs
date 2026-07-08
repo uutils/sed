@@ -879,6 +879,34 @@ fn test_e_command_no_arg_command_failure() {
         .stderr_contains("nonexistent_command");
 }
 
+#[cfg(unix)]
+#[test]
+fn test_e_command_no_arg_non_utf8_output_errors() {
+    // Non-UTF-8 shell output is reported as a runtime error (exit 2)
+    // rather than silently mangled. The pattern space is passed to the
+    // shell verbatim, so the shell's printf emits the raw 0xff byte.
+    new_ucmd!()
+        .arg("e")
+        .pipe_in("printf '\\377'\n")
+        .fails()
+        .code_is(2)
+        .stderr_contains("not valid UTF-8");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_with_arg_non_utf8_output_errors() {
+    // Same for the with-argument form (a separate execution path). The
+    // doubled backslash survives sed's own escape decoding as a single
+    // one, so the shell's printf emits the raw 0xff byte.
+    new_ucmd!()
+        .arg(r"e printf '%b' '\\377'")
+        .pipe_in("a\n")
+        .fails()
+        .code_is(2)
+        .stderr_contains("not valid UTF-8");
+}
+
 ////////////////////////////////////////////////////////////
 // Transliteration: y
 check_output!(trans_simple, ["-e", r"y/0123456789/9876543210/", LINES1]);

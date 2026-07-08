@@ -223,7 +223,7 @@ fn shell_stdout(cmd: &str) -> io::Result<Vec<u8>> {
     let mut child = shell_command(cmd)
         .stdout(std::process::Stdio::piped())
         .spawn()?;
-    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut stdout = child.stdout.take().expect("stdout should be piped");
     let mut buf = Vec::new();
     stdout.read_to_end(&mut buf)?;
     child.wait()?;
@@ -232,7 +232,7 @@ fn shell_stdout(cmd: &str) -> io::Result<Vec<u8>> {
 
 /// Execute the pattern space as a shell command, replacing its contents
 /// with the command's standard output, minus one trailing newline.
-fn execute_pattern_as_shell(
+fn execute_pattern_as_shell_command(
     pattern: &mut IOChunk,
     command: &Command,
     context: &mut ProcessingContext,
@@ -246,12 +246,23 @@ fn execute_pattern_as_shell(
         )
         .unwrap_err()
     })?;
-    let mut shell_out = String::from_utf8_lossy(&stdout_bytes).into_owned();
-    if shell_out.ends_with("\r\n") {
-        // On windows, both return carriage and newline characters are used
-        shell_out.truncate(shell_out.len() - 2);
-    } else if shell_out.ends_with('\n') {
-        // Strip the trailing newline, as GNU sed does
+    let mut shell_out = String::from_utf8(stdout_bytes).map_err(|e| {
+        input_runtime_error::<()>(
+            &command.location,
+            context,
+            format!("shell command output is not valid UTF-8: {e}"),
+        )
+        .unwrap_err()
+    })?;
+    #[cfg(windows)]
+    {
+        if shell_out.ends_with("\r\n") {
+            // On Windows a trailing \r\n is the line terminator; strip both.
+            shell_out.truncate(shell_out.len() - 2);
+        }
+    }
+    // Unix (and some Windows tool) has the trailing \n. Strip it, as GNU sed does.
+    if shell_out.ends_with('\n') {
         shell_out.pop();
     }
     pattern.set_to_string(shell_out, pattern.is_newline_terminated());
@@ -371,7 +382,7 @@ fn substitute(
 
         // Execute the pattern space as a shell command if the 'e' flag is set
         if sub.execute {
-            execute_pattern_as_shell(pattern, command, context)?;
+            execute_pattern_as_shell_command(pattern, command, context)?;
         }
 
         if sub.print_flag {
@@ -609,7 +620,7 @@ fn process_file(
                 }
                 'e' => match &command.data {
                     CommandData::None => {
-                        execute_pattern_as_shell(&mut pattern, &command, context)?;
+                        execute_pattern_as_shell_command(&mut pattern, &command, context)?;
                     }
                     CommandData::Text(cmd_str) => {
                         let stdout_bytes = shell_stdout(cmd_str).map_err(|e| {
@@ -620,7 +631,15 @@ fn process_file(
                             )
                             .unwrap_err()
                         })?;
-                        output.write_str(String::from_utf8_lossy(&stdout_bytes).into_owned())?;
+                        let shell_out = String::from_utf8(stdout_bytes).map_err(|e| {
+                            input_runtime_error::<()>(
+                                &command.location,
+                                context,
+                                format!("shell command output is not valid UTF-8: {e}"),
+                            )
+                            .unwrap_err()
+                        })?;
+                        output.write_str(shell_out)?;
                     }
                     _ => panic!("invalid 'e' command data"),
                 },
