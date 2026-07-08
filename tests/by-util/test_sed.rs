@@ -895,7 +895,6 @@ fn test_e_command_rejected_with_sandbox_no_side_effect() -> Result<(), Box<dyn s
             "-e",
             &format!("etouch {}", marker.path().display()),
         ])
-        .pipe_in("a\n")
         .fails();
 
     assert!(!marker.path().exists());
