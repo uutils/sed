@@ -116,12 +116,19 @@ cargo test
   sequences.
 
 ### Incompatibilities
-* The input is assumed to be valid UTF-8 (this includes 7-bit ASCII).
-  If the input is in another code page, consider converting it through UTF-8
-  in order to avoid errors on invalid UTF-8 sequences and for the correct
-  handling of regular expressions.
-  This _sed_ program can also handle arbitrary byte sequences if no part of the
-  input is treated as string.
+* Similarly to GNU _sed_, input is processed as raw bytes or as valid UTF-8
+  (this includes 7-bit ASCII) based on the locale as specified by the
+  `LC_ALL`, `LC_CTYPE`, and `LANG` environment variables,
+  with the default being byte processing.
+  However, in contrast with GNU _sed_, other locales (e.g. ISO-8859-1)
+  are not supported. If the input is in another code page or encoding
+  and requires locale-specific processing (e.g. ignore/map case,
+  character classes), consider converting it through UTF-8 to ensure
+  the correct handling of locale-specific regular expressions.
+  This _sed_ program can also handle arbitrary byte sequences
+  if no part of the input requires treating it as a Rust String.
+* Back-references aren't supported when input is processed as bytes
+  (`LC_ALL=C`).
 * The command will report an error and fail if duplicate labels are found
   in the script.
   This matches the BSD behavior. The GNU version accepts duplicate labels.

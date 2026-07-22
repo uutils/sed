@@ -69,8 +69,8 @@ impl ScriptLineProvider {
     }
 
     /// Return the next script line to process across all scripts.
-    pub fn next_line(&mut self) -> UResult<Option<String>> {
-        let mut line = String::new();
+    pub fn next_line(&mut self) -> UResult<Option<Vec<u8>>> {
+        let mut line = Vec::new();
 
         loop {
             let advance = match &mut self.state {
@@ -82,13 +82,13 @@ impl ScriptLineProvider {
                     ..
                 } => {
                     line.clear();
-                    let bytes = reader.read_line(&mut line)?;
+                    let bytes = reader.read_until(b'\n', &mut line)?;
                     if bytes == 0 {
                         Some(*index + 1) // finished reading this source
                     } else {
                         *line_number += 1;
                         // Remove trailing newline
-                        if line.ends_with('\n') {
+                        if line.ends_with(b"\n") {
                             line.pop();
                         }
                         return Ok(Some(line));
@@ -114,7 +114,7 @@ impl ScriptLineProvider {
 
         match &self.sources[next_index] {
             ScriptValue::StringVal(s) => {
-                let cursor = std::io::Cursor::new(s.clone());
+                let cursor = std::io::Cursor::new(s.as_bytes().to_vec());
                 self.state = State::Active {
                     index: next_index,
                     reader: Box::new(BufReader::new(cursor)),
@@ -199,7 +199,7 @@ mod tests {
 
         let mut lines = Vec::new();
         while let Some(line) = provider.next_line().unwrap() {
-            lines.push(line.trim_end().to_string());
+            lines.push(String::from_utf8(line).unwrap().trim_end().to_string());
         }
 
         assert_eq!(lines, vec!["line one", "line two", "line three"]);
@@ -216,7 +216,7 @@ mod tests {
 
         let mut lines = Vec::new();
         while let Some(line) = provider.next_line().unwrap() {
-            lines.push(line.trim_end().to_string());
+            lines.push(String::from_utf8(line).unwrap().trim_end().to_string());
         }
 
         assert_eq!(lines, vec!["file line 1", "file line 2"]);
@@ -241,7 +241,7 @@ mod tests {
 
         let mut lines = Vec::new();
         while let Some(line) = provider.next_line().unwrap() {
-            lines.push(line.trim_end().to_string());
+            lines.push(String::from_utf8(line).unwrap().trim_end().to_string());
         }
 
         assert_eq!(
@@ -266,7 +266,7 @@ mod tests {
         let mut provider = ScriptLineProvider::new(input);
 
         if let Some(line) = provider.next_line().unwrap() {
-            assert_eq!(line.trim(), "l1");
+            assert_eq!(String::from_utf8(line).unwrap().trim(), "l1");
             assert_eq!(provider.get_line_number(), 1);
             assert_eq!(provider.get_input_name(), "<script argument 1>");
         } else {
@@ -274,7 +274,7 @@ mod tests {
         }
 
         if let Some(line) = provider.next_line().unwrap() {
-            assert_eq!(line.trim(), "l2");
+            assert_eq!(String::from_utf8(line).unwrap().trim(), "l2");
             assert_eq!(provider.get_line_number(), 2);
             assert_eq!(provider.get_input_name(), "<script argument 1>");
         } else {
@@ -282,11 +282,22 @@ mod tests {
         }
 
         if let Some(line) = provider.next_line().unwrap() {
-            assert_eq!(line.trim(), "l3");
+            assert_eq!(String::from_utf8(line).unwrap().trim(), "l3");
             assert_eq!(provider.get_line_number(), 1);
             assert_eq!(provider.get_input_name(), "<script argument 2>");
         } else {
             panic!("Expected a line");
         }
+    }
+
+    #[test]
+    fn test_file_source_preserves_invalid_utf8_bytes() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(b"s/\xC2\xE7/X/\n").unwrap();
+
+        let input = vec![ScriptValue::PathVal(temp_file.path().to_path_buf())];
+        let mut provider = ScriptLineProvider::new(input);
+
+        assert_eq!(provider.next_line().unwrap().unwrap(), b"s/\xC2\xE7/X/");
     }
 }

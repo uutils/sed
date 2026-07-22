@@ -1,4 +1,4 @@
-// Provide the script contents character by character
+// Provide the script contents byte by byte
 //
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 Diomidis Spinellis
@@ -10,19 +10,20 @@
 
 #[derive(Debug)]
 pub struct ScriptCharProvider {
-    line: Vec<char>,
+    line: Vec<u8>,
     pos: usize,
 }
 
 impl ScriptCharProvider {
-    pub fn new(line_string: &str) -> Self {
+    /// Build from raw script bytes.
+    pub fn new(line: impl AsRef<[u8]>) -> Self {
         Self {
-            line: line_string.chars().collect(),
+            line: line.as_ref().to_vec(),
             pos: 0,
         }
     }
 
-    /// Advances to the next character, if not at end of line.
+    /// Advances to the next byte, if not at end of line.
     pub fn advance(&mut self) {
         if self.pos < self.line.len() {
             self.pos += 1;
@@ -39,8 +40,13 @@ impl ScriptCharProvider {
         self.pos = pos;
     }
 
-    /// Returns the current character. Panics if out of bounds.
+    /// Returns the current byte as a character. Panics if out of bounds.
     pub fn current(&self) -> char {
+        char::from(self.line[self.pos])
+    }
+
+    /// Returns the current script byte. Panics if out of bounds.
+    pub fn current_byte(&self) -> u8 {
         self.line[self.pos]
     }
 
@@ -51,8 +57,8 @@ impl ScriptCharProvider {
 
     /// Advances the position past any whitespace characters.
     pub fn eat_spaces(&mut self) {
-        while self.pos < self.line.len() && self.line[self.pos].is_whitespace() {
-            self.pos += 1;
+        while self.pos < self.line.len() && self.current().is_whitespace() {
+            self.advance();
         }
     }
 
@@ -138,5 +144,29 @@ mod tests {
 
         assert_eq!(chars.get_pos(), 2);
         assert_eq!(chars.current(), 'c');
+    }
+
+    #[test]
+    fn test_current_for_utf8_bytes() {
+        let mut chars = ScriptCharProvider::new("αb");
+
+        assert_eq!(chars.current(), char::from(0xCE));
+        assert_eq!(chars.current_byte(), 0xCE);
+        chars.advance();
+        assert_eq!(chars.current(), char::from(0xB1));
+        assert_eq!(chars.current_byte(), 0xB1);
+        chars.advance();
+        assert_eq!(chars.current(), 'b');
+    }
+
+    #[test]
+    fn test_current_for_invalid_utf8_byte() {
+        let mut chars = ScriptCharProvider::new(vec![0xC2, b'a']);
+
+        assert_eq!(chars.current(), char::from(0xC2));
+        assert_eq!(chars.current_byte(), 0xC2);
+        chars.advance();
+        assert_eq!(chars.current(), 'a');
+        assert_eq!(chars.current_byte(), b'a');
     }
 }

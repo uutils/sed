@@ -15,25 +15,38 @@ use fancy_regex::{
     CaptureMatches as FancyCaptureMatches, Captures as FancyCaptures, Regex as FancyRegex,
 };
 use memchr::memmem;
-use regex::Regex as RustRegex;
 use regex::bytes::{
     CaptureMatches as ByteCaptureMatches, Captures as ByteCaptures, Regex as ByteRegex,
 };
-use std::error::Error;
 use std::sync::LazyLock;
 use uucore::error::{UResult, USimpleError};
 
+use crate::sed::command::CharacterMode;
 use crate::sed::fast_io::IOChunk;
 
+/// Convert raw pattern bytes into a valid String pattern for regex::bytes.
+fn byte_regex_pattern(pattern: &[u8]) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    for &byte in pattern {
+        if byte > 0x7F {
+            // This might result in an invalid Unicode character
+            // so encode it as a hex escape.
+            out.push_str(&format!(r"\x{byte:02X}"));
+        } else {
+            out.push(byte as char);
+        }
+    }
+    out
+}
+
 /// REs requiring the fancy_regex capabilities rather than the
-/// faster regex::bytes engine
+/// faster regex::bytes engine.
 // False positives only result in a small performance pessimization,
 // so this is just a maximally sensitive, good-enough approximation.
 // For example, r"\\1" and r"[\1]" will match, whereas only a number
 // after an odd number of backslashes and outside a character class
 // should match.
-static NEEDS_FANCY_RE: LazyLock<RustRegex> =
-    LazyLock::new(|| regex::Regex::new(r"\\[1-9]").unwrap());
+static NEEDS_FANCY_RE: LazyLock<ByteRegex> = LazyLock::new(|| ByteRegex::new(r"\\[1-9]").unwrap());
 
 /// All characters signifying that the match must be handled by an RE
 /// rather than by plain string pattern matching.
@@ -42,8 +55,8 @@ static NEEDS_FANCY_RE: LazyLock<RustRegex> =
 // matching, because Regex always constructs an automaton and needs
 // to handle state transitions, whereas plain string matching can
 // use tailored CPU string or vectored instructions.
-static NEEDS_RE: LazyLock<RustRegex> = LazyLock::new(|| {
-    regex::Regex::new(
+pub(crate) static NEEDS_RE: LazyLock<ByteRegex> = LazyLock::new(|| {
+    ByteRegex::new(
         r"(?x) # Turn on verbose mode
           ( ^                   # Non-escaped: i.e. at BOL
              | ^[^\\]            # or after a BOL non \
@@ -82,8 +95,8 @@ pub struct LiteralMatcher {
 
 impl LiteralMatcher {
     /// Construct a new matcher based on a needle possible with anchors.
-    pub fn new(needle: &str) -> Self {
-        let needle_bytes = needle.as_bytes();
+    pub fn new(needle: impl AsRef<[u8]>) -> Self {
+        let needle_bytes = needle.as_ref();
         if needle_bytes[0] == b'^' && needle_bytes[needle_bytes.len() - 1] == b'$' {
             LiteralMatcher {
                 match_type: AnchoredMatch::Both,
@@ -144,12 +157,10 @@ impl LiteralMatcher {
     }
 
     /// Return the position and contents of the matched needle.
-    pub fn find<'t>(&self, haystack: &'t [u8]) -> Option<(usize, usize, &'t str)> {
-        self.anchored_find(haystack).and_then(|start| {
+    pub fn find<'t>(&self, haystack: &'t [u8]) -> Option<(usize, usize, &'t [u8])> {
+        self.anchored_find(haystack).map(|start| {
             let end = start + self.needle.len();
-            std::str::from_utf8(&haystack[start..end])
-                .ok()
-                .map(|s| (start, end, s))
+            (start, end, &haystack[start..end])
         })
     }
 
@@ -157,7 +168,7 @@ impl LiteralMatcher {
     pub fn iter<'t>(
         &'t self,
         haystack: &'t [u8],
-    ) -> Box<dyn Iterator<Item = (usize, usize, &'t str)> + 't> {
+    ) -> Box<dyn Iterator<Item = (usize, usize, &'t [u8])> + 't> {
         let needle = &self.needle;
         let nlen = needle.len();
 
@@ -168,33 +179,30 @@ impl LiteralMatcher {
             }
             AnchoredMatch::Free => {
                 // Multiple potential matches
-                Box::new(
-                    memmem::find_iter(haystack, needle).filter_map(move |start| {
-                        let end = start + nlen;
-                        std::str::from_utf8(&haystack[start..end])
-                            .ok()
-                            .map(|s| (start, end, s))
-                    }),
-                )
+                Box::new(memmem::find_iter(haystack, needle).map(move |start| {
+                    let end = start + nlen;
+                    (start, end, &haystack[start..end])
+                }))
             }
         }
     }
 }
 
 /// Return the passed pattern without any backslash escapes.
-pub fn remove_escapes(pattern: &str) -> String {
-    let mut chars = pattern.chars().peekable();
-    let mut result = String::with_capacity(pattern.len());
+pub fn remove_escapes(pattern: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(pattern.len());
+    let mut pos = 0;
 
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            // Look ahead and consume the next character if present
-            if let Some(&next) = chars.peek() {
+    while pos < pattern.len() {
+        let byte = pattern[pos];
+        pos += 1;
+        if byte == b'\\' {
+            if let Some(&next) = pattern.get(pos) {
                 result.push(next);
-                chars.next(); // consume the peeked char
+                pos += 1;
             }
         } else {
-            result.push(c);
+            result.push(byte);
         }
     }
 
@@ -234,13 +242,42 @@ pub fn ensure_dotall(pattern: &str) -> String {
 
 impl Regex {
     /// Construct the most efficient RE-like matching engine possible.
-    pub fn new(pattern: &str) -> Result<Self, Box<dyn Error>> {
+    pub fn new(pattern: impl AsRef<[u8]>, character_mode: CharacterMode) -> UResult<Self> {
+        let pattern = pattern.as_ref();
         if NEEDS_FANCY_RE.is_match(pattern) {
-            Ok(Self::Fancy(FancyRegex::new(&ensure_dotall(pattern))?))
+            if character_mode == CharacterMode::Byte {
+                return Err(USimpleError::new(
+                    2,
+                    "back-references are not supported in byte mode",
+                ));
+            }
+            let pattern =
+                std::str::from_utf8(pattern).map_err(|e| USimpleError::new(2, e.to_string()))?;
+            let pattern = &ensure_dotall(pattern);
+            Ok(Self::Fancy(
+                FancyRegex::new(pattern).map_err(|e| USimpleError::new(2, e.to_string()))?,
+            ))
         } else if NEEDS_RE.is_match(pattern) {
-            Ok(Self::Byte(ByteRegex::new(&ensure_dotall(pattern))?))
+            if character_mode == CharacterMode::Byte {
+                let pattern = byte_regex_pattern(pattern);
+                let pattern = &ensure_dotall(&pattern);
+                Ok(Self::Byte(
+                    regex::bytes::RegexBuilder::new(pattern)
+                        .unicode(false)
+                        .build()
+                        .map_err(|e| USimpleError::new(2, e.to_string()))?,
+                ))
+            } else {
+                let pattern = std::str::from_utf8(pattern)
+                    .map_err(|e| USimpleError::new(2, e.to_string()))?;
+                let pattern = &ensure_dotall(pattern);
+                Ok(Self::Byte(
+                    ByteRegex::new(pattern).map_err(|e| USimpleError::new(2, e.to_string()))?,
+                ))
+            }
         } else {
-            Ok(Self::Literal(LiteralMatcher::new(&remove_escapes(pattern))))
+            let pattern = remove_escapes(pattern);
+            Ok(Self::Literal(LiteralMatcher::new(pattern)))
         }
     }
 
@@ -263,7 +300,9 @@ impl Regex {
             Regex::Literal(m) => {
                 let haystack = chunk.as_bytes();
                 Ok(CaptureMatches::Literal(Box::new(m.iter(haystack).map(
-                    |(start, end, text)| Ok(Captures::Literal(Match { start, end, text })),
+                    |(start, end, bytes)| {
+                        Ok(Captures::Literal(Match::from_bytes(start, end, bytes)))
+                    },
                 ))))
             }
 
@@ -292,7 +331,7 @@ impl Regex {
                 let haystack = chunk.as_bytes();
                 match m.find(haystack) {
                     Some((start, end, text)) => {
-                        Ok(Some(Captures::Literal(Match { start, end, text })))
+                        Ok(Some(Captures::Literal(Match::from_bytes(start, end, text))))
                     }
                     None => Ok(None),
                 }
@@ -320,7 +359,7 @@ impl Regex {
             Regex::Literal(m) => {
                 let haystack = chunk.as_bytes();
                 match m.find(haystack) {
-                    Some((start, end, text)) => Ok(Some(Match { start, end, text })),
+                    Some((start, end, bytes)) => Ok(Some(Match::from_bytes(start, end, bytes))),
                     None => Ok(None),
                 }
             }
@@ -328,14 +367,11 @@ impl Regex {
             Regex::Byte(re) => {
                 let haystack = chunk.as_bytes();
                 if let Some(m) = re.find(haystack) {
-                    // Attempt UTF-8 decode for the match region only
-                    let text = std::str::from_utf8(&haystack[m.start()..m.end()])
-                        .map_err(|e| USimpleError::new(2, e.to_string()))?;
-                    Ok(Some(Match {
-                        start: m.start(),
-                        end: m.end(),
-                        text,
-                    }))
+                    Ok(Some(Match::from_bytes(
+                        m.start(),
+                        m.end(),
+                        &haystack[m.start()..m.end()],
+                    )))
                 } else {
                     Ok(None)
                 }
@@ -344,11 +380,7 @@ impl Regex {
             Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
                 match re.find(text) {
-                    Ok(Some(m)) => Ok(Some(Match {
-                        start: m.start(),
-                        end: m.end(),
-                        text: m.as_str(),
-                    })),
+                    Ok(Some(m)) => Ok(Some(Match::from_str(m.start(), m.end(), m.as_str()))),
                     Ok(None) => Ok(None),
                     Err(e) => Err(USimpleError::new(2, e.to_string())),
                 }
@@ -386,23 +418,52 @@ impl<'t> Iterator for CaptureMatches<'t> {
 #[derive(Clone, Debug)]
 /// Result type for RE capture get(n)
 pub struct Match<'t> {
-    start: usize,  // Match start
-    end: usize,    // Match end
-    text: &'t str, // Actual match
+    start: usize,          // Match start
+    end: usize,            // Match end
+    bytes: &'t [u8],       // Actual match bytes
+    text: Option<&'t str>, // UTF-8 match text when available
 }
 
 /// Provide interface compatible with Regex::Match.
 impl<'t> Match<'t> {
+    /// Construct a match from raw bytes.
+    pub fn from_bytes(start: usize, end: usize, bytes: &'t [u8]) -> Self {
+        Self {
+            start,
+            end,
+            bytes,
+            text: None,
+        }
+    }
+
+    /// Construct a match from UTF-8 text.
+    pub fn from_str(start: usize, end: usize, text: &'t str) -> Self {
+        Self {
+            start,
+            end,
+            bytes: text.as_bytes(),
+            text: Some(text),
+        }
+    }
+
+    /// Return the byte offset where the match begins.
     pub fn start(&self) -> usize {
         self.start
     }
 
+    /// Return the byte offset just after the match.
     pub fn end(&self) -> usize {
         self.end
     }
 
+    /// Return the match text, or an empty string when the bytes are not UTF-8.
     pub fn as_str(&self) -> &'t str {
-        self.text
+        self.text.unwrap_or_default()
+    }
+
+    /// Return the matched bytes.
+    pub fn as_bytes(&self) -> &'t [u8] {
+        self.bytes
     }
 }
 
@@ -421,20 +482,11 @@ impl<'t> Captures<'t> {
         match self {
             Captures::Literal(m) => Ok(if i == 0 { Some(m.clone()) } else { None }),
             Captures::Byte(caps) => match caps.get(i) {
-                Some(m) => Ok(Some(Match {
-                    start: m.start(),
-                    end: m.end(),
-                    text: std::str::from_utf8(m.as_bytes())
-                        .map_err(|e| USimpleError::new(1, e.to_string()))?,
-                })),
+                Some(m) => Ok(Some(Match::from_bytes(m.start(), m.end(), m.as_bytes()))),
                 None => Ok(None),
             },
             Captures::Fancy(caps) => match caps.get(i) {
-                Some(m) => Ok(Some(Match {
-                    start: m.start(),
-                    end: m.end(),
-                    text: m.as_str(),
-                })),
+                Some(m) => Ok(Some(Match::from_str(m.start(), m.end(), m.as_str()))),
                 None => Ok(None),
             },
         }
@@ -473,7 +525,7 @@ mod tests {
 
         for pat in &should_match {
             assert!(
-                NEEDS_FANCY_RE.is_match(pat),
+                NEEDS_FANCY_RE.is_match(pat.as_bytes()),
                 "Expected NEEDS_FANCY_RE to match: {pat:?}"
             );
         }
@@ -492,7 +544,7 @@ mod tests {
 
         for pat in &should_not_match {
             assert!(
-                !NEEDS_FANCY_RE.is_match(pat),
+                !NEEDS_FANCY_RE.is_match(pat.as_bytes()),
                 "Expected NEEDS_FANCY_RE to NOT match: {pat:?}"
             );
         }
@@ -518,7 +570,7 @@ mod tests {
 
         for pat in &should_match {
             assert!(
-                NEEDS_RE.is_match(pat),
+                NEEDS_RE.is_match(pat.as_bytes()),
                 "Expected NEEDS_RE to match: {pat:?}"
             );
         }
@@ -538,38 +590,110 @@ mod tests {
 
         for pat in &should_not_match {
             assert!(
-                !NEEDS_RE.is_match(pat),
+                !NEEDS_RE.is_match(pat.as_bytes()),
                 "Expected NEEDS_RE to NOT match: {pat:?}"
             );
         }
+
+        assert!(!NEEDS_RE.is_match(b"\xC2\xE7\xCF\xC2"));
     }
 
     // Regex::new
     #[test]
     fn assert_byte_selection() {
-        let re = Regex::new(r"x*").unwrap();
+        let re = Regex::new(r"x*", CharacterMode::Utf8).unwrap();
         assert!(matches!(re, Regex::Byte(_)));
     }
 
     #[test]
+    fn assert_byte_regex_builder_path_matches_non_utf8_bytes() {
+        let re = Regex::new(b"ab.", CharacterMode::Byte).unwrap();
+        assert!(matches!(re, Regex::Byte(_)));
+
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"ab\xE9".to_vec(), true);
+        assert!(re.is_match(&mut chunk).unwrap());
+    }
+
+    #[test]
     fn assert_fancy() {
-        let re = Regex::new(r"(.)\1").unwrap();
+        let re = Regex::new(r"(.)\1", CharacterMode::Utf8).unwrap();
         assert!(matches!(re, Regex::Fancy(_)));
     }
 
     #[test]
+    fn rejects_fancy_in_byte_mode() {
+        let err = Regex::new(r"(.)\1", CharacterMode::Byte)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("back-references are not supported in byte mode"));
+    }
+
+    #[test]
     fn assert_literal() {
-        let re = Regex::new(r"x\.").unwrap();
+        let re = Regex::new(r"x\.", CharacterMode::Utf8).unwrap();
         assert!(matches!(re, Regex::Literal(_)));
     }
 
     #[test]
     fn handles_invalid_regex_gracefully() {
-        let err = Regex::new("(").unwrap_err().to_string();
+        let err = Regex::new("(", CharacterMode::Utf8)
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("unclosed group") || err.contains("error parsing"),
             "Unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn test_byte_regex_pattern_leaves_ascii() {
+        assert_eq!(byte_regex_pattern(br"a.\d"), r"a.\d");
+    }
+
+    #[test]
+    fn test_byte_regex_pattern_escapes_non_ascii_bytes() {
+        assert_eq!(byte_regex_pattern(b"a\x80\xFF"), r"a\x80\xFF");
+    }
+
+    #[test]
+    fn test_match_from_bytes_does_not_construct_text() {
+        let m = Match::from_bytes(0, 3, b"abc");
+        assert_eq!(m.as_bytes(), b"abc");
+        assert_eq!(m.as_str(), "");
+    }
+
+    #[test]
+    fn test_regex_captures_iter_returns_byte_captures() {
+        let re = Regex::new(r"([ab])", CharacterMode::Utf8).unwrap();
+        let chunk = IOChunk::new_from_str("aba");
+        let groups: Vec<Vec<u8>> = re
+            .captures_iter(&chunk)
+            .unwrap()
+            .map(|caps| {
+                caps.unwrap()
+                    .get(1)
+                    .unwrap()
+                    .expect("group 1")
+                    .as_bytes()
+                    .to_vec()
+            })
+            .collect();
+
+        assert_eq!(groups, [b"a".to_vec(), b"b".to_vec(), b"a".to_vec()]);
+    }
+
+    #[test]
+    fn test_regex_find_returns_byte_match() {
+        let re = Regex::new(b"ab.", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"0ab\xE91".to_vec(), true);
+        let m = re.find(&chunk).unwrap().expect("match");
+
+        assert_eq!(m.start(), 1);
+        assert_eq!(m.end(), 4);
+        assert_eq!(m.as_bytes(), b"ab\xE9");
+        assert_eq!(m.as_str(), "");
     }
 
     // remove_escapes
@@ -577,12 +701,15 @@ mod tests {
     fn test_remove_escapes() {
         use super::remove_escapes;
 
-        assert_eq!(remove_escapes("abc"), "abc");
-        assert_eq!(remove_escapes(r"a\.c"), "a.c");
-        assert_eq!(remove_escapes(r"\\d"), r"\d");
-        assert_eq!(remove_escapes(r"\.\*\+\?"), ".*+?");
-        assert_eq!(remove_escapes(r"escaped\\backslash"), r"escaped\backslash");
-        assert_eq!(remove_escapes(r"trailing\\"), r"trailing\");
+        assert_eq!(remove_escapes(b"abc"), b"abc");
+        assert_eq!(remove_escapes(br"a\.c"), b"a.c");
+        assert_eq!(remove_escapes(br"\\d"), br"\d");
+        assert_eq!(remove_escapes(br"\.\*\+\?"), b".*+?");
+        assert_eq!(
+            remove_escapes(br"escaped\\backslash"),
+            br"escaped\backslash"
+        );
+        assert_eq!(remove_escapes(br"trailing\\"), br"trailing\");
     }
 
     // LiteralMatcher
@@ -625,7 +752,7 @@ mod tests {
         let haystack = "contains ✓ unicode".as_bytes();
         assert!(matcher.is_match(haystack));
         let found = matcher.find(haystack).unwrap();
-        assert_eq!(found.2, "✓");
+        assert_eq!(found.2, "✓".as_bytes());
     }
 
     #[test]
@@ -636,7 +763,7 @@ mod tests {
         assert!(result.is_some());
         let (start, end, text) = result.unwrap();
         assert_eq!((start, end), (3, 6));
-        assert_eq!(text, "abc");
+        assert_eq!(text, b"abc");
     }
 
     #[test]
@@ -647,7 +774,7 @@ mod tests {
         assert!(result.is_some());
         let (start, end, text) = result.unwrap();
         assert_eq!((start, end), (3, 6));
-        assert_eq!(text, "abc");
+        assert_eq!(text, b"abc");
     }
 
     #[test]
@@ -658,7 +785,10 @@ mod tests {
         assert_eq!(matches.len(), 3);
 
         let strings: Vec<_> = matches.iter().map(|(_, _, s)| *s).collect();
-        assert_eq!(strings, ["test", "test", "test"]);
+        assert_eq!(
+            strings,
+            [b"test".as_slice(), b"test".as_slice(), b"test".as_slice()]
+        );
     }
 
     #[test]
@@ -669,7 +799,7 @@ mod tests {
         assert_eq!(matches.len(), 1);
 
         let strings: Vec<_> = matches.iter().map(|(_, _, s)| *s).collect();
-        assert_eq!(strings, ["test"]);
+        assert_eq!(strings, [b"test".as_slice()]);
     }
 
     #[test]
@@ -680,7 +810,7 @@ mod tests {
         assert_eq!(matches.len(), 1);
 
         let strings: Vec<_> = matches.iter().map(|(_, _, s)| *s).collect();
-        assert_eq!(strings, ["test"]);
+        assert_eq!(strings, [b"test".as_slice()]);
     }
 
     #[test]
