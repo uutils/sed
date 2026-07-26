@@ -52,6 +52,8 @@ pub struct ProcessingContext {
     pub last_file: bool,
     /// Stop processing further input.
     pub stop_processing: bool,
+    /// Whether sed operates on bytes or UTF-8 characters
+    pub character_mode: CharacterMode,
     /// Previously compiled RE, saved for reuse when specifying an empty RE
     pub saved_regex: Option<Regex>,
     /// Modification of input processing action
@@ -59,7 +61,7 @@ pub struct ProcessingContext {
     // command.
     pub input_action: Option<InputAction>,
     /// Hold space
-    pub hold: StringSpace,
+    pub hold: ByteSpace,
     /// Nesting of { } at compile time
     pub parsed_block_nesting: usize,
     /// Command associated with each label
@@ -75,14 +77,22 @@ pub struct ProcessingContext {
 #[derive(Clone, Debug)]
 /// Elements that shall be appended at the end of each command processing cycle
 pub enum AppendElement {
-    Text(Rc<str>), // The specified text string
-    Path(PathBuf), // The contents of the specified file path
+    Text(Rc<[u8]>), // The specified text bytes
+    Path(PathBuf),  // The contents of the specified file path
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+/// Whether sed operates on bytes or UTF-8 characters
+pub enum CharacterMode {
+    Byte, // Interpret data as arbitrary bytes (C/POSIX locale).
+    #[default]
+    Utf8, // Interpret data as UTF-8 characters (UTF-8 locale).
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-/// A space mirroring IOChunk, but only with a String
-pub struct StringSpace {
-    pub content: String,   // Line content without newline
+/// A space mirroring IOChunk without mmap-backed storage.
+pub struct ByteSpace {
+    pub content: Vec<u8>,  // Line content without newline
     pub has_newline: bool, // True if \n-terminated
 }
 
@@ -100,9 +110,9 @@ pub enum Address {
 #[derive(Debug)]
 /// A single part of an RE replacement
 pub enum ReplacementPart {
-    Literal(String), // Normal text
-    WholeMatch,      // &
-    Group(u32),      // \1 to \9
+    Literal(Vec<u8>), // Normal text
+    WholeMatch,       // &
+    Group(u32),       // \1 to \9
 }
 
 // The maximum value allowed in regex quantifier
@@ -152,8 +162,8 @@ impl ReplacementTemplate {
     /// let result = regex.replace_all(input, |caps: &Captures| {
     ///    template.apply_captures(&command, caps) });
     /// Returns an error if a backreference in the template was not matched by the RE.
-    pub fn apply_captures(&self, command: &Command, caps: &Captures) -> UResult<String> {
-        let mut result = String::new();
+    pub fn apply_captures(&self, command: &Command, caps: &Captures) -> UResult<Vec<u8>> {
+        let mut result = Vec::new();
 
         // Invalid group numbers may end here through (unkown at compile time)
         // reused REs.
@@ -169,15 +179,17 @@ impl ReplacementTemplate {
 
         for part in &self.parts {
             match part {
-                ReplacementPart::Literal(s) => result.push_str(s),
+                ReplacementPart::Literal(s) => result.extend_from_slice(s),
 
                 ReplacementPart::WholeMatch => {
-                    result.push_str(caps.get(0)?.map(|m| m.as_str()).unwrap_or_default());
+                    result
+                        .extend_from_slice(caps.get(0)?.map(|m| m.as_bytes()).unwrap_or_default());
                 }
 
                 ReplacementPart::Group(n) => {
                     let i: usize = (*n).try_into().unwrap();
-                    result.push_str(caps.get(i)?.map(|m| m.as_str()).unwrap_or_default());
+                    result
+                        .extend_from_slice(caps.get(i)?.map(|m| m.as_bytes()).unwrap_or_default());
                 }
             }
         }
@@ -186,14 +198,14 @@ impl ReplacementTemplate {
     }
 
     /// Apply the template to the given RE single match.
-    pub fn apply_match(&self, m: &Match) -> String {
-        let mut result = String::new();
+    pub fn apply_match(&self, m: &Match) -> Vec<u8> {
+        let mut result = Vec::new();
 
         for part in &self.parts {
             match part {
-                ReplacementPart::Literal(s) => result.push_str(s),
+                ReplacementPart::Literal(s) => result.extend_from_slice(s),
 
-                ReplacementPart::WholeMatch => result.push_str(m.as_str()),
+                ReplacementPart::WholeMatch => result.extend_from_slice(m.as_bytes()),
 
                 ReplacementPart::Group(_) => {
                     panic!("unexpected Regex group replacement")
@@ -217,6 +229,13 @@ pub struct Substitution {
     pub write_file: Option<Rc<RefCell<NamedWriter>>>, // Writer to file if 'w' flag is used
 }
 
+#[derive(Debug, PartialEq, Eq)]
+/// Result of parsing a transliteration string in byte or character mode.
+pub enum ParsedTransliteration {
+    Bytes(Vec<u8>),
+    Text(String),
+}
+
 /// The block of the first and most common Unicode characters:
 /// ASCII, Latin Extended, Greek, Curillic, Coptic, Arabic, etc.
 /// It comprises all UCS-2 characters.  We use a fast lookup array for these.
@@ -225,20 +244,28 @@ const COMMON_UNICODE: usize = 2048;
 #[derive(Debug)]
 /// Transliteration command (y)
 pub struct Transliteration {
-    fast: [char; COMMON_UNICODE],
-    slow: HashMap<char, char>,
+    byte_fast: [u8; 256],
+    unicode_fast: [char; COMMON_UNICODE],
+    unicode_slow: HashMap<char, char>,
+    pub(crate) is_byte_identity: bool,
 }
 
 impl Default for Transliteration {
     /// Create a new Transliteration with identity mapping for the fast-path.
     fn default() -> Self {
-        let mut fast = ['\0'; COMMON_UNICODE];
+        let mut fast = [0u8; 256];
         for (i, slot) in fast.iter_mut().enumerate() {
+            *slot = i as u8;
+        }
+        let mut unicode_fast = ['\0'; COMMON_UNICODE];
+        for (i, slot) in unicode_fast.iter_mut().enumerate() {
             *slot = char::from_u32(i as u32).unwrap_or('\0');
         }
         Self {
-            fast,
-            slow: HashMap::new(),
+            byte_fast: fast,
+            unicode_fast,
+            unicode_slow: HashMap::new(),
+            is_byte_identity: true,
         }
     }
 }
@@ -253,24 +280,43 @@ impl Transliteration {
         result
     }
 
+    /// Create through byte mappings from `source` to `target`.
+    pub fn from_bytes(source: &[u8], target: &[u8]) -> Self {
+        let mut result = Self::default();
+        for (&from, &to) in source.iter().zip(target) {
+            result.byte_fast[from as usize] = to;
+        }
+        result
+    }
+
     /// Set a transliteration mapping from one character to another.
     fn insert(&mut self, from: char, to: char) {
         let cp = from as usize;
         if cp < COMMON_UNICODE {
-            self.fast[cp] = to;
+            self.unicode_fast[cp] = to;
         } else {
-            self.slow.insert(from, to);
+            self.unicode_slow.insert(from, to);
+        }
+        if from.is_ascii() && to.is_ascii() {
+            self.byte_fast[from as usize] = to as u8;
+        } else {
+            self.is_byte_identity = false;
         }
     }
 
     /// Look up a character transliteration.
-    pub fn lookup(&self, ch: char) -> char {
+    pub fn lookup_char(&self, ch: char) -> char {
         let cp = ch as usize;
         if cp < COMMON_UNICODE {
-            self.fast[cp]
+            self.unicode_fast[cp]
         } else {
-            self.slow.get(&ch).copied().unwrap_or(ch)
+            self.unicode_slow.get(&ch).copied().unwrap_or(ch)
         }
+    }
+
+    /// Fast byte lookup for pure ASCII transliterations.
+    pub fn lookup_byte(&self, byte: u8) -> u8 {
+        self.byte_fast[byte as usize]
     }
 }
 
@@ -323,7 +369,7 @@ pub enum CommandData {
     NamedWriter(Rc<RefCell<NamedWriter>>),      // File output for 'w'
     Number(usize),                              // Number for 'l', 'q', 'Q' (GNU)
     Substitution(Box<Substitution>),            // Substitute command 's'
-    Text(Rc<str>),                              // Text for 'a', 'c', 'i'
+    Text(Rc<[u8]>),                             // Text for 'a', 'c', 'i'
     Transliteration(Box<Transliteration>),      // Transliteration command 'y'
 }
 
@@ -340,7 +386,7 @@ pub struct InputAction {
     /// Next command to execute (rather than commands from start)
     pub next_command: Option<Rc<RefCell<Command>>>,
     /// Data to prepend to the read contents
-    pub prepend: String,
+    pub prepend: Vec<u8>,
 }
 
 #[cfg(test)]
@@ -350,7 +396,7 @@ mod tests {
 
     // Return the captures for the RE applied to the specified string
     fn caps_for<'a>(re: &str, chunk: &'a mut IOChunk) -> Captures<'a> {
-        Regex::new(re)
+        Regex::new(re, CharacterMode::Utf8)
             .unwrap()
             .captures(chunk)
             .unwrap()
@@ -366,26 +412,26 @@ mod tests {
         let cmd = Command::default();
 
         let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, "");
+        assert_eq!(result, b"");
     }
 
     #[test]
     // s/abc/hello/
     fn test_literal_only() {
-        let template = ReplacementTemplate::new(vec![ReplacementPart::Literal("hello".into())]);
+        let template = ReplacementTemplate::new(vec![ReplacementPart::Literal(b"hello".to_vec())]);
         let input = &mut IOChunk::new_from_str("abc");
         let caps = caps_for("abc", input);
         let cmd = Command::default();
 
         let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, "hello");
+        assert_eq!(result, b"hello");
     }
 
     #[test]
     // s/foo\d+/got: &/
     fn test_whole_match() {
         let template = ReplacementTemplate::new(vec![
-            ReplacementPart::Literal("got: ".into()),
+            ReplacementPart::Literal(b"got: ".to_vec()),
             ReplacementPart::WholeMatch,
         ]);
         let input = &mut IOChunk::new_from_str("foo42");
@@ -393,14 +439,26 @@ mod tests {
         let cmd = Command::default();
 
         let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, "got: foo42");
+        assert_eq!(result, b"got: foo42");
+    }
+
+    #[test]
+    fn test_apply_match_uses_matched_bytes() {
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Literal(b"<".to_vec()),
+            ReplacementPart::WholeMatch,
+            ReplacementPart::Literal(b">".to_vec()),
+        ]);
+        let m = Match::from_bytes(1, 3, b"\xE9x");
+
+        assert_eq!(template.apply_match(&m), b"<\xE9x>");
     }
 
     #[test]
     // s/foo(\d+)/number: \1/
     fn test_backreference() {
         let template = ReplacementTemplate::new(vec![
-            ReplacementPart::Literal("number: ".into()),
+            ReplacementPart::Literal(b"number: ".to_vec()),
             ReplacementPart::Group(1),
         ]);
         let input = &mut IOChunk::new_from_str("foo42");
@@ -408,16 +466,16 @@ mod tests {
         let cmd = Command::default();
 
         let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, "number: 42");
+        assert_eq!(result, b"number: 42");
     }
 
     #[test]
     // s/(\w+):(\d+)/key: \1, value: \2/
     fn test_multiple_parts() {
         let template = ReplacementTemplate::new(vec![
-            ReplacementPart::Literal("key: ".into()),
+            ReplacementPart::Literal(b"key: ".to_vec()),
             ReplacementPart::Group(1),
-            ReplacementPart::Literal(", value: ".into()),
+            ReplacementPart::Literal(b", value: ".to_vec()),
             ReplacementPart::Group(2),
         ]);
         let input = &mut IOChunk::new_from_str("x:123");
@@ -425,16 +483,16 @@ mod tests {
         let cmd = Command::default();
 
         let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, "key: x, value: 123");
+        assert_eq!(result, b"key: x, value: 123");
     }
 
     #[test]
     // s/(\w+):(\d+)/key: \1, value: \3/
     fn test_invalid_group() {
         let template = ReplacementTemplate::new(vec![
-            ReplacementPart::Literal("key: ".into()),
+            ReplacementPart::Literal(b"key: ".to_vec()),
             ReplacementPart::Group(1),
-            ReplacementPart::Literal(", value: ".into()),
+            ReplacementPart::Literal(b", value: ".to_vec()),
             ReplacementPart::Group(3),
         ]);
         let input = &mut IOChunk::new_from_str("x:123");
@@ -452,11 +510,11 @@ mod tests {
     #[test]
     fn test_max_group_number_with_groups() {
         let template = ReplacementTemplate::new(vec![
-            ReplacementPart::Literal("a".into()),
+            ReplacementPart::Literal(b"a".to_vec()),
             ReplacementPart::Group(2),
             ReplacementPart::WholeMatch,
             ReplacementPart::Group(5),
-            ReplacementPart::Literal("z".into()),
+            ReplacementPart::Literal(b"z".to_vec()),
         ]);
         assert_eq!(template.max_group_number, 5);
     }
@@ -464,9 +522,9 @@ mod tests {
     #[test]
     fn test_max_group_number_without_groups() {
         let template = ReplacementTemplate::new(vec![
-            ReplacementPart::Literal("no".into()),
+            ReplacementPart::Literal(b"no".to_vec()),
             ReplacementPart::WholeMatch,
-            ReplacementPart::Literal("groups".into()),
+            ReplacementPart::Literal(b"groups".to_vec()),
         ]);
         assert_eq!(template.max_group_number, 0);
     }
@@ -476,16 +534,31 @@ mod tests {
     #[test]
     fn test_identity_lookup_fast_path() {
         let t = Transliteration::default();
-        assert_eq!(t.lookup('A'), 'A');
-        assert_eq!(t.lookup('z'), 'z');
-        assert_eq!(t.lookup('\u{07FF}'), '\u{07FF}'); // highest 2-byte UTF-8 char
+        assert_eq!(t.lookup_char('A'), 'A');
+        assert_eq!(t.lookup_char('z'), 'z');
+        assert_eq!(t.lookup_char('\u{07FF}'), '\u{07FF}'); // highest 2-byte UTF-8 char
     }
 
     #[test]
     fn test_identity_lookup_slow_path() {
         let t = Transliteration::default();
-        assert_eq!(t.lookup('\u{0800}'), '\u{0800}'); // just outside fast path
-        assert_eq!(t.lookup('\u{1F600}'), '\u{1F600}'); // 😀
+        assert_eq!(t.lookup_char('\u{0800}'), '\u{0800}'); // just outside fast path
+        assert_eq!(t.lookup_char('\u{1F600}'), '\u{1F600}'); // 😀
+    }
+
+    #[test]
+    fn test_from_bytes_and_lookup_byte() {
+        let t = Transliteration::from_bytes(b"a\xE9", b"Z!");
+        assert_eq!(t.lookup_byte(b'a'), b'Z');
+        assert_eq!(t.lookup_byte(0xE9), b'!');
+        assert_eq!(t.lookup_byte(b'b'), b'b');
+    }
+
+    #[test]
+    fn test_is_byte_identity_tracks_non_ascii_character_mappings() {
+        assert!(Transliteration::from_strings("ab", "xy").is_byte_identity);
+        assert!(!Transliteration::from_strings("aé", "xy").is_byte_identity);
+        assert!(!Transliteration::from_strings("ab", "xé").is_byte_identity);
     }
 
     #[test]
@@ -493,26 +566,26 @@ mod tests {
         let mut t = Transliteration::default();
         t.insert('a', 'α');
         t.insert('b', 'β');
-        assert_eq!(t.lookup('a'), 'α');
-        assert_eq!(t.lookup('b'), 'β');
-        assert_eq!(t.lookup('c'), 'c'); // unchanged
+        assert_eq!(t.lookup_char('a'), 'α');
+        assert_eq!(t.lookup_char('b'), 'β');
+        assert_eq!(t.lookup_char('c'), 'c'); // unchanged
     }
 
     #[test]
     fn test_insert_and_lookup_slow_path() {
         let mut t = Transliteration::default();
         t.insert('🦀', 'c'); // U+1F980 Crab emoji -> 'c'
-        assert_eq!(t.lookup('🦀'), 'c');
-        assert_eq!(t.lookup('🦁'), '🦁'); // unchanged
+        assert_eq!(t.lookup_char('🦀'), 'c');
+        assert_eq!(t.lookup_char('🦁'), '🦁'); // unchanged
     }
 
     #[test]
     fn test_overwrite_mapping() {
         let mut t = Transliteration::default();
         t.insert('x', '1');
-        assert_eq!(t.lookup('x'), '1');
+        assert_eq!(t.lookup_char('x'), '1');
         t.insert('x', '2');
-        assert_eq!(t.lookup('x'), '2');
+        assert_eq!(t.lookup_char('x'), '2');
     }
 
     #[test]
@@ -523,8 +596,8 @@ mod tests {
                 t.insert(ch, ' ');
             }
         }
-        assert_eq!(t.lookup('A'), ' ');
-        assert_eq!(t.lookup('\u{07FF}'), ' ');
+        assert_eq!(t.lookup_char('A'), ' ');
+        assert_eq!(t.lookup_char('\u{07FF}'), ' ');
     }
 
     // from_strings
@@ -532,11 +605,11 @@ mod tests {
     fn test_basic_transliteration() {
         let t = Transliteration::from_strings("abcδ", "1234");
 
-        assert_eq!(t.lookup('a'), '1');
-        assert_eq!(t.lookup('b'), '2');
-        assert_eq!(t.lookup('c'), '3');
-        assert_eq!(t.lookup('δ'), '4');
-        assert_eq!(t.lookup('e'), 'e'); // not mapped, fallback
+        assert_eq!(t.lookup_char('a'), '1');
+        assert_eq!(t.lookup_char('b'), '2');
+        assert_eq!(t.lookup_char('c'), '3');
+        assert_eq!(t.lookup_char('δ'), '4');
+        assert_eq!(t.lookup_char('e'), 'e'); // not mapped, fallback
     }
 
     #[test]
@@ -545,16 +618,16 @@ mod tests {
         let target = "e文c";
         let t = Transliteration::from_strings(source, target);
 
-        assert_eq!(t.lookup('é'), 'e');
-        assert_eq!(t.lookup('漢'), '文');
-        assert_eq!(t.lookup('🦀'), 'c');
-        assert_eq!(t.lookup('x'), 'x'); // fast fallback
-        assert_eq!(t.lookup('文'), '文'); // slow fallback
+        assert_eq!(t.lookup_char('é'), 'e');
+        assert_eq!(t.lookup_char('漢'), '文');
+        assert_eq!(t.lookup_char('🦀'), 'c');
+        assert_eq!(t.lookup_char('x'), 'x'); // fast fallback
+        assert_eq!(t.lookup_char('文'), '文'); // slow fallback
     }
 
     #[test]
     fn test_overwrite_fast_path() {
         let t = Transliteration::from_strings("aa", "12");
-        assert_eq!(t.lookup('a'), '2'); // last mapping wins
+        assert_eq!(t.lookup_char('a'), '2'); // last mapping wins
     }
 }

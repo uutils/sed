@@ -9,16 +9,20 @@
 // file that was distributed with this source code.
 
 use crate::sed::command::{
-    Address, AppendElement, Command, CommandData, InputAction, ProcessingContext, Transliteration,
+    Address, AppendElement, CharacterMode, Command, CommandData, InputAction, ProcessingContext,
+    Transliteration,
 };
+use crate::sed::delimited_parser::os_string_from_bytes;
 use crate::sed::error_handling::{ScriptLocation, input_runtime_error};
 use crate::sed::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::sed::fast_regex::Regex;
 use crate::sed::in_place::InPlace;
 use crate::sed::named_writer;
 
+use memchr::memchr;
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::ffi::OsStr;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -196,14 +200,14 @@ fn re_or_saved_re<'a>(
 }
 
 #[cfg(unix)]
-fn shell_command(cmd: &str) -> std::process::Command {
+fn shell_command(cmd: &OsStr) -> std::process::Command {
     let mut c = std::process::Command::new("/bin/sh");
     c.arg("-c").arg(cmd);
     c
 }
 
 #[cfg(windows)]
-fn shell_command(cmd: &str) -> std::process::Command {
+fn shell_command(cmd: &OsStr) -> std::process::Command {
     let mut c = std::process::Command::new("cmd.exe");
     c.arg("/C").arg(cmd);
     c
@@ -211,7 +215,7 @@ fn shell_command(cmd: &str) -> std::process::Command {
 
 // Fallback if the target OS is neither Windows nor UNIX-like
 #[cfg(not(any(unix, windows)))]
-fn shell_command(_cmd: &str) -> std::process::Command {
+fn shell_command(_cmd: &OsStr) -> std::process::Command {
     unimplemented!("the 'e' substitute flag requires a platform shell (/bin/sh or cmd.exe)");
 }
 
@@ -226,10 +230,9 @@ fn substitute(
 
     let mut count = 0;
     let mut last_end = 0;
-    let mut result = String::new();
+    let mut result = Vec::new();
     let mut replaced = false;
-
-    let mut text: Option<&str> = None;
+    let text = pattern.as_bytes();
 
     let regex = re_or_saved_re(sub.regex.as_ref(), context, &command.location)?;
 
@@ -242,11 +245,10 @@ fn substitute(
             match regex.find(pattern) {
                 Err(e) => Err(e),
                 Ok(Some(m)) => {
-                    text = Some(pattern.as_str()?);
-                    result.push_str(&text.unwrap()[last_end..m.start()]);
+                    result.extend_from_slice(&text[last_end..m.start()]);
 
                     let replacement = sub.replacement.apply_match(&m);
-                    result.push_str(&replacement);
+                    result.extend_from_slice(&replacement);
                     replaced = true;
                     last_end = m.end();
                     Ok(())
@@ -261,11 +263,10 @@ fn substitute(
                 Err(e) => Err(e),
                 Ok(Some(caps)) => {
                     let m = caps.get(0)?.unwrap();
-                    text = Some(pattern.as_str()?);
-                    result.push_str(&text.unwrap()[last_end..m.start()]);
+                    result.extend_from_slice(&text[last_end..m.start()]);
 
                     let replacement = sub.replacement.apply_captures(command, &caps)?;
-                    result.push_str(&replacement);
+                    result.extend_from_slice(&replacement);
                     replaced = true;
                     last_end = m.end();
                     Ok(())
@@ -288,18 +289,15 @@ fn substitute(
                     let m = caps.get(0)?.unwrap();
 
                     // Always write the unmatched text before this match.
-                    if text.is_none() {
-                        text = Some(pattern.as_str()?);
-                    }
-                    result.push_str(&text.unwrap()[last_end..m.start()]);
+                    result.extend_from_slice(&text[last_end..m.start()]);
 
                     if sub.occurrence == 0 || count == sub.occurrence {
                         let replacement = sub.replacement.apply_captures(command, &caps)?;
-                        result.push_str(&replacement);
+                        result.extend_from_slice(&replacement);
                         replaced = true;
                     } else {
                         // Not the target match — leave the match unchanged.
-                        result.push_str(m.as_str());
+                        result.extend_from_slice(m.as_bytes());
                     }
 
                     last_end = m.end();
@@ -322,14 +320,21 @@ fn substitute(
 
     // Handle substitution success.
     if replaced {
-        result.push_str(&text.unwrap()[last_end..]);
+        result.extend_from_slice(&text[last_end..]);
 
-        pattern.set_to_string(result, pattern.is_newline_terminated());
+        pattern.set_to_bytes(result, pattern.is_newline_terminated());
 
         // Execute the pattern space as a shell command if the 'e' flag is set
         if sub.execute {
-            let cmd_str = pattern.as_str()?.to_string();
-            let output_bytes = shell_command(&cmd_str).output().map_err(|e| {
+            let cmd = os_string_from_bytes(pattern.as_bytes().to_vec()).map_err(|e| {
+                input_runtime_error::<()>(
+                    &command.location,
+                    context,
+                    format!("failed to construct shell command from bytes: {e}"),
+                )
+                .unwrap_err()
+            })?;
+            let output_bytes = shell_command(&cmd).output().map_err(|e| {
                 input_runtime_error::<()>(
                     &command.location,
                     context,
@@ -337,15 +342,15 @@ fn substitute(
                 )
                 .unwrap_err()
             })?;
-            let mut shell_out = String::from_utf8_lossy(&output_bytes.stdout).into_owned();
-            if shell_out.ends_with("\r\n") {
+            let mut shell_out = output_bytes.stdout;
+            if shell_out.ends_with(b"\r\n") {
                 // On windows, both return carriage and newline characters are used
                 shell_out.truncate(shell_out.len() - 2);
-            } else if shell_out.ends_with('\n') {
+            } else if shell_out.ends_with(b"\n") {
                 // Strip the trailing newline, as GNU sed does
                 shell_out.pop();
             }
-            pattern.set_to_string(shell_out, pattern.is_newline_terminated());
+            pattern.set_to_bytes(shell_out, pattern.is_newline_terminated());
         }
 
         if sub.print_flag {
@@ -354,7 +359,7 @@ fn substitute(
 
         // Write to file if needed.
         if let Some(ref writer) = sub.write_file {
-            writer.borrow_mut().write_line(pattern.as_str()?)?;
+            writer.borrow_mut().write_line_bytes(pattern.as_bytes())?;
         }
         context.substitution_made = true;
     }
@@ -363,14 +368,46 @@ fn substitute(
 }
 
 /// Apply the specified transliteration in the provided pattern space.
-fn transliterate(pattern: &mut IOChunk, trans: &Transliteration) -> UResult<()> {
-    let text = pattern.as_str()?;
+fn transliterate(
+    pattern: &mut IOChunk,
+    trans: &Transliteration,
+    location: &ScriptLocation,
+    context: &ProcessingContext,
+) -> UResult<()> {
+    if context.character_mode == CharacterMode::Byte || trans.is_byte_identity {
+        let text = pattern.as_bytes();
+        let mut result = Vec::with_capacity(text.len());
+        let mut replaced = false;
+
+        for &byte in text {
+            let mapped = trans.lookup_byte(byte);
+            if mapped != byte {
+                replaced = true;
+            }
+            result.push(mapped);
+        }
+
+        if replaced {
+            pattern.set_to_bytes(result, pattern.is_newline_terminated());
+        }
+
+        return Ok(());
+    }
+
+    let text = pattern.as_str().map_err(|e| {
+        input_runtime_error::<()>(
+            location,
+            context,
+            format!("failed to decode pattern space as UTF-8 for transliteration: {e}"),
+        )
+        .unwrap_err()
+    })?;
     let mut result = String::with_capacity(text.len());
     let mut replaced = false;
 
     // Perform the transliteration.
     for ch in text.chars() {
-        let mapped = trans.lookup(ch);
+        let mapped = trans.lookup_char(ch);
         if mapped != ch {
             replaced = true;
         }
@@ -390,7 +427,7 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
     for elem in &context.append_elements {
         match elem {
             AppendElement::Text(text) => {
-                output.write_str(&**text)?;
+                output.write_bytes(text.as_ref())?;
             }
             AppendElement::Path(path) => {
                 output.copy_file(path)?;
@@ -401,8 +438,93 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
     Ok(())
 }
 
+/// Return the list command rendering for one ASCII byte.
+fn readable_ascii_byte(byte: u8) -> Cow<'static, str> {
+    match byte {
+        b'\x07' => Cow::Borrowed(r"\a"),
+        b'\x08' => Cow::Borrowed(r"\b"),
+        b'\x0b' => Cow::Borrowed(r"\v"),
+        b'\x0c' => Cow::Borrowed(r"\f"),
+        b'\\' => Cow::Borrowed(r"\\"),
+        b'\r' => Cow::Borrowed(r"\r"),
+        b'\t' => Cow::Borrowed(r"\t"),
+        b if b.is_ascii_control() => Cow::Owned(format!("\\{byte:03o}")),
+        b if b == b' ' || b.is_ascii_graphic() => Cow::Owned(char::from(byte).to_string()),
+        _ => Cow::Owned(format!("\\{byte:03o}")),
+    }
+}
+
+/// Return the list command rendering for one UTF-8 character.
+fn readable_char(ch: char) -> Cow<'static, str> {
+    if ch.is_ascii() {
+        return readable_ascii_byte(ch as u8);
+    }
+    if (ch as u32) <= 0xFFFF {
+        Cow::Owned(format!("\\u{:04X}", ch as u32))
+    } else {
+        Cow::Owned(format!("\\U{:08X}", ch as u32))
+    }
+}
+
+/// Buffered state for rendering one list command output line.
+struct ListLine {
+    buffer: String,
+    width: usize,
+    max_width: usize,
+}
+
+impl ListLine {
+    /// Create an empty list output line with the specified maximum width.
+    fn new(max_width: usize) -> Self {
+        Self {
+            buffer: String::new(),
+            width: 0,
+            max_width,
+        }
+    }
+
+    /// Write a rendered list item, folding before the item if needed.
+    fn write_item(&mut self, output: &mut OutputBuffer, out_str: &str) -> UResult<()> {
+        let out_len = out_str.len();
+        if self.width + out_len + 1 > self.max_width {
+            self.buffer.push_str("\\\n");
+            output.write_str(std::mem::take(&mut self.buffer))?;
+            self.width = 0;
+        }
+        self.buffer.push_str(out_str);
+        self.width += out_len;
+        Ok(())
+    }
+
+    /// Write the current list line with an embedded newline marker.
+    fn write_embedded_newline(&mut self, output: &mut OutputBuffer) -> UResult<()> {
+        self.buffer.push_str("$\n");
+        output.write_str(&self.buffer)?;
+        self.buffer.clear();
+        self.width = 0;
+        Ok(())
+    }
+
+    /// Finish the list line if it has buffered output.
+    fn finish(&mut self, output: &mut OutputBuffer) -> UResult<()> {
+        if !self.buffer.is_empty() {
+            self.buffer.push_str("$\n");
+            output.write_str(&self.buffer)?;
+            self.buffer.clear();
+            self.width = 0;
+        }
+        Ok(())
+    }
+}
+
 /// List the passed pattern space in unambiguous form.
-fn list(output: &mut OutputBuffer, line: &IOChunk, max_width: usize) -> UResult<()> {
+fn list(
+    output: &mut OutputBuffer,
+    line: &IOChunk,
+    max_width: usize,
+    location: &ScriptLocation,
+    context: &ProcessingContext,
+) -> UResult<()> {
     // Special case for an empty pattern space
     if line.is_empty() {
         if line.is_newline_terminated() {
@@ -411,50 +533,37 @@ fn list(output: &mut OutputBuffer, line: &IOChunk, max_width: usize) -> UResult<
         return Ok(());
     }
 
-    let line = line.as_str()?;
-    let mut buff = String::new();
-    let mut line_width = 0;
+    let mut list_line = ListLine::new(max_width);
 
-    for ch in line.chars() {
-        if ch == '\n' {
-            buff.push_str("$\n");
-            output.write_str(&buff)?;
-            line_width = 0;
-            continue;
+    if context.character_mode == CharacterMode::Byte {
+        for &byte in line.as_bytes() {
+            if byte == b'\n' {
+                list_line.write_embedded_newline(output)?;
+                continue;
+            }
+            let out_str = readable_ascii_byte(byte);
+            list_line.write_item(output, &out_str)?;
         }
-
-        let mut char_buff = [0u8; 1];
-        let out_str: Cow<str> = match ch {
-            '\x07' => Cow::Borrowed(r"\a"),
-            '\x08' => Cow::Borrowed(r"\b"),
-            '\x0b' => Cow::Borrowed(r"\v"),
-            '\x0c' => Cow::Borrowed(r"\f"),
-            '\\' => Cow::Borrowed(r"\\"),
-            '\r' => Cow::Borrowed(r"\r"),
-            '\t' => Cow::Borrowed(r"\t"),
-            c if c.is_ascii_control() => Cow::Owned(format!("\\{:03o}", ch as u8)),
-            c if c == ' ' || c.is_ascii_graphic() => Cow::Borrowed(ch.encode_utf8(&mut char_buff)),
-            c if (c as u32) <= 0xFFFF => Cow::Owned(format!("\\u{:04X}", c as u32)),
-            _ => Cow::Owned(format!("\\U{:08X}", ch as u32)),
-        };
-
-        // See if folding is required before adding out_str and terminator.
-        let out_len = out_str.len();
-        if line_width + out_len + 1 > max_width {
-            buff.push_str("\\\n");
-            output.write_str(&buff)?;
-            line_width = 0;
-            buff.clear();
+    } else {
+        let line = line.as_str().map_err(|e| {
+            input_runtime_error::<()>(
+                location,
+                context,
+                format!("failed to decode pattern space as UTF-8 for list command: {e}"),
+            )
+            .unwrap_err()
+        })?;
+        for ch in line.chars() {
+            if ch == '\n' {
+                list_line.write_embedded_newline(output)?;
+                continue;
+            }
+            let out_str = readable_char(ch);
+            list_line.write_item(output, &out_str)?;
         }
-        buff.push_str(out_str.as_ref());
-        line_width += out_len;
     }
 
-    if !buff.is_empty() {
-        buff.push_str("$\n");
-        output.write_str(buff)?;
-    }
-    Ok(())
+    list_line.finish(output)
 }
 
 /// Handle address 0 read at the beginning of each file.
@@ -504,12 +613,11 @@ fn process_file(
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
                 // Continue processing the `N` command.
-                let current_line = pattern.as_str()?;
                 let mut combined_lines = action.prepend;
-                combined_lines.push('\n');
-                combined_lines.push_str(current_line);
+                combined_lines.push(b'\n');
+                combined_lines.extend_from_slice(pattern.as_bytes());
 
-                pattern.set_to_string(combined_lines, pattern.is_newline_terminated());
+                pattern.set_to_bytes(combined_lines, pattern.is_newline_terminated());
                 action.next_command
             } else {
                 // Start from the script top.
@@ -560,7 +668,7 @@ fn process_file(
                     pattern.clear();
                     if command.addr2.is_none() || context.last_address || reader.last_line()? {
                         let text = extract_variant!(command, Text);
-                        output.write_str(text.as_ref())?;
+                        output.write_bytes(text.as_ref())?;
                     }
                     break;
                 }
@@ -571,7 +679,7 @@ fn process_file(
                 }
                 'D' => {
                     // Delete up to \n and start a new cycle without new input.
-                    if let Some(pos) = pattern.as_str()?.find('\n') {
+                    if let Some(pos) = memchr(b'\n', pattern.as_bytes()) {
                         let (s, _) = pattern.fields_mut()?;
                         s.drain(..=pos);
                         current.clone_from(&commands);
@@ -583,34 +691,34 @@ fn process_file(
                 }
                 'g' => {
                     // Replace pattern with the contents of the hold space.
-                    pattern.set_to_string(context.hold.content.clone(), context.hold.has_newline);
+                    pattern.set_to_bytes(context.hold.content.clone(), context.hold.has_newline);
                 }
                 'G' => {
                     // Append to pattern \n followed by hold space contents.
                     let (pat_content, pat_has_newline) = pattern.fields_mut()?;
-                    pat_content.push('\n');
-                    pat_content.push_str(&context.hold.content);
+                    pat_content.push(b'\n');
+                    pat_content.extend_from_slice(&context.hold.content);
                     *pat_has_newline = context.hold.has_newline;
                 }
                 'h' => {
                     // Replace hold with the contents of the pattern space.
-                    context.hold.content = pattern.as_str()?.to_string();
+                    context.hold.content = pattern.as_bytes().to_vec();
                     context.hold.has_newline = pattern.is_newline_terminated();
                 }
                 'H' => {
                     // Append to hold \n followed by pattern space contents.
-                    context.hold.content.push('\n');
-                    context.hold.content.push_str(pattern.as_str()?);
+                    context.hold.content.push(b'\n');
+                    context.hold.content.extend_from_slice(pattern.as_bytes());
                     context.hold.has_newline = pattern.is_newline_terminated();
                 }
                 'i' => {
                     // Write text to standard output.
                     let text = extract_variant!(command, Text);
-                    output.write_str(text.as_ref())?;
+                    output.write_bytes(text.as_ref())?;
                 }
                 'l' => {
                     let width = *extract_variant!(command, Number);
-                    list(output, &pattern, width)?;
+                    list(output, &pattern, width, &command.location, context)?;
                 }
                 'n' => {
                     break;
@@ -623,7 +731,7 @@ fn process_file(
                     // to perform when the next line is read.
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
-                        prepend: pattern.as_str()?.to_string(),
+                        prepend: pattern.as_bytes().to_vec(),
                     });
                     continue 'lines;
                 }
@@ -631,9 +739,9 @@ fn process_file(
                     write_chunk(output, context, &pattern)?;
                 }
                 'P' => {
-                    let line = pattern.as_str()?;
-                    if let Some(pos) = line.find('\n') {
-                        output.write_str(&line[..=pos])?;
+                    let line = pattern.as_bytes();
+                    if let Some(pos) = memchr(b'\n', line) {
+                        output.write_bytes(&line[..=pos])?;
                     } else {
                         write_chunk(output, context, &pattern)?;
                     }
@@ -678,7 +786,7 @@ fn process_file(
                 'w' => {
                     // Append the pattern space to the specified file.
                     let writer = extract_variant!(command, NamedWriter);
-                    writer.borrow_mut().write_line(pattern.as_str()?)?;
+                    writer.borrow_mut().write_line_bytes(pattern.as_bytes())?;
                 }
                 'x' => {
                     // Exchange the contents of the pattern and hold spaces.
@@ -692,7 +800,7 @@ fn process_file(
                 }
                 'y' => {
                     let trans = extract_variant!(command, Transliteration);
-                    transliterate(&mut pattern, trans)?;
+                    transliterate(&mut pattern, trans, &command.location, context)?;
                 }
                 'z' => {
                     // Clear the pattern contents, but preserve newline state
@@ -732,8 +840,8 @@ fn process_file(
         && let Some(action) = context.input_action.take()
     {
         let mut pending = action.prepend;
-        pending.push('\n');
-        output.write_str(pending)?;
+        pending.push(b'\n');
+        output.write_bytes(&pending)?;
         if context.unbuffered {
             output.flush()?;
         }
@@ -793,8 +901,8 @@ pub fn process_all_files(
             && let Some(action) = context.input_action.take()
         {
             let mut pending = action.prepend;
-            pending.push('\n');
-            output.write_str(pending)?;
+            pending.push(b'\n');
+            output.write_bytes(&pending)?;
         }
 
         in_place.end()?;
@@ -808,4 +916,91 @@ pub fn process_all_files(
     named_writer::flush_all()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Seek, SeekFrom};
+    use tempfile::tempfile;
+
+    #[test]
+    fn test_readable_ascii_byte_named_escapes() {
+        assert_eq!(readable_ascii_byte(b'\n'), r"\012");
+        assert_eq!(readable_ascii_byte(b'\t'), r"\t");
+        assert_eq!(readable_ascii_byte(b'\\'), r"\\");
+    }
+
+    #[test]
+    fn test_readable_ascii_byte_printable_and_non_ascii() {
+        assert_eq!(readable_ascii_byte(b'A'), "A");
+        assert_eq!(readable_ascii_byte(b' '), " ");
+        assert_eq!(readable_ascii_byte(0xE9), r"\351");
+    }
+
+    #[test]
+    fn test_readable_char_ascii_delegates_to_byte() {
+        assert_eq!(readable_char('\t'), r"\t");
+        assert_eq!(readable_char('A'), "A");
+    }
+
+    #[test]
+    fn test_readable_char_unicode_escapes() {
+        assert_eq!(readable_char('κ'), r"\u03BA");
+        assert_eq!(readable_char('😀'), r"\U0001F600");
+    }
+
+    #[test]
+    fn test_write_list_item_appends_without_fold() {
+        let mut file = tempfile().unwrap();
+        let mut output = OutputBuffer::new(Box::new(file.try_clone().unwrap()));
+        let mut line = ListLine::new(10);
+        line.write_item(&mut output, "ab").unwrap();
+
+        line.write_item(&mut output, "cd").unwrap();
+        output.flush().unwrap();
+
+        assert_eq!(line.buffer, "abcd");
+        assert_eq!(line.width, 4);
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut written = String::new();
+        file.read_to_string(&mut written).unwrap();
+        assert_eq!(written, "");
+    }
+
+    #[test]
+    fn test_write_list_item_folds_before_append() {
+        let mut file = tempfile().unwrap();
+        let mut output = OutputBuffer::new(Box::new(file.try_clone().unwrap()));
+        let mut line = ListLine::new(5);
+        line.write_item(&mut output, "abcd").unwrap();
+
+        line.write_item(&mut output, "e").unwrap();
+        output.flush().unwrap();
+
+        assert_eq!(line.buffer, "e");
+        assert_eq!(line.width, 1);
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut written = String::new();
+        file.read_to_string(&mut written).unwrap();
+        assert_eq!(written, "abcd\\\n");
+    }
+
+    #[test]
+    fn test_list_line_finish_writes_terminator() {
+        let mut file = tempfile().unwrap();
+        let mut output = OutputBuffer::new(Box::new(file.try_clone().unwrap()));
+        let mut line = ListLine::new(10);
+        line.write_item(&mut output, "abc").unwrap();
+
+        line.finish(&mut output).unwrap();
+        output.flush().unwrap();
+
+        assert_eq!(line.buffer, "");
+        assert_eq!(line.width, 0);
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut written = String::new();
+        file.read_to_string(&mut written).unwrap();
+        assert_eq!(written, "abc$\n");
+    }
 }

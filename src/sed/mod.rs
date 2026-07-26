@@ -20,14 +20,15 @@ pub mod processor;
 pub mod script_char_provider;
 pub mod script_line_provider;
 
-use crate::sed::command::{ProcessingContext, StringSpace};
+use crate::sed::command::{ByteSpace, CharacterMode, ProcessingContext};
 use crate::sed::compiler::compile;
 use crate::sed::processor::process_all_files;
 use crate::sed::script_line_provider::ScriptValue;
 use clap::{Arg, ArgMatches, Command, arg, crate_version};
 use std::collections::HashMap;
+use std::env;
 use std::path::PathBuf;
-use uucore::error::{UResult, UUsageError};
+use uucore::error::{UResult, USimpleError, UUsageError};
 use uucore::format_usage;
 
 const ABOUT: &str = "Stream editor for filtering and transforming text";
@@ -46,7 +47,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     let (scripts, files) = get_scripts_files(&matches)?;
-    let mut context = build_context(&matches);
+    let mut context = build_context(&matches)?;
 
     let executable = compile(scripts, &mut context)?;
     process_all_files(executable, files, &mut context)?;
@@ -192,9 +193,40 @@ fn get_scripts_files(matches: &ArgMatches) -> UResult<(Vec<ScriptValue>, Vec<Pat
     Ok((scripts, files))
 }
 
-// Parse CLI flag arguments and return a ProcessingContext struct based on them
-fn build_context(matches: &ArgMatches) -> ProcessingContext {
-    ProcessingContext {
+/// Return the character interpretation mode implied by the process locale.
+///
+/// The mode is determined from the first non-empty of LC_ALL, LC_CTYPE, and
+/// LANG. The C and POSIX locales select byte mode. UTF-8 locales (including
+/// C.UTF-8) select UTF-8 mode. All other locales result in an error.
+pub fn character_mode_for_locale(locale: &str) -> UResult<CharacterMode> {
+    if locale == "C" || locale == "POSIX" {
+        Ok(CharacterMode::Byte)
+    } else if locale.eq_ignore_ascii_case("C.UTF-8")
+        || locale.to_ascii_lowercase().ends_with(".utf-8")
+        || locale.to_ascii_lowercase().ends_with(".utf8")
+    {
+        Ok(CharacterMode::Utf8)
+    } else {
+        Err(USimpleError::new(
+            1,
+            format!("unsupported locale: {locale}"),
+        ))
+    }
+}
+
+/// Return a ProcessingContext based on parsed CLI flags and environment.
+fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
+    let locale = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .into_iter()
+        .find_map(|name| {
+            let value = env::var(name).ok()?;
+            (!value.is_empty()).then_some(value)
+        })
+        // Same default as GNU sed
+        .unwrap_or_else(|| "C".to_string());
+
+    Ok(ProcessingContext {
+        // CLI arguments
         all_output_files: matches.get_flag("all-output-files"),
         debug: matches.get_flag("debug"),
         regex_extended: matches.get_flag("regexp-extended"),
@@ -211,6 +243,9 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         unbuffered: matches.get_flag("unbuffered"),
         null_data: matches.get_flag("null-data"),
 
+        // Environment
+        character_mode: character_mode_for_locale(&locale)?,
+
         // Other context
         input_name: "<stdin>".to_string(),
         line_number: 0,
@@ -220,8 +255,8 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         stop_processing: false,
         saved_regex: None,
         input_action: None,
-        hold: StringSpace {
-            content: String::new(),
+        hold: ByteSpace {
+            content: Vec::new(),
             has_newline: true,
         },
         parsed_block_nesting: 0,
@@ -229,7 +264,7 @@ fn build_context(matches: &ArgMatches) -> ProcessingContext {
         range_commands: Vec::new(),
         substitution_made: false,
         append_elements: Vec::new(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -338,7 +373,7 @@ mod tests {
     #[test]
     fn test_defaults() {
         let matches = test_matches(&[]);
-        let ctx = build_context(&matches);
+        let ctx = build_context(&matches).unwrap();
 
         assert!(!ctx.all_output_files);
         assert!(!ctx.debug);
@@ -373,7 +408,7 @@ mod tests {
             "-z",
         ]);
 
-        let ctx = build_context(&matches);
+        let ctx = build_context(&matches).unwrap();
 
         assert!(ctx.all_output_files);
         assert!(ctx.debug);
@@ -393,7 +428,7 @@ mod tests {
     #[test]
     fn test_multiple_same_arguments() {
         let matches = test_matches(&["-E", "-r"]);
-        let ctx = build_context(&matches);
+        let ctx = build_context(&matches).unwrap();
 
         assert!(ctx.regex_extended);
     }
@@ -401,7 +436,7 @@ mod tests {
     #[test]
     fn test_in_place_with_suffix() {
         let matches = test_matches(&["-i", ".bak"]);
-        let ctx = build_context(&matches);
+        let ctx = build_context(&matches).unwrap();
 
         assert!(ctx.in_place);
         assert_eq!(ctx.in_place_suffix, Some(".bak".to_string()));
@@ -412,10 +447,59 @@ mod tests {
         let matches_default = test_matches(&[]);
         let matches_custom = test_matches(&["-l", "120"]);
 
-        let ctx_default = build_context(&matches_default);
-        let ctx_custom = build_context(&matches_custom);
+        let ctx_default = build_context(&matches_default).unwrap();
+        let ctx_custom = build_context(&matches_custom).unwrap();
 
         assert_eq!(ctx_default.length, 70);
         assert_eq!(ctx_custom.length, 120);
+    }
+
+    #[test]
+    fn c_locale_selects_byte_mode() {
+        assert_eq!(character_mode_for_locale("C").unwrap(), CharacterMode::Byte);
+    }
+
+    #[test]
+    fn posix_locale_selects_byte_mode() {
+        assert_eq!(
+            character_mode_for_locale("POSIX").unwrap(),
+            CharacterMode::Byte
+        );
+    }
+
+    #[test]
+    fn c_utf8_locale_selects_utf8_mode() {
+        assert_eq!(
+            character_mode_for_locale("C.UTF-8").unwrap(),
+            CharacterMode::Utf8
+        );
+    }
+
+    #[test]
+    fn dot_utf8_locale_selects_utf8_mode() {
+        assert_eq!(
+            character_mode_for_locale("en_US.UTF-8").unwrap(),
+            CharacterMode::Utf8
+        );
+    }
+
+    #[test]
+    fn dot_utf8_locale_is_case_insensitive() {
+        assert_eq!(
+            character_mode_for_locale("el_GR.utf8").unwrap(),
+            CharacterMode::Utf8
+        );
+    }
+
+    #[test]
+    fn unsupported_locale_reports_locale_name() {
+        let err = character_mode_for_locale("el_GR.ISO-8859-7").unwrap_err();
+
+        assert_eq!(err.code(), 1);
+        assert!(
+            err.to_string()
+                .contains("unsupported locale: el_GR.ISO-8859-7"),
+            "{err}"
+        );
     }
 }

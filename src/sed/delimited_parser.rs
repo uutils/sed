@@ -8,13 +8,29 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-use crate::sed::command::{RE_DUP_MAX, RegexMode};
+use crate::sed::command::{CharacterMode, ParsedTransliteration, RE_DUP_MAX, RegexMode};
 use crate::sed::error_handling::compilation_error;
 use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::ScriptLineProvider;
 
 use std::char;
+use std::ffi::OsString;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
+use std::string::FromUtf8Error;
 use uucore::error::UResult;
+
+/// Construct an OS string from arbitrary bytes.
+#[cfg(unix)]
+pub fn os_string_from_bytes(bytes: Vec<u8>) -> Result<OsString, FromUtf8Error> {
+    Ok(OsString::from_vec(bytes))
+}
+
+/// Construct an OS string from UTF-8 bytes on platforms without byte-native paths.
+#[cfg(not(unix))]
+pub fn os_string_from_bytes(bytes: Vec<u8>) -> Result<OsString, FromUtf8Error> {
+    String::from_utf8(bytes).map(OsString::from)
+}
 
 /// Return true if c is a valid octal digit
 fn is_ascii_octal_digit(c: char) -> bool {
@@ -79,6 +95,30 @@ fn create_control_char(x: char) -> Option<char> {
 
     let transformed = (c as u8) ^ 0x40;
     char::from_u32(u32::from(transformed))
+}
+
+/// Append a parsed script character according to the active character mode.
+pub fn push_script_char(bytes: &mut Vec<u8>, ch: char, character_mode: CharacterMode) {
+    match character_mode {
+        CharacterMode::Byte if (ch as u32) <= 0xFF => bytes.push(ch as u8),
+        _ => {
+            let mut buf = [0u8; 4];
+            bytes.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+        }
+    }
+}
+
+/// Decode parsed script bytes as UTF-8 for character-mode parsing.
+fn parsed_bytes_to_utf8(
+    lines: &ScriptLineProvider,
+    line: &ScriptCharProvider,
+    bytes: Vec<u8>,
+    description: &str,
+) -> UResult<String> {
+    String::from_utf8(bytes).map_err(|e| {
+        compilation_error::<String>(lines, line, format!("invalid UTF-8 in {description}: {e}"))
+            .unwrap_err()
+    })
 }
 
 /// Parse a character escape valid in all contexts (RE pattern, substitution,
@@ -177,15 +217,16 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
     }
 }
 
-/// Parse a POSIX RE character class returning it as a string.
+/// Parse a POSIX RE character class returning it as bytes.
 /// This functionality is needed to avoid terminating delimited
 /// sequences when a delimiter appears within a character class.
 /// While at it, handle escaped characters for the sake of consistency.
 fn parse_character_class(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
-) -> UResult<String> {
-    let mut result = String::new();
+    character_mode: CharacterMode,
+) -> UResult<Vec<u8>> {
+    let mut result = Vec::new();
 
     assert!(
         !line.eol() && line.current() == '[',
@@ -193,17 +234,17 @@ fn parse_character_class(
     );
 
     line.advance();
-    result.push('[');
+    result.push(b'[');
 
     // Optional negation
     if !line.eol() && line.current() == '^' {
-        result.push('^');
+        result.push(b'^');
         line.advance();
     }
 
     // Optional leading ']' inside the class
     if !line.eol() && line.current() == ']' {
-        result.push(']');
+        result.push(b']');
         line.advance();
     }
 
@@ -211,7 +252,7 @@ fn parse_character_class(
         let ch = line.current();
 
         if ch == ']' {
-            result.push(']');
+            result.push(b']');
             line.advance();
             return Ok(result);
         }
@@ -219,7 +260,7 @@ fn parse_character_class(
         if ch == '[' {
             line.advance();
             if line.eol() {
-                result.push('[');
+                result.push(b'[');
                 continue;
             }
             let marker = line.current();
@@ -227,10 +268,10 @@ fn parse_character_class(
             if marker == ':' || marker == '.' || marker == '=' {
                 line.advance();
 
-                result.push('[');
-                result.push(marker);
+                result.push(b'[');
+                result.push(marker as u8);
 
-                let mut inner = String::new();
+                let mut inner = Vec::new();
                 let mut terminated = false;
 
                 while !line.eol() {
@@ -239,16 +280,16 @@ fn parse_character_class(
                         line.advance();
                         if !line.eol() && line.current() == ']' {
                             line.advance();
-                            result.push_str(&inner);
-                            result.push(marker);
-                            result.push(']');
+                            result.extend_from_slice(&inner);
+                            result.push(marker as u8);
+                            result.push(b']');
                             terminated = true;
                             break;
                         }
                         // False alarm, just part of the inner name
-                        inner.push(marker);
+                        inner.push(marker as u8);
                     } else {
-                        inner.push(c);
+                        inner.push(line.current_byte());
                         line.advance();
                     }
                 }
@@ -264,8 +305,8 @@ fn parse_character_class(
                 continue;
             }
             // Not a POSIX construct — treat as literal
-            result.push('[');
-            result.push(marker);
+            result.push(b'[');
+            result.push(line.current_byte());
             line.advance();
             continue;
         }
@@ -277,14 +318,14 @@ fn parse_character_class(
                 break;
             }
             if let Some(decoded) = parse_char_escape(line) {
-                result.push(decoded);
+                push_script_char(&mut result, decoded, character_mode);
             } else {
-                result.push('\\');
-                result.push(line.current());
+                result.push(b'\\');
+                result.push(line.current_byte());
                 line.advance();
             }
         } else {
-            result.push(ch);
+            result.push(line.current_byte());
             line.advance();
         }
     }
@@ -317,14 +358,24 @@ pub fn parse_regex(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     regex_mode: RegexMode,
-) -> UResult<String> {
+) -> UResult<Vec<u8>> {
+    parse_regex_for_mode(lines, line, regex_mode, CharacterMode::Utf8)
+}
+
+/// Parse a regular expression according to the current character mode.
+pub fn parse_regex_for_mode(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    regex_mode: RegexMode,
+    character_mode: CharacterMode,
+) -> UResult<Vec<u8>> {
     let delimiter = scan_delimiter(lines, line)?;
-    let mut result = String::new();
+    let mut result = Vec::new();
     while !line.eol() {
         match line.current() {
             '[' if delimiter != '[' => {
-                let cc = parse_character_class(lines, line)?;
-                result.push_str(&cc);
+                let cc = parse_character_class(lines, line, character_mode)?;
+                result.extend_from_slice(&cc);
                 continue;
             }
             '\\' => {
@@ -334,30 +385,30 @@ pub fn parse_regex(
                 }
                 if line.current() == delimiter {
                     // Push escaped delimiter
-                    result.push(line.current());
+                    result.push(line.current_byte());
                     line.advance();
                     continue;
                 }
                 if line.current() == '{' && matches!(regex_mode, RegexMode::Basic) {
                     validate_quantifier_structure(lines, line, delimiter, RegexMode::Basic)?;
                     let quantifier = validate_quantifier_numbers(lines, line)?;
-                    result.push('\\');
-                    result.push('{');
-                    result.push_str(&quantifier);
+                    result.push(b'\\');
+                    result.push(b'{');
+                    result.extend_from_slice(quantifier.as_bytes());
                     continue;
                 }
                 if line.current() == '}' {
-                    result.push('\\');
-                    result.push('}');
+                    result.push(b'\\');
+                    result.push(b'}');
                     line.advance();
                     continue;
                 }
                 if let Some(decoded) = parse_char_escape(line) {
-                    result.push(decoded);
+                    push_script_char(&mut result, decoded, character_mode);
                 } else {
                     // Pass through \<any> to RE engine for further treatment
-                    result.push('\\');
-                    result.push(line.current());
+                    result.push(b'\\');
+                    result.push(line.current_byte());
                     line.advance();
                 }
                 continue;
@@ -365,18 +416,18 @@ pub fn parse_regex(
             '{' if delimiter != '{' && matches!(regex_mode, RegexMode::Extended) => {
                 validate_quantifier_structure(lines, line, delimiter, RegexMode::Extended)?;
                 let quantifier = validate_quantifier_numbers(lines, line)?;
-                result.push('{');
-                result.push_str(&quantifier);
+                result.push(b'{');
+                result.extend_from_slice(quantifier.as_bytes());
                 continue;
             }
             '}' if delimiter != '}' => {
-                result.push('}');
+                result.push(b'}');
                 line.advance();
                 continue;
             }
 
             c if c == delimiter => return Ok(result),
-            c => result.push(c),
+            _ => result.push(line.current_byte()),
         }
         line.advance();
     }
@@ -541,9 +592,18 @@ fn validate_quantifier_numbers(
 pub fn parse_transliteration(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
-) -> UResult<String> {
+) -> UResult<Vec<u8>> {
+    parse_transliteration_bytes(lines, line, CharacterMode::Utf8)
+}
+
+/// Parse transliteration bytes according to the current character mode.
+fn parse_transliteration_bytes(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    character_mode: CharacterMode,
+) -> UResult<Vec<u8>> {
     let delimiter = scan_delimiter(lines, line)?;
-    let mut result = String::new();
+    let mut result = Vec::new();
 
     while !line.eol() {
         match line.current() {
@@ -554,31 +614,76 @@ pub fn parse_transliteration(
                 }
                 if line.current() == delimiter || line.current() == '\\' {
                     // Push only the escaped character
-                    result.push(line.current());
+                    result.push(line.current_byte());
                     line.advance();
                     continue;
                 }
                 if let Some(decoded) = parse_char_escape(line) {
-                    result.push(decoded);
+                    push_script_char(&mut result, decoded, character_mode);
                 } else {
                     // Pass through \<any> to tr for literal use
-                    result.push('\\');
-                    result.push(line.current());
+                    result.push(b'\\');
+                    result.push(line.current_byte());
                     line.advance();
                 }
                 continue;
             }
             c if c == delimiter => return Ok(result),
-            c => result.push(c),
+            _ => result.push(line.current_byte()),
         }
         line.advance();
     }
     compilation_error(lines, line, "unterminated transliteration string")
 }
 
+/// Parse a transliteration string according to the current character mode.
+pub fn parse_transliteration_for_mode(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    character_mode: CharacterMode,
+) -> UResult<ParsedTransliteration> {
+    let bytes = parse_transliteration_bytes(lines, line, character_mode)?;
+    match character_mode {
+        CharacterMode::Byte => Ok(ParsedTransliteration::Bytes(bytes)),
+        CharacterMode::Utf8 => parsed_bytes_to_utf8(lines, line, bytes, "transliteration string")
+            .map(ParsedTransliteration::Text),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    #[cfg(unix)]
+    fn test_os_string_from_bytes_preserves_non_utf8_on_unix() {
+        let os = os_string_from_bytes(b"a\xFFb".to_vec()).unwrap();
+        assert_eq!(os.as_os_str().as_bytes(), b"a\xFFb");
+    }
+
+    #[test]
+    fn test_os_string_from_bytes_accepts_utf8() {
+        let os = os_string_from_bytes("aé".as_bytes().to_vec()).unwrap();
+        assert_eq!(os, OsString::from("aé"));
+    }
+
+    #[test]
+    fn test_parsed_bytes_to_utf8_accepts_valid_utf8() {
+        let lines = ScriptLineProvider::with_active_state("test.sed", 1);
+        let line = ScriptCharProvider::new("");
+        let text = parsed_bytes_to_utf8(&lines, &line, "é".as_bytes().to_vec(), "test").unwrap();
+        assert_eq!(text, "é");
+    }
+
+    #[test]
+    fn test_parsed_bytes_to_utf8_rejects_invalid_utf8() {
+        let lines = ScriptLineProvider::with_active_state("test.sed", 1);
+        let line = ScriptCharProvider::new("");
+        let err = parsed_bytes_to_utf8(&lines, &line, b"\xE9".to_vec(), "test").unwrap_err();
+        assert!(err.to_string().contains("invalid UTF-8 in test"));
+    }
 
     fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
         let lines = ScriptLineProvider::new(vec![]); // Empty for tests
@@ -754,7 +859,7 @@ mod tests {
 
     #[test]
     fn test_control_escape_invalid() {
-        assert_eq!(escape_result_with_current("cé"), (Some('c'), Some('é')));
+        assert_eq!(escape_result_with_current("cé"), (Some('c'), Some('Ã')));
     }
 
     #[test]
@@ -770,6 +875,20 @@ mod tests {
     #[test]
     fn test_hex_escape_valid() {
         assert_eq!(escape_result_with_current("x41;"), (Some('A'), Some(';')));
+    }
+
+    #[test]
+    fn test_push_script_char_byte_mode_single_byte() {
+        let mut bytes = Vec::new();
+        push_script_char(&mut bytes, 'é', CharacterMode::Byte);
+        assert_eq!(bytes, b"\xE9");
+    }
+
+    #[test]
+    fn test_push_script_char_utf8_mode_encodes_utf8() {
+        let mut bytes = Vec::new();
+        push_script_char(&mut bytes, 'é', CharacterMode::Utf8);
+        assert_eq!(bytes, "é".as_bytes());
     }
 
     #[test]
@@ -818,103 +937,119 @@ mod tests {
     fn test_basic_character_class() {
         let mut line = char_provider_from("[qr]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[qr]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[qr]");
     }
 
     #[test]
     fn test_negated_class() {
         let mut line = char_provider_from("[^abc]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[^abc]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[^abc]");
     }
 
     #[test]
     fn test_leading_close_bracket() {
         let mut line = char_provider_from("[]abc]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[]abc]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[]abc]");
     }
 
     #[test]
     fn test_leading_negated_close_bracket() {
         let mut line = char_provider_from("[^]abc]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[^]abc]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[^]abc]");
     }
 
     #[test]
     fn test_escaped_character_begin() {
         let mut line = char_provider_from("[\\nabc]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[\nabc]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[\nabc]");
     }
 
     #[test]
     fn test_escaped_character_middle() {
         let mut line = char_provider_from("[a\\nbc]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[a\nbc]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[a\nbc]");
     }
 
     #[test]
     fn test_escaped_character_end() {
         let mut line = char_provider_from("[abc\\n]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[abc\n]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[abc\n]");
     }
 
     #[test]
     fn test_escaped_delimiter() {
         let mut line = char_provider_from("[a\\]bc]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[a\\]bc]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, br"[a\]bc]");
     }
 
     #[test]
     fn test_posix_class() {
         let mut line = char_provider_from("[[:digit:]]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[[:digit:]]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[[:digit:]]");
+    }
+
+    #[test]
+    fn test_colon_literal_character_class() {
+        let mut line = char_provider_from("[:]");
+        let lines = test_lines();
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[:]");
     }
 
     #[test]
     fn test_equivalence_class() {
         let mut line = char_provider_from("[[=a=]]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[[=a=]]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[[=a=]]");
     }
 
     #[test]
     fn test_collating_symbol() {
         let mut line = char_provider_from("[[.ch.]]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[[.ch.]]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[[.ch.]]");
     }
 
     #[test]
     fn test_unterminated_class_error() {
         let mut line = char_provider_from("[abc"); // missing closing ]
         let lines = test_lines();
-        let err = parse_character_class(&lines, &mut line);
+        let err = parse_character_class(&lines, &mut line, CharacterMode::Utf8);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_open_bracket_at_eol_errors() {
+        let mut line = char_provider_from("[");
+        let lines = test_lines();
+        let err = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap_err();
+        assert!(err.to_string().contains("Unterminated bracket expression"));
     }
 
     #[test]
     fn test_unterminated_posix_class_error() {
         let mut line = char_provider_from("[[:digit:]");
         let lines = test_lines();
-        let err = parse_character_class(&lines, &mut line);
+        let err = parse_character_class(&lines, &mut line, CharacterMode::Utf8);
         assert!(err.is_err());
     }
 
@@ -922,7 +1057,7 @@ mod tests {
     fn test_unterminated_escape_error() {
         let mut line = char_provider_from("[abc\\"); // missing closing ]
         let lines = test_lines();
-        let err = parse_character_class(&lines, &mut line);
+        let err = parse_character_class(&lines, &mut line, CharacterMode::Utf8);
         assert!(err.is_err());
     }
 
@@ -930,8 +1065,16 @@ mod tests {
     fn test_malformed_posix_like_pattern_treated_as_literal() {
         let mut line = char_provider_from("[[x]yz]");
         let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line).unwrap();
-        assert_eq!(result, "[[x]");
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[[x]");
+    }
+
+    #[test]
+    fn test_literal_open_bracket_in_character_class() {
+        let mut line = char_provider_from("[a[b]");
+        let lines = test_lines();
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(result, b"[a[b]");
     }
 
     // parse_regex
@@ -939,7 +1082,7 @@ mod tests {
     fn test_simple_regex() {
         let (lines, mut line) = make_providers("/abc/");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "abc");
+        assert_eq!(parsed, b"abc");
         assert_eq!(line.current(), '/');
     }
 
@@ -947,7 +1090,7 @@ mod tests {
     fn test_regex_with_escaped_delimiter() {
         let (lines, mut line) = make_providers("/ab\\/c/");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "ab/c");
+        assert_eq!(parsed, b"ab/c");
         assert_eq!(line.current(), '/');
     }
 
@@ -955,7 +1098,7 @@ mod tests {
     fn test_regex_with_capture() {
         let (lines, mut line) = make_providers(r"/\(.\)/c/");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, r"\(.\)");
+        assert_eq!(parsed, br"\(.\)");
         assert_eq!(line.current(), '/');
     }
 
@@ -963,7 +1106,7 @@ mod tests {
     fn test_regex_with_escape_sequence() {
         let (lines, mut line) = make_providers("/ab\\n/");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "ab\n");
+        assert_eq!(parsed, b"ab\n");
         assert_eq!(line.current(), '/');
     }
 
@@ -971,7 +1114,7 @@ mod tests {
     fn test_basic_regex_quantifier() {
         let (lines, mut line) = make_providers("/a\\{2,3\\}/p");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "a\\{2,3\\}");
+        assert_eq!(parsed, br"a\{2,3\}");
         assert_eq!(line.current(), '/');
     }
 
@@ -993,7 +1136,7 @@ mod tests {
     fn test_extended_regex_quantifier() {
         let (lines, mut line) = make_providers("/a{2,3}/p");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap();
-        assert_eq!(parsed, "a{2,3}");
+        assert_eq!(parsed, b"a{2,3}");
         assert_eq!(line.current(), '/');
     }
 
@@ -1067,7 +1210,7 @@ mod tests {
     fn test_regex_with_character_class() {
         let (lines, mut line) = make_providers("/[a-z]/");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "[a-z]");
+        assert_eq!(parsed, b"[a-z]");
         assert_eq!(line.current(), '/');
     }
 
@@ -1075,7 +1218,7 @@ mod tests {
     fn test_regex_with_bracket_delimiter() {
         let (lines, mut line) = make_providers("[abc[");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "abc");
+        assert_eq!(parsed, b"abc");
         assert_eq!(line.current(), '[');
     }
 
@@ -1083,7 +1226,7 @@ mod tests {
     fn test_bracket_regex_with_bracket_delimiter() {
         let (lines, mut line) = make_providers("[a\\[0-9]bc[");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "a[0-9]bc");
+        assert_eq!(parsed, b"a[0-9]bc");
         assert_eq!(line.current(), '[');
     }
 
@@ -1091,7 +1234,7 @@ mod tests {
     fn test_regex_with_escaped_bracket_in_character_class() {
         let (lines, mut line) = make_providers("/[a\\]z]/");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "[a\\]z]");
+        assert_eq!(parsed, br"[a\]z]");
         assert_eq!(line.current(), '/');
     }
 
@@ -1099,7 +1242,7 @@ mod tests {
     fn test_regex_with_delimiter_inside_character_class() {
         let (lines, mut line) = make_providers("/[a/c]/");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "[a/c]");
+        assert_eq!(parsed, b"[a/c]");
         assert_eq!(line.current(), '/');
     }
 
@@ -1107,7 +1250,7 @@ mod tests {
     fn test_regex_with_escaped_paren_and_backslash() {
         let (lines, mut line) = make_providers("/\\(\\\\/");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, "\\(\\\\");
+        assert_eq!(parsed, br"\(\\");
         assert_eq!(line.current(), '/');
     }
 
@@ -1268,7 +1411,7 @@ mod tests {
     fn test_simple_transliteration() {
         let (lines, mut line) = make_providers("/abc/");
         let parsed = parse_transliteration(&lines, &mut line).unwrap();
-        assert_eq!(parsed, "abc");
+        assert_eq!(parsed, b"abc");
         assert_eq!(line.current(), '/');
     }
 
@@ -1276,7 +1419,7 @@ mod tests {
     fn test_transliteration_with_escaped_delimiter() {
         let (lines, mut line) = make_providers("/ab\\/c/");
         let parsed = parse_transliteration(&lines, &mut line).unwrap();
-        assert_eq!(parsed, "ab/c");
+        assert_eq!(parsed, b"ab/c");
         assert_eq!(line.current(), '/');
     }
 
@@ -1284,7 +1427,15 @@ mod tests {
     fn test_transliteration_with_escaped_backslash() {
         let (lines, mut line) = make_providers("/ab\\\\c/");
         let parsed = parse_transliteration(&lines, &mut line).unwrap();
-        assert_eq!(parsed, "ab\\c");
+        assert_eq!(parsed, br"ab\c");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_transliteration_backslash_character() {
+        let (lines, mut line) = make_providers("/\\\\/");
+        let parsed = parse_transliteration_bytes(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(parsed, br"\");
         assert_eq!(line.current(), '/');
     }
 
@@ -1292,7 +1443,25 @@ mod tests {
     fn test_transliteration_with_escape_sequence() {
         let (lines, mut line) = make_providers("/ab\\n/");
         let parsed = parse_transliteration(&lines, &mut line).unwrap();
-        assert_eq!(parsed, "ab\n");
+        assert_eq!(parsed, b"ab\n");
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_parse_transliteration_for_mode_bytes() {
+        let (lines, mut line) = make_providers("/a\\xE9/");
+        let parsed =
+            parse_transliteration_for_mode(&lines, &mut line, CharacterMode::Byte).unwrap();
+        assert_eq!(parsed, ParsedTransliteration::Bytes(b"a\xE9".to_vec()));
+        assert_eq!(line.current(), '/');
+    }
+
+    #[test]
+    fn test_parse_transliteration_for_mode_utf8() {
+        let (lines, mut line) = make_providers("/a\\xE9/");
+        let parsed =
+            parse_transliteration_for_mode(&lines, &mut line, CharacterMode::Utf8).unwrap();
+        assert_eq!(parsed, ParsedTransliteration::Text("aé".to_string()));
         assert_eq!(line.current(), '/');
     }
 

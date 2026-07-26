@@ -16,6 +16,9 @@ fn init() {
         std::env::remove_var("UUTESTS_UTIL_NAME");
         std::env::set_var("UUTESTS_UTIL_NAME", "");
         std::env::set_var("UUTILS_MULTICALL", "0");
+        // Keep fixture-based integration tests in UTF-8 mode; individual
+        // locale tests override LC_ALL to exercise byte mode.
+        std::env::set_var("LC_ALL", "C.UTF-8");
     }
 }
 

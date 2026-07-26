@@ -9,10 +9,13 @@
 // file that was distributed with this source code.
 
 use crate::sed::command::{
-    Address, Command, CommandData, ProcessingContext, RegexMode, ReplacementPart,
-    ReplacementTemplate, Substitution, Transliteration,
+    Address, CharacterMode, Command, CommandData, ParsedTransliteration, ProcessingContext,
+    RegexMode, ReplacementPart, ReplacementTemplate, Substitution, Transliteration,
 };
-use crate::sed::delimited_parser::{parse_char_escape, parse_regex, parse_transliteration};
+use crate::sed::delimited_parser::{
+    os_string_from_bytes, parse_char_escape, parse_regex_for_mode, parse_transliteration_for_mode,
+    push_script_char,
+};
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
 use crate::sed::fast_regex::Regex;
 use crate::sed::named_writer::NamedWriter;
@@ -34,6 +37,7 @@ const ERR_ADDRESS_0_USAGE: &str =
 const ERR_SANDBOX: &str = "command not allowed with --sandbox";
 
 const ERR_UNKNOWN_OPTION_TO_S: &str = "unknown option to 's'";
+const ERR_TRANSLITERATION_LENGTH: &str = "transliteration strings are not the same length";
 
 // Handling required after processing a command
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,6 +260,7 @@ fn compile_sequence(
     loop {
         line.eat_spaces();
 
+        // Special first-line comment disabling default output
         // According to POSIX: "If the first two characters in the script are
         // "#n", the default output shall be suppressed".
         if !line.eol()
@@ -273,13 +278,14 @@ fn compile_sequence(
             }
         }
 
+        // Empty lines and comments
         if line.eol() || line.current() == '#' {
             match lines.next_line()? {
                 None => {
                     return Ok(head);
                 }
-                Some(line_string) => {
-                    *line = ScriptCharProvider::new(&line_string);
+                Some(line_bytes) => {
+                    *line = ScriptCharProvider::new(line_bytes);
                 }
             }
             continue;
@@ -377,7 +383,7 @@ fn compile_address_range(
                         return compilation_error(
                             lines,
                             line,
-                            "~step can only be specified on numeric addresses",
+                            "~step can only be specified through numeric values",
                         );
                     }
                 }
@@ -415,20 +421,24 @@ fn compile_address_range(
 }
 
 /// Read the line's remaining characters as a file path and return it.
+// TODO Move to delimited_parser in separate commit.
 fn read_file_path(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> UResult<PathBuf> {
     line.advance(); // Skip the command/w character
     line.eat_spaces(); // Skip any leading whitespace
 
-    let mut path = String::new();
+    let mut path = Vec::new();
     while !line.eol() {
-        path.push(line.current());
+        path.push(line.current_byte());
         line.advance();
     }
 
     if path.is_empty() {
         compilation_error(lines, line, "missing file path")
     } else {
-        Ok(PathBuf::from(path))
+        os_string_from_bytes(path).map(PathBuf::from).map_err(|e| {
+            compilation_error::<PathBuf>(lines, line, format!("invalid characters file path: {e}"))
+                .unwrap_err()
+        })
     }
 }
 
@@ -458,7 +468,7 @@ fn compile_address(
             } else {
                 RegexMode::Basic
             };
-            let re = parse_regex(lines, line, regex_mode)?;
+            let re = parse_regex_for_mode(lines, line, regex_mode, context.character_mode)?;
             // Skip over delimiter
             line.advance();
 
@@ -540,47 +550,50 @@ fn parse_command_ending(
     Ok(())
 }
 
-/// Convert a primitive BRE pattern to a safe ERE-compatible pattern string.
+/// Convert a primitive BRE pattern to a safe ERE-compatible pattern.
 /// - Replaces `\(`, `\)`, `\?`, `\+`, `\|`, `\{` and `\}` with `(`, `)`, `?`, `+`, `|`, `{` and `}`.
 /// - Puts single-digit back-references in non-capturing groups..
 /// - Escapes ERE-only metacharacters: `+ ? { } | ( )`.
-/// - Leaves all other characters as-is.
-fn bre_to_ere(pattern: &str) -> String {
-    let mut result = String::with_capacity(pattern.len());
-    let mut chars = pattern.chars().peekable();
+/// - Leaves all other bytes as-is.
+fn bre_to_ere(pattern: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(pattern.len());
+    let mut pos = 0;
 
     let mut at_beginning = true;
-    let mut previous: Option<char> = None;
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.peek() {
-                Some('(') => {
-                    chars.next();
-                    result.push('('); // Group start
+    let mut previous: Option<u8> = None;
+    while pos < pattern.len() {
+        let c = pattern[pos];
+        pos += 1;
+
+        if c == b'\\' {
+            match pattern.get(pos).copied() {
+                Some(b'(') => {
+                    pos += 1;
+                    result.push(b'('); // Group start
                 }
-                Some(')') => {
-                    chars.next();
-                    result.push(')'); // Group end
+                Some(b')') => {
+                    pos += 1;
+                    result.push(b')'); // Group end
                 }
-                Some('?') => {
-                    chars.next();
-                    result.push('?'); // Quantifier 0 or 1
+                Some(b'?') => {
+                    pos += 1;
+                    result.push(b'?'); // Quantifier 0 or 1
                 }
-                Some('+') => {
-                    chars.next();
-                    result.push('+'); // Quantifier 1 or more
+                Some(b'+') => {
+                    pos += 1;
+                    result.push(b'+'); // Quantifier 1 or more
                 }
-                Some('|') => {
-                    chars.next();
-                    result.push('|'); // Alternation operator
+                Some(b'|') => {
+                    pos += 1;
+                    result.push(b'|'); // Alternation operator
                 }
-                Some('{') => {
-                    chars.next();
-                    result.push('{'); // Brace quantifier start
+                Some(b'{') => {
+                    pos += 1;
+                    result.push(b'{'); // Brace quantifier start
                 }
-                Some('}') => {
-                    chars.next();
-                    result.push('}'); // Brace quantifier end
+                Some(b'}') => {
+                    pos += 1;
+                    result.push(b'}'); // Brace quantifier end
                 }
                 Some(v) if v.is_ascii_digit() => {
                     // Back-reference.  In sed BREs these are single-digit
@@ -589,28 +602,30 @@ fn bre_to_ere(pattern: &str) -> String {
                     // to avoid having the number extend beyond the single
                     // digit. Example: In sed \11 matches group 1 followed
                     // by '1', not group 11.
-                    result.push_str(&format!(r"(?:\{v})"));
-                    chars.next();
+                    result.extend_from_slice(b"(?:\\");
+                    result.push(v);
+                    result.push(b')');
+                    pos += 1;
                 }
-                Some(&next) => {
+                Some(next) => {
                     // Preserve other escaped characters.
-                    chars.next();
-                    result.push('\\');
+                    pos += 1;
+                    result.push(b'\\');
                     result.push(next);
                 }
                 None => {
                     // Trailing backslash; keep it.
-                    result.push('\\');
+                    result.push(b'\\');
                 }
             }
         } else {
             match c {
-                '+' | '?' | '{' | '}' | '|' | '(' | ')' => {
+                b'+' | b'?' | b'{' | b'}' | b'|' | b'(' | b')' => {
                     // Escape unsupported ERE metacharacters.
-                    result.push('\\');
+                    result.push(b'\\');
                     result.push(c);
                 }
-                '^' if !at_beginning && previous != Some('[') => {
+                b'^' if !at_beginning && previous != Some(b'[') => {
                     // In BREs ^ has special meaning at the beginning
                     // and as bracket negation.  This heuristic escapes
                     // all other uses, which per POSIX are valid in EREs.
@@ -618,12 +633,12 @@ fn bre_to_ere(pattern: &str) -> String {
                     // the 'a' prevents the expression "^b" from matching
                     // starting at the first character."
                     // POSIX 9.4.9 ERE Expression Anchoring
-                    result.push('\\');
+                    result.push(b'\\');
                     result.push(c);
                 }
-                '$' if chars.peek().is_some() => {
+                b'$' if pos < pattern.len() => {
                     // Similarly for $ appearing not at the end.
-                    result.push('\\');
+                    result.push(b'\\');
                     result.push(c);
                 }
                 _ => result.push(c),
@@ -642,51 +657,64 @@ fn bre_to_ere(pattern: &str) -> String {
 fn compile_regex(
     lines: &ScriptLineProvider,
     line: &ScriptCharProvider,
-    pattern: &str,
+    pattern: impl AsRef<[u8]>,
     context: &ProcessingContext,
     icase: bool,
     multiline: bool,
 ) -> UResult<Option<Regex>> {
+    let pattern = pattern.as_ref();
     if pattern.is_empty() {
         return Ok(None);
     }
 
     // Convert basic to extended regular expression if needed.
     let pattern = if context.regex_extended {
-        pattern
+        pattern.to_vec()
     } else {
-        &bre_to_ere(pattern)
+        bre_to_ere(pattern)
     };
 
-    let mut modifiers = String::new();
+    // Add any required modifiers.
+    let mut modifiers = Vec::new();
     if icase {
-        modifiers.push('i');
+        modifiers.push(b'i');
     }
     if multiline {
-        modifiers.push('m');
+        modifiers.push(b'm');
     }
     let pattern = if modifiers.is_empty() {
-        pattern.to_string()
+        pattern
     } else {
-        format!("(?{modifiers}){pattern}")
+        // Append modifiers.
+        let mut with_modifiers = Vec::with_capacity(pattern.len() + modifiers.len() + 3);
+        with_modifiers.extend_from_slice(b"(?");
+        with_modifiers.extend_from_slice(&modifiers);
+        with_modifiers.push(b')');
+        with_modifiers.extend_from_slice(&pattern);
+        with_modifiers
     };
 
     // Compile into engine.
-    let compiled = Regex::new(&pattern).map_err(|e| {
-        compilation_error::<Regex>(lines, line, format!("invalid regex '{pattern}': {e}"))
-            .unwrap_err()
+    let compiled = Regex::new(&pattern, context.character_mode).map_err(|e| {
+        compilation_error::<Regex>(
+            lines,
+            line,
+            format!("invalid regex '{}': {e}", String::from_utf8_lossy(&pattern)),
+        )
+        .unwrap_err()
     })?;
 
     Ok(Some(compiled))
 }
 
-/// Compile a regular expression replacement string.
+/// Compile a regular expression replacement string according to character mode.
 pub fn compile_replacement(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
+    character_mode: CharacterMode,
 ) -> UResult<ReplacementTemplate> {
     let mut parts = Vec::new();
-    let mut literal = String::new();
+    let mut literal = Vec::new();
 
     let delimiter = line.current();
     line.advance();
@@ -699,9 +727,9 @@ pub fn compile_replacement(
 
                     // Line input_action
                     if line.eol() {
-                        if let Some(next_line_string) = lines.next_line()? {
-                            literal.push('\n');
-                            *line = ScriptCharProvider::new(&next_line_string);
+                        if let Some(next_line) = lines.next_line()? {
+                            literal.push(b'\n');
+                            *line = ScriptCharProvider::new(next_line);
                             continue;
                         }
                         return compilation_error(
@@ -729,23 +757,23 @@ pub fn compile_replacement(
 
                         // Literal \ and &
                         '\\' | '&' => {
-                            literal.push(line.current());
+                            literal.push(line.current_byte());
                             line.advance();
                         }
 
                         // Literal delimiter
                         v if v == delimiter => {
-                            literal.push(line.current());
+                            literal.push(line.current_byte());
                             line.advance();
                         }
 
                         // other escape sequences
                         _ => {
                             if let Some(decoded) = parse_char_escape(line) {
-                                literal.push(decoded);
+                                push_script_char(&mut literal, decoded, character_mode);
                             } else {
-                                literal.push('\\');
-                                literal.push(line.current());
+                                literal.push(b'\\');
+                                literal.push(line.current_byte());
                                 line.advance();
                             }
                         }
@@ -776,16 +804,16 @@ pub fn compile_replacement(
                     return Ok(ReplacementTemplate::new(parts));
                 }
 
-                c => {
-                    literal.push(c);
+                _ => {
+                    literal.push(line.current_byte());
                     line.advance();
                 }
             }
         }
 
         // Fetch next line for continued replacement string
-        if let Some(next_line_string) = lines.next_line()? {
-            *line = ScriptCharProvider::new(&next_line_string);
+        if let Some(next_line) = lines.next_line()? {
+            *line = ScriptCharProvider::new(next_line);
         } else {
             return compilation_error(lines, line, "unterminated substitute replacement");
         }
@@ -815,10 +843,10 @@ fn compile_subst_command(
     } else {
         RegexMode::Basic
     };
-    let pattern = parse_regex(lines, line, regex_mode)?;
+    let pattern = parse_regex_for_mode(lines, line, regex_mode, context.character_mode)?;
     let mut subst = Box::new(Substitution::default());
 
-    subst.replacement = compile_replacement(lines, line)?;
+    subst.replacement = compile_replacement(lines, line, context.character_mode)?;
     compile_subst_flags(lines, line, &mut subst, context.posix, context.sandbox)?;
 
     if pattern.is_empty() && (subst.ignore_case || subst.multiline) {
@@ -863,7 +891,7 @@ fn compile_trans_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    _context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     line.advance(); // move past 'y'
 
@@ -876,17 +904,23 @@ fn compile_trans_command(
         );
     }
 
-    let source = parse_transliteration(lines, line)?;
-    let target = parse_transliteration(lines, line)?;
-    if source.chars().count() != target.chars().count() {
-        return compilation_error(
-            lines,
-            line,
-            "transliteration strings are not the same length",
-        );
-    }
-
-    let transliteration = Box::new(Transliteration::from_strings(&source, &target));
+    let source = parse_transliteration_for_mode(lines, line, context.character_mode)?;
+    let target = parse_transliteration_for_mode(lines, line, context.character_mode)?;
+    let transliteration = match (source, target) {
+        (ParsedTransliteration::Bytes(source), ParsedTransliteration::Bytes(target)) => {
+            if source.len() != target.len() {
+                return compilation_error(lines, line, ERR_TRANSLITERATION_LENGTH);
+            }
+            Box::new(Transliteration::from_bytes(&source, &target))
+        }
+        (ParsedTransliteration::Text(source), ParsedTransliteration::Text(target)) => {
+            if source.chars().count() != target.chars().count() {
+                return compilation_error(lines, line, ERR_TRANSLITERATION_LENGTH);
+            }
+            Box::new(Transliteration::from_strings(&source, &target))
+        }
+        _ => unreachable!("transliteration parser returned mixed modes"),
+    };
     cmd.data = CommandData::Transliteration(transliteration);
 
     line.advance(); // move past last delimiter
@@ -1216,7 +1250,7 @@ fn compile_text_command_gnu(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    _context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     // True after a \ at the end of a line
     let mut escaped_newline = false;
@@ -1236,15 +1270,15 @@ fn compile_text_command_gnu(
     }
 
     // Gather replacement text.  Stop on a non-escaped newline.
-    let mut text = String::new();
+    let mut text = Vec::new();
     'text_content: loop {
         if escaped_newline {
             match lines.next_line()? {
                 None => {
                     break 'text_content;
                 }
-                Some(line_string) => {
-                    *line = ScriptCharProvider::new(&line_string);
+                Some(line_bytes) => {
+                    *line = ScriptCharProvider::new(line_bytes);
                 }
             }
             escaped_newline = false;
@@ -1252,7 +1286,7 @@ fn compile_text_command_gnu(
 
         // Non-escaped newline
         if line.eol() {
-            text.push('\n');
+            text.push(b'\n');
             break 'text_content;
         }
 
@@ -1261,19 +1295,19 @@ fn compile_text_command_gnu(
 
             if line.eol() {
                 escaped_newline = true;
-                text.push('\n');
+                text.push(b'\n');
                 continue 'text_content;
             }
 
             if let Some(decoded) = parse_char_escape(line) {
-                text.push(decoded);
+                push_script_char(&mut text, decoded, context.character_mode);
             } else {
                 // Invalid escapes result in the escaped character.
-                text.push(line.current());
+                text.push(line.current_byte());
                 line.advance();
             }
         } else {
-            text.push(line.current());
+            text.push(line.current_byte());
             line.advance();
         }
     }
@@ -1311,15 +1345,15 @@ fn compile_text_command_posix(
         );
     }
 
-    let mut text = String::new();
+    let mut text = Vec::new();
     while let Some(line) = lines.next_line()? {
-        if line.ends_with('\\') {
+        if line.ends_with(b"\\") {
             // Line ends with \ to escape \n; remove the trailing \.
-            text.push_str(&line[..line.len() - 1]);
-            text.push('\n');
+            text.extend_from_slice(&line[..line.len() - 1]);
+            text.push(b'\n');
         } else {
-            text.push_str(&line);
-            text.push('\n');
+            text.extend_from_slice(&line);
+            text.push(b'\n');
             break;
         }
     }
@@ -1446,7 +1480,6 @@ fn get_cmd_spec(
 mod tests {
     use super::*;
     use crate::sed::fast_io::IOChunk;
-
     // Return an empty line provider and a char provider for the specified str.
     fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
         let lines = ScriptLineProvider::new(vec![]); // Empty for tests
@@ -1505,6 +1538,21 @@ mod tests {
         let (lines, line) = make_providers("123abc");
         let result = get_cmd_spec(&lines, &line, 'Z', false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_command_ending_rejects_extra_characters() {
+        let (lines, mut chars) = make_providers("extra");
+        let mut cmd = Command {
+            code: 'p',
+            ..Default::default()
+        };
+
+        let err = parse_command_ending(&lines, &mut chars, &mut cmd).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("extra characters at the end of the p command")
+        );
     }
 
     // Utility to create a ScriptCharProvider from a &str
@@ -1843,6 +1891,18 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_step_re_address_rejected() {
+        let (lines, mut chars) = make_providers("1~/x/");
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let err = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("~step can only be specified through numeric values")
+        );
+    }
+
+    #[test]
     fn test_compile_last_address() {
         let (lines, mut chars) = make_providers("$");
         let mut cmd = Rc::new(RefCell::new(Command::default()));
@@ -2111,44 +2171,53 @@ mod tests {
     }
 
     // compile_replacement
+
+    /// Compile a regular expression replacement string in UTF-8 mode.
+    fn compile_replacement_utf8(
+        lines: &mut ScriptLineProvider,
+        line: &mut ScriptCharProvider,
+    ) -> UResult<ReplacementTemplate> {
+        compile_replacement(lines, line, CharacterMode::Utf8)
+    }
+
     #[test]
     fn test_compile_replacement_literal() {
         let (mut lines, mut chars) = make_providers("/hello/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "hello"));
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"hello"));
     }
 
     #[test]
     fn test_compile_replacement_escaped_delimiter() {
         let (mut lines, mut chars) = make_providers(r"/hell\/o/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "hell/o"));
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"hell/o"));
     }
 
     #[test]
     fn test_compile_replacement_backrefs_and_literal() {
         let (mut lines, mut chars) = make_providers("/prefix \\1 and \\2/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 4);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "prefix "));
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"prefix "));
         assert!(matches!(&template.parts[1], ReplacementPart::Group(1)));
-        assert!(matches!(&template.parts[2], ReplacementPart::Literal(s) if s == " and "));
+        assert!(matches!(&template.parts[2], ReplacementPart::Literal(s) if s == b" and "));
         assert!(matches!(&template.parts[3], ReplacementPart::Group(2)));
     }
 
     #[test]
     fn test_compile_replacement_whole_match() {
         let (mut lines, mut chars) = make_providers("/The match was: &/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 2);
         assert!(
-            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "The match was: ")
+            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"The match was: ")
         );
         assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
     }
@@ -2156,11 +2225,11 @@ mod tests {
     #[test]
     fn test_compile_replacement_whole_match_synonym() {
         let (mut lines, mut chars) = make_providers(r"/The match was: \0/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 2);
         assert!(
-            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "The match was: ")
+            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"The match was: ")
         );
         assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
     }
@@ -2168,23 +2237,44 @@ mod tests {
     #[test]
     fn test_compile_replacement_ampersand() {
         let (mut lines, mut chars) = make_providers("/Simon \\& Garfunkel/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 1);
         assert!(
-            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == "Simon & Garfunkel")
+            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"Simon & Garfunkel")
         );
     }
 
     #[test]
     fn test_compile_replacement_escape_sequences() {
         let (mut lines, mut chars) = make_providers("/line\\nnewline\\tend/");
-        let template = compile_replacement(&mut lines, &mut chars).unwrap();
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(
             &template.parts[0],
-            ReplacementPart::Literal(s) if s == "line\nnewline\tend"
+            ReplacementPart::Literal(s) if s == b"line\nnewline\tend"
+        ));
+    }
+
+    #[test]
+    fn test_compile_replacement_escape_byte_mode() {
+        let (mut lines, mut chars) = make_providers("/\\xE9/");
+        let template = compile_replacement(&mut lines, &mut chars, CharacterMode::Byte).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"\xE9"));
+    }
+
+    #[test]
+    fn test_compile_replacement_escape_utf8_mode() {
+        let (mut lines, mut chars) = make_providers("/\\xE9/");
+        let template = compile_replacement(&mut lines, &mut chars, CharacterMode::Utf8).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(
+            &template.parts[0],
+            ReplacementPart::Literal(s) if s == "é".as_bytes()
         ));
     }
 
@@ -2196,14 +2286,67 @@ mod tests {
         ];
         let mut provider = ScriptLineProvider::new(script);
         let first_line = provider.next_line().unwrap().unwrap();
-        let mut chars = ScriptCharProvider::new(&first_line);
+        let mut chars = ScriptCharProvider::new(first_line);
 
-        let template = compile_replacement(&mut provider, &mut chars).unwrap();
+        let template = compile_replacement_utf8(&mut provider, &mut chars).unwrap();
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(
             &template.parts[0],
-            ReplacementPart::Literal(s) if s == "first line\n continued"
+            ReplacementPart::Literal(s) if s == b"first line\n continued"
         ));
+    }
+
+    #[test]
+    fn test_compile_replacement_preserves_invalid_utf8_script_byte() {
+        let mut chars = ScriptCharProvider::new(b"/\xC2/");
+        let mut lines = ScriptLineProvider::new(vec![]);
+
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"\xC2"));
+    }
+
+    #[test]
+    fn test_compile_replacement_preserves_unknown_escape() {
+        let (mut lines, mut chars) = make_providers(r"/a\q/");
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == br"a\q"));
+    }
+
+    #[test]
+    fn test_compile_replacement_eof_after_backslash() {
+        let (mut lines, mut chars) = make_providers(r"/abc\");
+        let err = compile_replacement_utf8(&mut lines, &mut chars).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("unterminated substitute replacement (unexpected EOF)")
+        );
+    }
+
+    #[test]
+    fn test_compile_replacement_unescaped_newline() {
+        let (mut lines, mut chars) = make_providers("/abc\n/");
+        let err = compile_replacement_utf8(&mut lines, &mut chars).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("unescaped newline inside substitute replacement")
+        );
+    }
+
+    #[test]
+    fn test_compile_replacement_unterminated() {
+        let (mut lines, mut chars) = make_providers("/abc");
+        let err = compile_replacement_utf8(&mut lines, &mut chars).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("unterminated substitute replacement")
+        );
     }
 
     // compile_subst_flags
@@ -2296,7 +2439,7 @@ mod tests {
 
     #[test]
     fn test_compile_subst_flag_w_missing_filename() {
-        let (lines, mut chars) = make_providers("w ");
+        let (lines, mut chars) = make_providers("w ");
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
@@ -2420,7 +2563,7 @@ mod tests {
             CommandData::Substitution(subst) => {
                 assert_eq!(subst.replacement.parts.len(), 1);
                 assert!(
-                    matches!(&subst.replacement.parts[0], ReplacementPart::Literal(s) if s == "bar")
+                    matches!(&subst.replacement.parts[0], ReplacementPart::Literal(s) if s == b"bar")
                 );
             }
             _ => panic!("Expected CommandData::Substitution"),
@@ -2438,58 +2581,96 @@ mod tests {
         assert!(err.to_string().contains("invalid reference \\2"));
     }
 
+    #[test]
+    fn test_compile_subst_empty_re_rejects_modifiers() {
+        let (mut lines, mut chars) = make_providers("s//x/I");
+        let mut cmd = Command::default();
+        let mut context = ctx();
+
+        let err =
+            compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("cannot specify modifiers on an empty regular expression")
+        );
+    }
+
+    #[test]
+    fn test_compile_trans_command_sets_command_data() {
+        let (mut lines, mut chars) = make_providers("y/ab/xy/");
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext {
+            character_mode: CharacterMode::Byte,
+            ..ctx()
+        };
+
+        compile_trans_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Transliteration(trans) => {
+                assert_eq!(trans.lookup_byte(b'a'), b'x');
+                assert_eq!(trans.lookup_byte(b'b'), b'y');
+                assert_eq!(trans.lookup_byte(b'c'), b'c');
+            }
+            _ => panic!("Expected CommandData::Transliteration"),
+        }
+    }
+
     // bre_to_ere
+    fn bre_to_ere_string(pattern: &str) -> String {
+        String::from_utf8(bre_to_ere(pattern.as_bytes())).unwrap()
+    }
+
     #[test]
     fn test_bre_group_translation() {
-        assert_eq!(bre_to_ere(r"\(a\?b\+c\|\)"), "(a?b+c|)");
-        assert_eq!(bre_to_ere(r"a\(b\)c"), "a(b)c");
+        assert_eq!(bre_to_ere_string(r"\(a\?b\+c\|\)"), "(a?b+c|)");
+        assert_eq!(bre_to_ere_string(r"a\(b\)c"), "a(b)c");
     }
 
     #[test]
     fn test_bre_brace_quantifier_translation() {
-        assert_eq!(bre_to_ere(r"\{1,4\}"), "{1,4}");
+        assert_eq!(bre_to_ere_string(r"\{1,4\}"), "{1,4}");
     }
 
     #[test]
     fn test_ere_metacharacters_escaped() {
-        assert_eq!(bre_to_ere(r"a+b?c{1}|(d)"), r"a\+b\?c\{1\}\|\(d\)");
+        assert_eq!(bre_to_ere_string(r"a+b?c{1}|(d)"), r"a\+b\?c\{1\}\|\(d\)");
     }
 
     #[test]
     fn test_literal_backslashes_preserved() {
-        assert_eq!(bre_to_ere(r"foo\\bar"), r"foo\\bar");
-        assert_eq!(bre_to_ere(r"\."), r"\.");
+        assert_eq!(bre_to_ere_string(r"foo\\bar"), r"foo\\bar");
+        assert_eq!(bre_to_ere_string(r"\."), r"\.");
     }
 
     #[test]
     fn test_character_classes_unchanged() {
-        assert_eq!(bre_to_ere(r"[a-z]"), "[a-z]");
-        assert_eq!(bre_to_ere(r"[^0-9]"), "[^0-9]");
+        assert_eq!(bre_to_ere_string(r"[a-z]"), "[a-z]");
+        assert_eq!(bre_to_ere_string(r"[^0-9]"), "[^0-9]");
     }
 
     #[test]
     fn test_anchors_and_dot_and_star() {
-        assert_eq!(bre_to_ere(r"^a.*b$"), "^a.*b$");
+        assert_eq!(bre_to_ere_string(r"^a.*b$"), "^a.*b$");
     }
 
     #[test]
     fn test_trailing_backslash_is_preserved() {
-        assert_eq!(bre_to_ere(r"abc\"), r"abc\");
+        assert_eq!(bre_to_ere_string(r"abc\"), r"abc\");
     }
 
     #[test]
     fn test_caret_escaped_in_middle() {
-        assert_eq!(bre_to_ere(r"^a^[^x]c"), r"^a\^[^x]c");
+        assert_eq!(bre_to_ere_string(r"^a^[^x]c"), r"^a\^[^x]c");
     }
 
     #[test]
     fn test_dollar_escaped_in_middle() {
-        assert_eq!(bre_to_ere(r"a$c$"), r"a\$c$");
+        assert_eq!(bre_to_ere_string(r"a$c$"), r"a\$c$");
     }
 
     #[test]
     fn test_bre_back_reference() {
-        assert_eq!(bre_to_ere(r"\(.\)\1\(.\)\2"), r"(.)(?:\1)(.)(?:\2)");
+        assert_eq!(bre_to_ere_string(r"\(.\)\1\(.\)\2"), r"(.)(?:\1)(.)(?:\2)");
     }
 
     // patch_block_endings
@@ -2996,7 +3177,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "line1\n");
+                assert_eq!(text.as_ref(), b"line1\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3015,7 +3196,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "line1\n");
+                assert_eq!(text.as_ref(), b"line1\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3044,7 +3225,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "there\n");
+                assert_eq!(text.as_ref(), b"there\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3060,7 +3241,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "there\n");
+                assert_eq!(text.as_ref(), b"there\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3089,7 +3270,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "");
+                assert_eq!(text.as_ref(), b"");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3105,7 +3286,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "tom\n");
+                assert_eq!(text.as_ref(), b"tom\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3121,7 +3302,23 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.to_string(), ">helll\x08o\nto\nall\x07\n");
+                assert_eq!(text.as_ref(), b">helll\x08o\nto\nall\x07\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
+    }
+
+    #[test]
+    fn test_compile_text_command_gnu_preserves_invalid_utf8_script_byte() {
+        let mut chars = ScriptCharProvider::new(b"a\\\xC2");
+        let mut lines = make_line_provider(&[]);
+        let mut cmd = Command::default();
+        let mut context = ProcessingContext::default();
+
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text.as_ref(), b"\xC2\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3137,7 +3334,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.to_string(), "line1\nline2\n");
+                assert_eq!(text.as_ref(), b"line1\nline2\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3190,5 +3387,15 @@ mod tests {
 
         let err = read_file_path(&lines, &mut chars).unwrap_err();
         assert!(err.to_string().contains("missing file path"));
+    }
+
+    #[test]
+    #[cfg(not(unix))]
+    fn test_read_file_path_rejects_invalid_characters() {
+        let lines = ScriptLineProvider::new(vec![]);
+        let mut chars = ScriptCharProvider::new(b"w bad\xFFpath");
+
+        let err = read_file_path(&lines, &mut chars).unwrap_err();
+        assert!(err.to_string().contains("invalid characters file path"));
     }
 }

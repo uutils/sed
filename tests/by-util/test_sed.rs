@@ -85,7 +85,11 @@ fn test_e_script_ok() {
 
 #[test]
 fn test_f_script_ok() {
-    new_ucmd!().arg("-f").arg("script/hanoi.sed").succeeds();
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", "script/hanoi.sed"])
+        .succeeds()
+        .stdout_is_bytes(b"");
 }
 
 ////////////////////////////////////////////////////////////
@@ -560,13 +564,104 @@ check_output!(subst_literal_end, ["-e", r"s/2$/TWO/", LINES1]);
 check_output!(subst_literal, ["-e", r"s/_/-/", LINES1]);
 
 // Fancy matcher
-check_output!(subst_backref, ["-e", r"s/l\(.\)_\1/same-number/", LINES1]);
+/// Substitute using a backreference under an explicit UTF-8 locale.
+#[test]
+fn subst_backref() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/l\(.\)_\1/same-number/", LINES1])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_backref");
+}
 
-// Bytes matcher with Unicode
-check_output!(subst_greek, ["-e", r"s/[α-ω]/G/g", "input/unicode"]);
-check_output!(subst_any_unicode, ["-e", r"s/.$/:-)/", "input/unicode"]);
-check_output!(subst_lcase, ["-e", r"s/κ/*/gi", "input/unicode"]);
-check_output!(subst_word, ["-E", "-e", r"s/\w+/WORD/g", "input/unicode"]);
+/// Substitute a Unicode range under an explicit UTF-8 locale.
+#[test]
+fn subst_greek() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/[α-ω]/G/g", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_greek");
+}
+
+/// Substitute the final Unicode scalar under an explicit UTF-8 locale.
+#[test]
+fn subst_any_unicode() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/.$/:-)/", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_any_unicode");
+}
+
+/// Substitute case-insensitive Unicode text under an explicit UTF-8 locale.
+#[test]
+fn subst_lcase() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/κ/*/gi", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_lcase");
+}
+
+/// Substitute Unicode word matches under an explicit UTF-8 locale.
+#[test]
+fn subst_word() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-E", "-e", r"s/\w+/WORD/g", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_word");
+}
+
+/// Reject FancyRegex-only substitution patterns in byte mode.
+#[test]
+fn subst_backref_rejected_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-e", r"s/\(.\)\1/X/"])
+        .fails()
+        .stderr_contains("back-references are not supported in byte mode");
+}
+
+/// Allow substitution back-references when the locale selects UTF-8 mode.
+#[test]
+fn subst_backref_allowed_in_c_utf8_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/\(.\)\1/X/"])
+        .pipe_in("aa\n")
+        .succeeds()
+        .stdout_is_bytes(b"X\n");
+}
+
+/// Match non-UTF-8 input bytes with byte escapes in byte mode.
+#[test]
+fn subst_byte_escape_matches_invalid_input_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-e", r"s/\xE9/Z/"])
+        .pipe_in(b"\xE9\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"Z\n");
+}
+
+/// Match raw invalid UTF-8 script bytes as literal bytes in UTF-8 mode.
+#[test]
+fn subst_raw_invalid_script_bytes_match_literal_in_c_utf8_locale() {
+    let mut script = NamedTempFile::new().expect("create temporary sed script");
+    script
+        .write_all(b"s/\xC2\xE7\xCF\xC2/\xC6\xFC\xCB\xDC/\n")
+        .expect("write temporary sed script");
+    let script_path = script.path().to_str().expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", script_path])
+        .pipe_in(b"\xA4\xC4 \xC2\xE7\xCF\xC2\xA4\xCE\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"\xA4\xC4 \xC6\xFC\xCB\xDC\xA4\xCE\n");
+}
 
 #[test]
 fn subst_write_file() -> std::io::Result<()> {
@@ -676,6 +771,55 @@ check_output!(
     ["-e", r"y10\123456789198765432\101", LINES1]
 );
 check_output!(trans_no_new_line, ["-e", r"y/l/L/", NO_NEW_LINE]);
+
+/// Transliterate non-UTF-8 input bytes using byte escapes in byte mode.
+#[test]
+fn trans_byte_escape_matches_invalid_input_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-e", r"y/\xE9/Z/"])
+        .pipe_in(b"\xE9\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"Z\n");
+}
+
+/// Transliterate UTF-8 characters as characters when the locale selects UTF-8 mode.
+#[test]
+fn trans_utf8_character_in_c_utf8_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"y/κ/K/"])
+        .pipe_in("κa\n")
+        .succeeds()
+        .stdout_is_bytes(b"Ka\n");
+}
+
+/// Transliterate a decoded hex escape as UTF-8 in UTF-8 mode.
+#[test]
+fn trans_utf8_escape_in_c_utf8_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"y/\xE9/Z/"])
+        .pipe_in("é\n")
+        .succeeds()
+        .stdout_is_bytes(b"Z\n");
+}
+
+/// Reject raw invalid UTF-8 transliteration script bytes in UTF-8 mode.
+#[test]
+fn trans_raw_invalid_script_byte_rejected_in_c_utf8_locale() {
+    let mut script = NamedTempFile::new().expect("create temporary sed script");
+    script
+        .write_all(b"y/\xE9/Z/")
+        .expect("write temporary sed script");
+    let script_path = script.path().to_str().expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", script_path])
+        .fails()
+        .stderr_contains("invalid UTF-8 in transliteration string");
+}
 
 #[test]
 fn pattern_clear_with_z_command() {
@@ -1231,7 +1375,27 @@ check_output!(number_range_out_of_bounds, ["-e", "47,60=", LINES1]);
 
 check_output!(list_ascii, ["-n", "l 60", "input/ascii"]);
 check_output!(list_empty, ["-n", "l 60", "input/empty"]);
-check_output!(list_unicode, ["l 60", "input/unicode"]);
+
+/// List Unicode input under an explicit UTF-8 locale.
+#[test]
+fn list_unicode() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["l 60", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/list_unicode");
+}
+
+/// List invalid UTF-8 bytes without decoding in byte mode.
+#[test]
+fn list_invalid_utf8_byte_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-n", "l"])
+        .pipe_in(b"\xE9\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"\\351$\n");
+}
 
 ////////////////////////////////////////////////////////////
 // In-place editing
@@ -1441,8 +1605,15 @@ check_output!(math1, ["-f", "script/math.sed", "input/expression1"]);
 // Calculate π (scaled) to several decimal places
 check_output!(pi, ["-f", "script/math.sed", "input/pi"]);
 
-// Solve the Towers of Hanoi puzzle
-check_output!(hanoi, ["-f", "script/hanoi.sed", "input/hanoi"]);
+/// Solve the Towers of Hanoi puzzle under an explicit UTF-8 locale.
+#[test]
+fn hanoi() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", "script/hanoi.sed", "input/hanoi"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/hanoi");
+}
 
 ////////////////////////////////////////////////////////////
 // Long-running scripts
@@ -1579,6 +1750,7 @@ fn test_step_end_non_posix() {
 #[test]
 fn test_fancy_regex_is_match_error() {
     new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
         .args(&["-E", r"/(\.+)+\1b$/p", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
@@ -1588,6 +1760,7 @@ fn test_fancy_regex_is_match_error() {
 #[test]
 fn test_fancy_regex_find_error() {
     new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
         .args(&["-E", r"p;s/(\.+)+\1b$/X/", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
@@ -1597,6 +1770,7 @@ fn test_fancy_regex_find_error() {
 #[test]
 fn test_fancy_regex_captures_error() {
     new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
         .args(&["-E", r"p;s/(\.+)+\1b$/\1/", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
@@ -1606,6 +1780,7 @@ fn test_fancy_regex_captures_error() {
 #[test]
 fn test_fancy_regex_captures_iter_error() {
     new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
         .args(&["-E", r"p;s/(\.+)+\1b$/\1/3", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
