@@ -725,6 +725,29 @@ fn test_subst_e_flag_combined_with_g() {
     new_ucmd!().arg("s/x/echo y/ge").pipe_in("x\n").succeeds();
 }
 
+#[cfg(unix)]
+#[test]
+fn test_subst_flags_ep_execute_then_print() {
+    // 'ep': execute first, then prints the command's result.
+    new_ucmd!()
+        .arg("s/.*/echo hi/ep")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("hi\nhi\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_subst_flags_pe_print_then_execute() {
+    // 'pe': prints the pre-execution text first, then execute. The 'p'
+    // and 'e' flags are applied in the order written, matching GNU sed.
+    new_ucmd!()
+        .arg("s/.*/echo hi/pe")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("echo hi\nhi\n");
+}
+
 #[test]
 fn test_subst_e_flag_rejected_with_posix() {
     // e flag is rejected at compile time if --posix or --sandbox is provided.

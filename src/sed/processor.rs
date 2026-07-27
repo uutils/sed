@@ -382,12 +382,16 @@ fn substitute(
 
         pattern.set_to_bytes(result, pattern.is_newline_terminated());
 
-        // Execute the pattern space as a shell command if the 'e' flag is set
+        // Apply the 'p' and 'e' flags in the order they were given: 'pe'
+        // prints the pre-execution text then executes, while 'ep' executes
+        // then prints the result.
+        if sub.print_flag && sub.p_before_e {
+            write_chunk(output, context, pattern)?;
+        }
         if sub.execute {
             execute_pattern_as_shell_command(pattern, command, context)?;
         }
-
-        if sub.print_flag {
+        if sub.print_flag && !sub.p_before_e {
             write_chunk(output, context, pattern)?;
         }
 

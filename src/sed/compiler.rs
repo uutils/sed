@@ -940,6 +940,7 @@ pub fn compile_subst_flags(
 
     subst.occurrence = 1; // default
     subst.print_flag = false;
+    subst.p_before_e = false;
     subst.ignore_case = false;
     subst.execute = false;
     subst.multiline = false;
@@ -967,6 +968,8 @@ pub fn compile_subst_flags(
 
             'p' => {
                 subst.print_flag = true;
+                // 'p' is applied before 'e' iff 'e' has not been seen yet.
+                subst.p_before_e = !subst.execute;
                 line.advance();
             }
 
