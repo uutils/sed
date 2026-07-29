@@ -47,7 +47,7 @@ jobs:
           cargo codspeed build -p ${{ matrix.benchmark-target.package }}
 
       - name: Run benchmarks for ${{ matrix.benchmark-target.package }}
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@v5
         env:
           CODSPEED_LOG: debug
         with:
