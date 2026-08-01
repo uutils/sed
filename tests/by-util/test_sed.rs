@@ -2222,6 +2222,28 @@ fn test_invalid_version() {
         .args(&["v4.a"])
         .fails()
         .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
+}
+
+#[test]
+fn test_valid_version() {
+    new_ucmd!().args(&["v4.9"]).succeeds();
+}
+
+#[test]
+fn test_valid_only_major_version() {
+    // v4.0.0
+    new_ucmd!().args(&["v4"]).succeeds();
+}
+
+#[test]
+fn test_invalid_only_major_version() {
+    // v999.0.0
+    new_ucmd!()
+        .args(&["v999"])
+        .fails()
+        .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
+}
+
 //--posix should reject GNU substitute flags i/I https://github.com/uutils/sed/issues/401
 #[test]
 fn test_posix_reject_flags() {
