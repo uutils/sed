@@ -1405,10 +1405,26 @@ fn compile_version_command(
                 2 => patch.push(line.current()),
                 _ => return compilation_error(lines, line, "invalid version of sed"),
             }
-      }
-    if patch.is_empty() {
-        patch = "0".to_string();
+            line.advance();
+        }
     }
+
+    if major.is_empty() {
+        major = GNU_MAJOR.to_string();
+        minor = GNU_MINOR.to_string();
+        patch = GNU_PATCH.to_string();
+    }
+
+    let minor = if minor.is_empty() {
+        "0".to_string()
+    } else {
+        minor
+    };
+    let patch = if patch.is_empty() {
+        "0".to_string()
+    } else {
+        patch
+    };
 
     match major.parse::<u8>() {
         Ok(major_int) => match minor.parse::<u8>() {
@@ -1425,7 +1441,7 @@ fn compile_version_command(
         },
         Err(_) => compilation_error(lines, line, "invalid version of sed"),
     }
-  }
+}
 
 // Handles e
 // With no argument, the command executes the pattern space as a shell
