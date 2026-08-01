@@ -1380,7 +1380,7 @@ fn compile_version_command(
     _cmd: &mut Command,
     _context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
-    // GNU sed 4.9
+    // Claim version partify with GNU sed 4.9
     const GNU_MAJOR: u8 = 4;
     const GNU_MINOR: u8 = 9;
     const GNU_PATCH: u8 = 0;
@@ -1415,16 +1415,12 @@ fn compile_version_command(
         patch = GNU_PATCH.to_string();
     }
 
-    let minor = if minor.is_empty() {
-        "0".to_string()
-    } else {
-        minor
-    };
-    let patch = if patch.is_empty() {
-        "0".to_string()
-    } else {
-        patch
-    };
+    if minor.is_empty() {
+        minor.push('0');
+    }
+    if patch.is_empty() {
+        patch.push('0');
+    }
 
     match major.parse::<u8>() {
         Ok(major_int) => match minor.parse::<u8>() {
