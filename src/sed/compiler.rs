@@ -1652,7 +1652,7 @@ fn get_cmd_spec(
             n_addr: 2,
             handler: compile_trans_command,
         }),
-        'v' => Ok(CommandSpec {
+        'v' if !posix => Ok(CommandSpec {
             n_addr: 0,
             handler: compile_version_command,
         }),
