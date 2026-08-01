@@ -1426,7 +1426,7 @@ fn compile_version_command(
         Err(_) => compilation_error(lines, line, "invalid version of sed"),
     }
   }
-  
+
 // Handles e
 // With no argument, the command executes the pattern space as a shell
 // command at runtime. With an argument, the rest of the line is the
