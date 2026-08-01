@@ -940,6 +940,7 @@ pub fn compile_subst_flags(
 
     subst.occurrence = 1; // default
     subst.print_flag = false;
+    subst.p_before_e = false;
     subst.ignore_case = false;
     subst.execute = false;
     subst.multiline = false;
@@ -967,6 +968,8 @@ pub fn compile_subst_flags(
 
             'p' => {
                 subst.print_flag = true;
+                // 'p' is applied before 'e' iff 'e' has not been seen yet.
+                subst.p_before_e = !subst.execute;
                 line.advance();
             }
 
@@ -1366,6 +1369,104 @@ fn compile_text_command_posix(
     Ok(CommandHandling::Continue)
 }
 
+// Handles e
+// With no argument, the command executes the pattern space as a shell
+// command at runtime. With an argument, the rest of the line is the
+// command to run, following the same escape and backslash-newline
+// continuation rules as the GNU a/c/i text argument.
+fn compile_execute_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    if context.posix || context.sandbox {
+        return compilation_error(
+            lines,
+            line,
+            "the 'e' command is not allowed with --posix or --sandbox",
+        );
+    }
+
+    line.advance(); // Skip the command character.
+    line.eat_spaces(); // Skip any leading whitespace.
+
+    if line.eol() {
+        // No argument: execute the pattern space itself at runtime.
+        cmd.data = CommandData::None;
+        return Ok(CommandHandling::Continue);
+    }
+
+    // True after a \ at the end of a line
+    let mut escaped_newline = false;
+
+    // Skip optional \
+    if line.current() == '\\' {
+        line.advance();
+        escaped_newline = line.eol();
+    }
+
+    // Gather the command text. Stop on a non-escaped newline. Unlike most
+    // other commands, ';' does not terminate the argument. The rest of the
+    // (possibly continued) line is consumed unconditionally.
+    let mut text = Vec::new();
+    // True once a continuation line has actually been pulled in. A dangling
+    // leading backslash with no line to continue into is treated as no
+    // argument at all, matching GNU sed. However once a continuation succeeds,
+    // even into an empty line, we're committed to producing a (possibly empty)
+    // Text argument from then on.
+    let mut continued = false;
+    'text_content: loop {
+        if escaped_newline {
+            match lines.next_line()? {
+                None => {
+                    break 'text_content;
+                }
+                Some(line_bytes) => {
+                    *line = ScriptCharProvider::new(line_bytes);
+                    continued = true;
+                }
+            }
+            escaped_newline = false;
+        }
+
+        // Non-escaped newline
+        if line.eol() {
+            break 'text_content;
+        }
+
+        if line.current() == '\\' {
+            line.advance();
+
+            if line.eol() {
+                escaped_newline = true;
+                text.push(b'\n');
+                continue 'text_content;
+            }
+
+            if let Some(decoded) = parse_char_escape(line) {
+                push_script_char(&mut text, decoded, context.character_mode);
+            } else {
+                // Invalid escapes result in the escaped character.
+                text.push(line.current_byte());
+                line.advance();
+            }
+        } else {
+            text.push(line.current_byte());
+            line.advance();
+        }
+    }
+
+    cmd.data = if text.is_empty() && !continued {
+        // A dangling leading backslash with nothing left to continue into.
+        // Treat this the same as no argument at all.
+        CommandData::None
+    } else {
+        CommandData::Text(Rc::from(text))
+    };
+    Ok(CommandHandling::Continue)
+}
+
 // Return the specification for the command letter at the current line position
 // checking for diverse errors.
 fn get_verified_cmd_spec(
@@ -1455,6 +1556,11 @@ fn get_cmd_spec(
         'Q' => Ok(CommandSpec {
             n_addr: 1,
             handler: compile_number_command,
+        }),
+        // e is a GNU extension
+        'e' => Ok(CommandSpec {
+            n_addr: 2,
+            handler: compile_execute_command,
         }),
         'r' => Ok(CommandSpec {
             n_addr: if posix { 1 } else { 2 },

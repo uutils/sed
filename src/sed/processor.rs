@@ -23,7 +23,7 @@ use memchr::memchr;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::OsStr;
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::display::Quotable;
@@ -219,6 +219,64 @@ fn shell_command(_cmd: &OsStr) -> std::process::Command {
     unimplemented!("the 'e' substitute flag requires a platform shell (/bin/sh or cmd.exe)");
 }
 
+/// Run the given command bytes in a shell, returning its raw standard
+/// output. The child's standard error is left connected to this process's
+/// own, matching GNU sed's behavior where shell errors surface directly
+/// rather than being silently captured.
+fn shell_stdout(
+    cmd: Vec<u8>,
+    command: &Command,
+    context: &mut ProcessingContext,
+) -> UResult<Vec<u8>> {
+    let os_cmd = os_string_from_bytes(cmd).map_err(|e| {
+        input_runtime_error::<()>(
+            &command.location,
+            context,
+            format!("failed to construct shell command from bytes: {e}"),
+        )
+        .unwrap_err()
+    })?;
+    shell_command(&os_cmd)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            let mut stdout = child.stdout.take().expect("stdout should be piped");
+            let mut buf = Vec::new();
+            stdout.read_to_end(&mut buf)?;
+            child.wait()?;
+            Ok(buf)
+        })
+        .map_err(|e| {
+            input_runtime_error::<()>(
+                &command.location,
+                context,
+                format!("failed to execute shell command: {e}"),
+            )
+            .unwrap_err()
+        })
+}
+
+/// Execute the pattern space as a shell command, replacing its contents
+/// with the command's standard output, minus one trailing newline.
+fn execute_pattern_as_shell_command(
+    pattern: &mut IOChunk,
+    command: &Command,
+    context: &mut ProcessingContext,
+) -> UResult<()> {
+    let mut shell_out = shell_stdout(pattern.as_bytes().to_vec(), command, context)?;
+    #[cfg(windows)]
+    if shell_out.ends_with(b"\r\n") {
+        // On Windows a trailing \r\n is the line terminator. Strip both.
+        shell_out.truncate(shell_out.len() - 2);
+    }
+    // Unix (and some Windows tools) end with a single \n. Strip it, as GNU sed does.
+    if shell_out.ends_with(b"\n") {
+        shell_out.pop();
+    }
+    pattern.set_to_bytes(shell_out, pattern.is_newline_terminated());
+    Ok(())
+}
+
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
@@ -324,36 +382,16 @@ fn substitute(
 
         pattern.set_to_bytes(result, pattern.is_newline_terminated());
 
-        // Execute the pattern space as a shell command if the 'e' flag is set
-        if sub.execute {
-            let cmd = os_string_from_bytes(pattern.as_bytes().to_vec()).map_err(|e| {
-                input_runtime_error::<()>(
-                    &command.location,
-                    context,
-                    format!("failed to construct shell command from bytes: {e}"),
-                )
-                .unwrap_err()
-            })?;
-            let output_bytes = shell_command(&cmd).output().map_err(|e| {
-                input_runtime_error::<()>(
-                    &command.location,
-                    context,
-                    format!("failed to execute shell command: {e}"),
-                )
-                .unwrap_err()
-            })?;
-            let mut shell_out = output_bytes.stdout;
-            if shell_out.ends_with(b"\r\n") {
-                // On windows, both return carriage and newline characters are used
-                shell_out.truncate(shell_out.len() - 2);
-            } else if shell_out.ends_with(b"\n") {
-                // Strip the trailing newline, as GNU sed does
-                shell_out.pop();
-            }
-            pattern.set_to_bytes(shell_out, pattern.is_newline_terminated());
+        // Apply the 'p' and 'e' flags in the order they were given: 'pe'
+        // prints the pre-execution text then executes, while 'ep' executes
+        // then prints the result.
+        if sub.print_flag && sub.p_before_e {
+            write_chunk(output, context, pattern)?;
         }
-
-        if sub.print_flag {
+        if sub.execute {
+            execute_pattern_as_shell_command(pattern, command, context)?;
+        }
+        if sub.print_flag && !sub.p_before_e {
             write_chunk(output, context, pattern)?;
         }
 
@@ -689,6 +727,16 @@ fn process_file(
                     pattern.clear();
                     break;
                 }
+                'e' => match &command.data {
+                    CommandData::None => {
+                        execute_pattern_as_shell_command(&mut pattern, &command, context)?;
+                    }
+                    CommandData::Text(cmd_bytes) => {
+                        let shell_out = shell_stdout(cmd_bytes.to_vec(), &command, context)?;
+                        output.write_bytes(&shell_out)?;
+                    }
+                    _ => panic!("invalid 'e' command data"),
+                },
                 'g' => {
                     // Replace pattern with the contents of the hold space.
                     pattern.set_to_bytes(context.hold.content.clone(), context.hold.has_newline);

@@ -223,6 +223,7 @@ pub struct Substitution {
     pub replacement: ReplacementTemplate,             // Specified broken-down replacement
     pub occurrence: usize,                            // Which occurrence to substitute
     pub print_flag: bool,                             // True if 'p' flag
+    pub p_before_e: bool,                             // True if 'p' appears before 'e'
     pub ignore_case: bool,                            // True if 'I' flag
     pub execute: bool,                                // True if 'e' flag (GNU extension)
     pub multiline: bool,                              // True if 'm' or 'M' flag (GNU extension)
