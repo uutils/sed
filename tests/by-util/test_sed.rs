@@ -2244,6 +2244,12 @@ fn test_invalid_only_major_version() {
         .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
 }
 
+#[test]
+fn test_default_version() {
+    // defaults to v4.9.0 
+    new_ucmd!().args(&["v"]).succeeds();
+}
+
 //--posix should reject GNU substitute flags i/I https://github.com/uutils/sed/issues/401
 #[test]
 fn test_posix_reject_flags() {
