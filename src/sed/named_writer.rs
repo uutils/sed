@@ -57,13 +57,21 @@ impl NamedWriter {
 
     /// Write a line to the file with a newline, returning descriptive errors.
     pub fn write_line(&mut self, line: &str) -> UResult<()> {
-        writeln!(self.writer, "{line}").map_err(|e| {
-            runtime_error::<()>(
-                &self.location,
-                format!("writing to file {}: {e}", self.path.quote()),
-            )
-            .unwrap_err()
-        })
+        self.write_line_bytes(line.as_bytes())
+    }
+
+    /// Write bytes to the file with a newline, returning descriptive errors.
+    pub fn write_line_bytes(&mut self, line: &[u8]) -> UResult<()> {
+        self.writer
+            .write_all(line)
+            .and_then(|()| self.writer.write_all(b"\n"))
+            .map_err(|e| {
+                runtime_error::<()>(
+                    &self.location,
+                    format!("writing to file {}: {e}", self.path.quote()),
+                )
+                .unwrap_err()
+            })
     }
 
     /// Flush the writer, returning a descriptive error.
@@ -87,4 +95,23 @@ pub fn flush_all() -> UResult<()> {
 
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_write_line_bytes_appends_newline() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        let writer = NamedWriter::new(path.clone(), ScriptLocation::default()).unwrap();
+
+        writer.borrow_mut().write_line_bytes(b"a\xE9").unwrap();
+        writer.borrow_mut().flush().unwrap();
+
+        assert_eq!(fs::read(path).unwrap(), b"a\xE9\n");
+    }
 }

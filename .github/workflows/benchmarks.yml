@@ -25,7 +25,7 @@ jobs:
         benchmark-target:
           - { package: sed }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -33,7 +33,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Install tools
         uses: taiki-e/install-action@v2
@@ -47,7 +47,7 @@ jobs:
           cargo codspeed build -p ${{ matrix.benchmark-target.package }}
 
       - name: Run benchmarks for ${{ matrix.benchmark-target.package }}
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@v5
         env:
           CODSPEED_LOG: debug
         with:

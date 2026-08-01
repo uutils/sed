@@ -54,9 +54,18 @@ fn test_silent_alias() {
 #[test]
 fn test_missing_script_argument() {
     new_ucmd!()
+        .args(&["-n"])
         .fails()
         .code_is(1)
         .stderr_contains("missing script");
+}
+
+#[test]
+fn test_no_arguments() {
+    new_ucmd!()
+        .fails()
+        .code_is(1)
+        .stdout_contains("Stream editor for filtering and transforming text");
 }
 
 #[test]
@@ -76,7 +85,11 @@ fn test_e_script_ok() {
 
 #[test]
 fn test_f_script_ok() {
-    new_ucmd!().arg("-f").arg("script/hanoi.sed").succeeds();
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", "script/hanoi.sed"])
+        .succeeds()
+        .stdout_is_bytes(b"");
 }
 
 ////////////////////////////////////////////////////////////
@@ -274,7 +287,208 @@ check_output!(addr_range_odd, ["-n", "1~2p", LINES1]);
 check_output!(addr_range_step_zero, ["-n", "10~0p", LINES1]);
 check_output!(addr_range_end_multiple, ["-n", "/l1_2/,~10p", LINES1]);
 
+#[test]
+fn command_may_end_before_closing_brace() {
+    for script in ["{p}", "1{p}", "/a/{p}"] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is("a\na\n");
+    }
+}
+
 ////////////////////////////////////////////////////////////
+
+// Quantifiers: {m,n}
+// m and n are considered to be the first and second numbers in the interval, respectively.
+
+const REGEX_QUANTIFIERS_INPUT: &str =
+    "Hello World\nHelo World\nHelllllo World\nHeo Word\nHeo Worl}d\n";
+
+#[test]
+fn ere_quantifier_exactly_m() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{2}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Hello World\nHelllllo World\n");
+}
+
+#[test]
+fn ere_quantifier_minimum_m() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{1,}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Hello World\nHelo World\nHelllllo World\nHeo Worl}d\n");
+}
+
+#[test]
+fn ere_quantifier_m_to_n() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{3,4}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Helllllo World\n");
+}
+
+#[test]
+fn ere_quantifier_comma_n() {
+    new_ucmd!()
+        .args(&["-n", "-E", "-e", "/l{,4}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is(REGEX_QUANTIFIERS_INPUT);
+}
+
+#[test]
+fn bre_quantifier_minimum_m() {
+    new_ucmd!()
+        .args(&["-n", "-e", "/l\\{3,\\}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Helllllo World\n");
+}
+
+#[test]
+fn bre_quantifier_comma() {
+    new_ucmd!()
+        .args(&["-n", "-e", "/l\\{,\\}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is(REGEX_QUANTIFIERS_INPUT);
+}
+
+#[test]
+fn bre_quantifier_only_closing_brace() {
+    new_ucmd!()
+        .args(&["-n", "-e", "/l\\}/p"])
+        .pipe_in(REGEX_QUANTIFIERS_INPUT)
+        .succeeds()
+        .stdout_is("Heo Worl}d\n");
+}
+
+#[test]
+fn test_ere_quantifier_n_gt_m() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{3,2}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_negative_m() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{-2,4}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_invalid_m() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{d,}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_m_too_big() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{32768,}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Regular expression too big");
+}
+
+#[test]
+fn test_ere_quantifier_empty() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_whitespace() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{ }/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Invalid content of \\{\\}");
+}
+
+#[test]
+fn test_ere_quantifier_unmatched_brace() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{,/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Unmatched \\{");
+}
+
+#[test]
+fn test_ere_quantifier_unmatched_brace_2() {
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{m,n/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Unmatched \\{");
+}
+
+#[test]
+fn test_bre_quantifier_unmatched_brace() {
+    new_ucmd!()
+        .args(&["-e", "/l\\{1,2}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Unmatched \\{");
+}
+
+#[test]
+fn test_ere_quantifier_leading_comma_n_too_big() {
+    // The {,n} form must enforce the RE_DUP_MAX upper bound on n.
+    new_ucmd!()
+        .args(&["-E", "-e", "/l{,32768}/p"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("Regular expression too big");
+}
+
+// A closing brace used as the regex delimiter must terminate the regex
+// rather than being treated as a literal quantifier brace.
+#[test]
+fn ere_closing_brace_delimiter() {
+    new_ucmd!()
+        .args(&["-E", "-e", "s}x}-}g"])
+        .pipe_in("axbxc\n")
+        .succeeds()
+        .stdout_is("a-b-c\n");
+}
+
+#[test]
+fn ere_opening_brace_delimiter() {
+    new_ucmd!()
+        .args(&["-E", "-e", "s{x{-{g"])
+        .pipe_in("axbxc\n")
+        .succeeds()
+        .stdout_is("a-b-c\n");
+}
+
+#[test]
+fn bre_closing_brace_delimiter() {
+    new_ucmd!()
+        .args(&["-e", "s}x}-}g"])
+        .pipe_in("axbxc\n")
+        .succeeds()
+        .stdout_is("a-b-c\n");
+}
+
 // Substitution: s
 check_output!(subst_any, ["-e", r"s/./X/g", LINES1]);
 check_output!(subst_any_global, ["-e", r"s,.,X,g", LINES1]);
@@ -318,6 +532,42 @@ check_output!(subst_re_reuse, ["-e", r"2s//M/;1s/l/L/", LINES1]);
 check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
 check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
 
+#[test]
+fn subst_dot_matches_newline() {
+    new_ucmd!()
+        .arg("N;s/foo.*bar/X/")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("X\n");
+}
+
+#[test]
+fn subst_multiline_dot_does_not_match_newline() {
+    new_ucmd!()
+        .arg("N;s/foo.*bar/X/m")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("foo\nbar\n");
+}
+
+#[test]
+fn subst_multiline_flag_matches_embedded_line_start() {
+    new_ucmd!()
+        .arg("N;s/^./X/gm")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("Xoo\nXar\n");
+}
+
+#[test]
+fn subst_multiline_flag_matches_embedded_line_end() {
+    new_ucmd!()
+        .arg("N;s/.$/X/gM")
+        .pipe_in("foo\nbar\n")
+        .succeeds()
+        .stdout_is("foX\nbaX\n");
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
@@ -325,13 +575,104 @@ check_output!(subst_literal_end, ["-e", r"s/2$/TWO/", LINES1]);
 check_output!(subst_literal, ["-e", r"s/_/-/", LINES1]);
 
 // Fancy matcher
-check_output!(subst_backref, ["-e", r"s/l\(.\)_\1/same-number/", LINES1]);
+/// Substitute using a backreference under an explicit UTF-8 locale.
+#[test]
+fn subst_backref() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/l\(.\)_\1/same-number/", LINES1])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_backref");
+}
 
-// Bytes matcher with Unicode
-check_output!(subst_greek, ["-e", r"s/[α-ω]/G/g", "input/unicode"]);
-check_output!(subst_any_unicode, ["-e", r"s/.$/:-)/", "input/unicode"]);
-check_output!(subst_lcase, ["-e", r"s/κ/*/gi", "input/unicode"]);
-check_output!(subst_word, ["-E", "-e", r"s/\w+/WORD/g", "input/unicode"]);
+/// Substitute a Unicode range under an explicit UTF-8 locale.
+#[test]
+fn subst_greek() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/[α-ω]/G/g", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_greek");
+}
+
+/// Substitute the final Unicode scalar under an explicit UTF-8 locale.
+#[test]
+fn subst_any_unicode() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/.$/:-)/", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_any_unicode");
+}
+
+/// Substitute case-insensitive Unicode text under an explicit UTF-8 locale.
+#[test]
+fn subst_lcase() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/κ/*/gi", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_lcase");
+}
+
+/// Substitute Unicode word matches under an explicit UTF-8 locale.
+#[test]
+fn subst_word() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-E", "-e", r"s/\w+/WORD/g", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/subst_word");
+}
+
+/// Reject FancyRegex-only substitution patterns in byte mode.
+#[test]
+fn subst_backref_rejected_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-e", r"s/\(.\)\1/X/"])
+        .fails()
+        .stderr_contains("back-references are not supported in byte mode");
+}
+
+/// Allow substitution back-references when the locale selects UTF-8 mode.
+#[test]
+fn subst_backref_allowed_in_c_utf8_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/\(.\)\1/X/"])
+        .pipe_in("aa\n")
+        .succeeds()
+        .stdout_is_bytes(b"X\n");
+}
+
+/// Match non-UTF-8 input bytes with byte escapes in byte mode.
+#[test]
+fn subst_byte_escape_matches_invalid_input_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-e", r"s/\xE9/Z/"])
+        .pipe_in(b"\xE9\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"Z\n");
+}
+
+/// Match raw invalid UTF-8 script bytes as literal bytes in UTF-8 mode.
+#[test]
+fn subst_raw_invalid_script_bytes_match_literal_in_c_utf8_locale() {
+    let mut script = NamedTempFile::new().expect("create temporary sed script");
+    script
+        .write_all(b"s/\xC2\xE7\xCF\xC2/\xC6\xFC\xCB\xDC/\n")
+        .expect("write temporary sed script");
+    let script_path = script.path().to_str().expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", script_path])
+        .pipe_in(b"\xA4\xC4 \xC2\xE7\xCF\xC2\xA4\xCE\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"\xA4\xC4 \xC6\xFC\xCB\xDC\xA4\xCE\n");
+}
 
 #[test]
 fn subst_write_file() -> std::io::Result<()> {
@@ -350,6 +691,392 @@ fn subst_write_file() -> std::io::Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_subst_e_flag_basic() {
+    new_ucmd!()
+        .arg("s/.*/echo hi/e")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\n");
+}
+
+#[test]
+fn test_subst_e_flag_preserves_unmatched_lines() {
+    new_ucmd!()
+        .args(&["-e", "s/^match$/echo replaced/e"])
+        .pipe_in("no\nmatch\nno\n")
+        .succeeds()
+        .stdout_is("no\nreplaced\nno\n");
+}
+
+#[test]
+fn test_subst_e_flag_strips_trailing_newline() {
+    // echo produces "hello\n", e flag should strip trailing newline
+    new_ucmd!()
+        .arg("s/.*/echo hello/e")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("hello\n");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_subst_e_flag_multiline_output() {
+    // Command that produces multiple lines
+    new_ucmd!()
+        .arg(r#"s/.*/printf 'a\nb'/e"#)
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+}
+
+#[test]
+fn test_subst_e_flag_combined_with_g() {
+    // e flag with other flags
+    new_ucmd!().arg("s/x/echo y/ge").pipe_in("x\n").succeeds();
+}
+
+#[cfg(unix)]
+#[test]
+fn test_subst_flags_ep_execute_then_print() {
+    // 'ep': execute first, then prints the command's result.
+    new_ucmd!()
+        .arg("s/.*/echo hi/ep")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("hi\nhi\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_subst_flags_pe_print_then_execute() {
+    // 'pe': prints the pre-execution text first, then execute. The 'p'
+    // and 'e' flags are applied in the order written, matching GNU sed.
+    new_ucmd!()
+        .arg("s/.*/echo hi/pe")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("echo hi\nhi\n");
+}
+
+#[test]
+fn test_subst_e_flag_rejected_with_posix() {
+    // e flag is rejected at compile time if --posix or --sandbox is provided.
+    new_ucmd!()
+        .args(&["--posix", "s/.*/echo hi/e"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[test]
+fn test_subst_e_flag_rejected_with_sandbox() {
+    new_ucmd!()
+        .args(&["--sandbox", "s/.*/echo hi/e"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[test]
+fn test_subst_e_flag_command_failure() {
+    // A non-existent command produces empty output but sed itself succeeds
+    // (matching GNU sed behavior: the shell runs, the command inside fails)
+    new_ucmd!()
+        .arg("s/.*/nonexistent_command/e")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("\n");
+}
+
+#[test]
+fn test_subst_e_flag_no_match_no_exec() {
+    // If substitution doesn't match, command should not execute
+    new_ucmd!()
+        .arg("s/nomatch/echo bad/e")
+        .pipe_in("hello\n")
+        .succeeds()
+        .stdout_is("hello\n");
+}
+
+////////////////////////////////////////////////////////////
+// e command (execute)
+// The with-argument form writes the shell's raw, unmodified output to the
+// stream, so its byte-exact terminator differs by platform: LF from /bin/sh
+// on Unix, CRLF from cmd.exe on Windows. sed's own pattern-space auto-print
+// always uses LF. Hence the parallel Unix/Windows tests below.
+#[cfg(unix)]
+#[test]
+fn test_e_command_with_arg_basic() {
+    // With an argument, the command runs immediately and its output is
+    // written to the stream before the (unmodified) pattern space.
+    new_ucmd!()
+        .arg("e echo hi")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\na\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_e_command_with_arg_basic() {
+    new_ucmd!()
+        .arg("e echo hi")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\r\na\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_with_arg_no_space_required() {
+    // No whitespace is required between 'e' and its argument.
+    new_ucmd!()
+        .arg("eecho hi")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\na\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_e_command_with_arg_no_space_required() {
+    new_ucmd!()
+        .arg("eecho hi")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\r\na\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_with_arg_runs_real_shell_command() -> Result<(), Box<dyn std::error::Error>> {
+    // The argument is executed and not just its output captured.
+    // Verify a real filesystem side effect, matching GNU sed's own
+    // testsuite check for this command (testsuite/sandbox.sh).
+    let temp_dir = assert_fs::TempDir::new()?;
+    let marker = temp_dir.child("marker");
+
+    new_ucmd!()
+        .arg(format!("etouch {}", marker.path().display()))
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n");
+
+    assert!(marker.path().exists());
+    Ok(())
+}
+
+#[test]
+fn test_e_command_no_arg_pattern_space_becomes_command() {
+    // With no argument, the pattern space itself is executed and replaced
+    // by the command's output.
+    new_ucmd!()
+        .arg("e")
+        .pipe_in("echo hi\n")
+        .succeeds()
+        .stdout_is("hi\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_no_arg_strips_one_trailing_newline() {
+    new_ucmd!()
+        .arg("e")
+        .pipe_in("printf \"a\\nb\\n\"\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_with_arg_does_not_strip_trailing_newline() {
+    // Unlike the no-argument form, e-with-argument writes the child's
+    // stdout unmodified (echo's own newline is preserved).
+    new_ucmd!()
+        .arg("e echo hi")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\na\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_e_command_with_arg_does_not_strip_trailing_newline() {
+    // The preserved CRLF (rather than a stripped-then-LF "hi\n") is what
+    // proves the with-argument form leaves the child's output unmodified.
+    new_ucmd!()
+        .arg("e echo hi")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\r\na\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_with_address() {
+    new_ucmd!()
+        .arg("1e echo address")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("address\na\nb\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_e_command_with_address() {
+    new_ucmd!()
+        .arg("1e echo address")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("address\r\na\nb\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_semicolon_is_part_of_argument() {
+    // Unlike most commands, ';' does not terminate e's argument.
+    // Rest of the line is consumed unconditionally, so the shell (not
+    // sed) is what splits on the ';' here.
+    new_ucmd!()
+        .arg("e echo hi; echo bye")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\nbye\na\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_recognized_escape_decoded() {
+    // Escape sequences in the argument are decoded by sed itself (\t is
+    // the tab character) before the shell ever sees them, same as a/c/i.
+    new_ucmd!()
+        .arg(r#"e echo "hi\tthere""#)
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\tthere\na\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_unrecognized_escape_falls_back_to_literal() {
+    // '\;' is not a recognized escape, so the backslash is dropped and
+    // ';' is kept literally. It's then the shell's own ';' that splits
+    // the resulting single-line command into two statements.
+    new_ucmd!()
+        .arg(r"e echo hi\;there")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("hi\na\n")
+        .stderr_contains("there");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_backslash_continuation() {
+    // A trailing backslash continues the argument onto the next script
+    // line, joined by an embedded newline. The shell then treats that
+    // as two separate statements.
+    new_ucmd!()
+        .arg("e echo hi \\\nthere")
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("hi\nx\n")
+        .stderr_contains("there");
+}
+
+#[test]
+fn test_e_command_dangling_backslash_falls_back_to_no_arg() {
+    // A leading backslash with nothing left to continue into at the end
+    // of the script is treated the same as no argument at all.
+    new_ucmd!()
+        .arg(r"e\")
+        .pipe_in("echo hi\n")
+        .succeeds()
+        .stdout_is("hi\n");
+}
+
+#[test]
+fn test_e_command_rejected_with_posix() {
+    new_ucmd!()
+        .args(&["--posix", "e echo hi"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[test]
+fn test_e_command_rejected_with_sandbox() {
+    new_ucmd!()
+        .args(&["--sandbox", "e echo hi"])
+        .fails()
+        .stderr_contains("not allowed with --posix or --sandbox");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_rejected_with_sandbox_no_side_effect() -> Result<(), Box<dyn std::error::Error>> {
+    // Rejection happens at compile time, before any input is processed, so
+    // the shell command must never run.
+    let temp_dir = assert_fs::TempDir::new()?;
+    let marker = temp_dir.child("marker");
+
+    new_ucmd!()
+        .args(&[
+            "--sandbox",
+            "-e",
+            &format!("etouch {}", marker.path().display()),
+        ])
+        .fails();
+
+    assert!(!marker.path().exists());
+    Ok(())
+}
+
+#[test]
+fn test_e_command_with_arg_command_failure() {
+    // A failing command's own error goes to stderr. sed itself succeeds.
+    new_ucmd!()
+        .arg("e nonexistent_command")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n")
+        .stderr_contains("nonexistent_command");
+}
+
+#[test]
+fn test_e_command_no_arg_command_failure() {
+    new_ucmd!()
+        .arg("e")
+        .pipe_in("nonexistent_command\n")
+        .succeeds()
+        .stdout_is("\n")
+        .stderr_contains("nonexistent_command");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_no_arg_non_utf8_output_passthrough() {
+    // Non-UTF-8 shell output passes through as raw bytes, matching GNU
+    // sed rather than being rejected. The pattern space is passed to
+    // the shell verbatim, so its printf emits raw 0xff.
+    new_ucmd!()
+        .arg("e")
+        .pipe_in("printf '\\377'\n")
+        .succeeds()
+        .stdout_is_bytes(b"\xff\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_e_command_with_arg_non_utf8_output_passthrough() {
+    // Same for the with-argument form (a separate execution path). The
+    // doubled backslashes survive sed's own escape decoding as single ones,
+    // so the shell's printf emits raw 0xff followed by a newline.
+    new_ucmd!()
+        .arg(r"e printf '\\377\\n'")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is_bytes(b"\xff\na\n");
+}
+
 ////////////////////////////////////////////////////////////
 // Transliteration: y
 check_output!(trans_simple, ["-e", r"y/0123456789/9876543210/", LINES1]);
@@ -358,6 +1085,91 @@ check_output!(
     ["-e", r"y10\123456789198765432\101", LINES1]
 );
 check_output!(trans_no_new_line, ["-e", r"y/l/L/", NO_NEW_LINE]);
+
+/// Transliterate non-UTF-8 input bytes using byte escapes in byte mode.
+#[test]
+fn trans_byte_escape_matches_invalid_input_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-e", r"y/\xE9/Z/"])
+        .pipe_in(b"\xE9\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"Z\n");
+}
+
+/// Transliterate UTF-8 characters as characters when the locale selects UTF-8 mode.
+#[test]
+fn trans_utf8_character_in_c_utf8_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"y/κ/K/"])
+        .pipe_in("κa\n")
+        .succeeds()
+        .stdout_is_bytes(b"Ka\n");
+}
+
+/// Transliterate a decoded hex escape as UTF-8 in UTF-8 mode.
+#[test]
+fn trans_utf8_escape_in_c_utf8_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"y/\xE9/Z/"])
+        .pipe_in("é\n")
+        .succeeds()
+        .stdout_is_bytes(b"Z\n");
+}
+
+/// Reject raw invalid UTF-8 transliteration script bytes in UTF-8 mode.
+#[test]
+fn trans_raw_invalid_script_byte_rejected_in_c_utf8_locale() {
+    let mut script = NamedTempFile::new().expect("create temporary sed script");
+    script
+        .write_all(b"y/\xE9/Z/")
+        .expect("write temporary sed script");
+    let script_path = script.path().to_str().expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", script_path])
+        .fails()
+        .stderr_contains("invalid UTF-8 in transliteration string");
+}
+
+#[test]
+fn pattern_clear_with_z_command() {
+    new_ucmd!()
+        .arg("z")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("\n\n");
+}
+
+#[test]
+fn pattern_clear_with_z_command_silent_print() {
+    new_ucmd!()
+        .args(&["-n", "z;p"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("\n\n");
+}
+
+#[test]
+fn pattern_clear_with_z_preserves_substitution_flag() {
+    new_ucmd!()
+        .args(&["-n", "s/a/b/;z;t changed;b;:changed;c\\\nchanged"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("changed\n");
+}
+
+#[test]
+fn pattern_clear_with_z_is_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "z"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `z'\n");
+}
 check_output!(trans_newline, ["-e", r"1N;2y/\n/X/", LINES1]);
 
 ////////////////////////////////////////////////////////////
@@ -774,6 +1586,56 @@ check_output!(
 check_output!(read_ok, [format!("4r {LINES2}"), LINES1.to_string()]);
 check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
 check_output!(read_empty, ["6r input/empty", LINES1]);
+check_output!(
+    cmd_read_zero_addr,
+    [format!("0r {LINES2}"), LINES1.to_string()]
+);
+check_output!(
+    cmd_read_one_addr,
+    [format!("1r {LINES2}"), LINES1.to_string()]
+);
+
+#[test]
+fn sandbox_rejects_read_command() {
+    new_ucmd!()
+        .args(&["--sandbox", &format!("1r {LINES2}"), LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+}
+
+#[test]
+fn sandbox_rejects_subst_write_flag() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("s/l1/x/w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["--sandbox", &cmd, LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert!(actual.is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn sandbox_rejects_write_command() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["--sandbox", &cmd, LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert!(actual.is_empty());
+
+    Ok(())
+}
 
 #[test]
 fn write_single_file() -> std::io::Result<()> {
@@ -827,7 +1689,27 @@ check_output!(number_range_out_of_bounds, ["-e", "47,60=", LINES1]);
 
 check_output!(list_ascii, ["-n", "l 60", "input/ascii"]);
 check_output!(list_empty, ["-n", "l 60", "input/empty"]);
-check_output!(list_unicode, ["l 60", "input/unicode"]);
+
+/// List Unicode input under an explicit UTF-8 locale.
+#[test]
+fn list_unicode() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["l 60", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/list_unicode");
+}
+
+/// List invalid UTF-8 bytes without decoding in byte mode.
+#[test]
+fn list_invalid_utf8_byte_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-n", "l"])
+        .pipe_in(b"\xE9\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"\\351$\n");
+}
 
 ////////////////////////////////////////////////////////////
 // In-place editing
@@ -1037,8 +1919,15 @@ check_output!(math1, ["-f", "script/math.sed", "input/expression1"]);
 // Calculate π (scaled) to several decimal places
 check_output!(pi, ["-f", "script/math.sed", "input/pi"]);
 
-// Solve the Towers of Hanoi puzzle
-check_output!(hanoi, ["-f", "script/hanoi.sed", "input/hanoi"]);
+/// Solve the Towers of Hanoi puzzle under an explicit UTF-8 locale.
+#[test]
+fn hanoi() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", "script/hanoi.sed", "input/hanoi"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/hanoi");
+}
 
 ////////////////////////////////////////////////////////////
 // Long-running scripts
@@ -1115,6 +2004,17 @@ fn test_incomplete_test_command_posix() {
 }
 
 #[test]
+fn test_empty_text_commands_fail() {
+    for command in ["a", "c", "i"] {
+        new_ucmd!()
+            .args(&["-e", command])
+            .fails()
+            .code_is(1)
+            .stderr_contains(format!("command `{command}' expects \\ followed by text"));
+    }
+}
+
+#[test]
 fn test_addr0_non_posix() {
     new_ucmd!()
         .args(&["--posix", "0,/foo/p"])
@@ -1129,7 +2029,7 @@ fn test_addr0_second_required() {
         .args(&["0p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:2: error: address 0 requires a second address\n");
+        .stderr_is("sed: <script argument 1>:1:2: error: address 0 can only be used with ~step, a second regular expression, or a read command\n");
 }
 
 #[test]
@@ -1138,7 +2038,7 @@ fn test_addr0_second_re_only() {
         .args(&["0,4p"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with a regular expression or ~step\n");
+        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with ~step, a second regular expression, or a read command\n");
 }
 
 #[test]
@@ -1164,6 +2064,7 @@ fn test_step_end_non_posix() {
 #[test]
 fn test_fancy_regex_is_match_error() {
     new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
         .args(&["-E", r"/(\.+)+\1b$/p", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
@@ -1173,6 +2074,7 @@ fn test_fancy_regex_is_match_error() {
 #[test]
 fn test_fancy_regex_find_error() {
     new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
         .args(&["-E", r"p;s/(\.+)+\1b$/X/", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
@@ -1182,6 +2084,7 @@ fn test_fancy_regex_find_error() {
 #[test]
 fn test_fancy_regex_captures_error() {
     new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
         .args(&["-E", r"p;s/(\.+)+\1b$/\1/", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
@@ -1191,6 +2094,7 @@ fn test_fancy_regex_captures_error() {
 #[test]
 fn test_fancy_regex_captures_iter_error() {
     new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
         .args(&["-E", r"p;s/(\.+)+\1b$/\1/3", "input/dots-4k.txt"])
         .fails()
         .code_is(2)
@@ -1318,4 +2222,18 @@ fn test_invalid_version() {
         .args(&["v4.a"])
         .fails()
         .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
+//--posix should reject GNU substitute flags i/I https://github.com/uutils/sed/issues/401
+#[test]
+fn test_posix_reject_flags() {
+    new_ucmd!()
+        .args(&["--posix", "s/a/b/i"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
+
+    new_ucmd!()
+        .args(&["--posix", "s/a/b/m"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
 }
