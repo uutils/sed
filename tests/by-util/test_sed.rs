@@ -2246,7 +2246,7 @@ fn test_invalid_only_major_version() {
 
 #[test]
 fn test_default_version() {
-    // defaults to v4.9.0 
+    // defaults to v4.9.0
     new_ucmd!().args(&["v"]).succeeds();
 }
 
