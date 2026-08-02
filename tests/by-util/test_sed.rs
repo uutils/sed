@@ -1184,6 +1184,166 @@ fn pattern_clear_with_z_is_non_posix() {
 check_output!(trans_newline, ["-e", r"1N;2y/\n/X/", LINES1]);
 
 ////////////////////////////////////////////////////////////
+// Rich diagnostics, drawn for a terminal and controlled by UUTILS_DIAG
+#[test]
+fn diagnostics_stay_out_of_the_way_of_scripts() {
+    // stderr is not a terminal here, so only the plain message is printed.
+    for value in [None, Some(""), Some("never")] {
+        let mut command = new_ucmd!();
+        if let Some(value) = value {
+            command.env("UUTILS_DIAG", value);
+        }
+        command
+            .args(&["--posix", "z"])
+            .fails()
+            .code_is(1)
+            .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `z'\n");
+    }
+}
+
+#[test]
+fn diagnostics_underline_the_offending_character() {
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["s/a/b/q"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:7: error: invalid substitute flag: 'q'\n",
+            "   ╭─[ <script argument 1>:1:7 ]\n",
+            "   │\n",
+            " 1 │ s/a/b/q\n",
+            "   │       ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_can_point_past_the_end_of_the_line() {
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["/adrift"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:8: error: unterminated regular expression\n",
+            "   ╭─[ <script argument 1>:1:8 ]\n",
+            "   │\n",
+            " 1 │ /adrift\n",
+            "   │        ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_count_columns_in_bytes_like_the_message() {
+    // `é` is two bytes: the header must use byte column 8, not 7.
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["s/é/e/z"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:8: error: invalid substitute flag: 'z'\n",
+            "   ╭─[ <script argument 1>:1:8 ]\n",
+            "   │\n",
+            " 1 │ s/é/e/z\n",
+            "   │       ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_reach_errors_raised_after_the_line_was_read() {
+    // Undefined labels are found after compilation; the gutter shows line 2.
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["-e", "p\nb nowhere"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:2:1: error: undefined label `nowhere'\n",
+            "   ╭─[ <script argument 1>:2:1 ]\n",
+            "   │\n",
+            " 2 │ b nowhere\n",
+            "   │ ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_line_up_under_wide_characters() {
+    // `日本` takes four columns: the underline must sit under `q`.
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["s/日本/x/q"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:12: error: invalid substitute flag: 'q'\n",
+            "   ╭─[ <script argument 1>:1:12 ]\n",
+            "   │\n",
+            " 1 │ s/日本/x/q\n",
+            "   │          ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_underline_a_wide_character_across_its_columns() {
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["p日"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:2: error: extra characters at the end of the p command\n",
+            "   ╭─[ <script argument 1>:1:2 ]\n",
+            "   │\n",
+            " 1 │ p日\n",
+            "   │  ──\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_keep_tabs_and_widen_the_gutter() {
+    // Line 10 starts with a tab, kept in the indent so the underline lines up.
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&[format!("{}\tpz", "p\n".repeat(9))])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:10:3: error: extra characters at the end of the p command\n",
+            "    ╭─[ <script argument 1>:10:3 ]\n",
+            "    │\n",
+            " 10 │ \tpz\n",
+            "    │ \t ─\n",
+            "────╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_skip_scripts_that_are_not_utf8() {
+    // A line that is not valid UTF-8 cannot be quoted: only the message.
+    let mut script = NamedTempFile::new().expect("create temporary sed script");
+    script
+        .write_all(b"s/\xff/x/q\n")
+        .expect("write temporary sed script");
+    let script_path = script.path().to_str().expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["-f", script_path])
+        .fails()
+        .code_is(1)
+        .stderr_is(format!(
+            "sed: {script_path}:1:7: error: invalid substitute flag: 'q'\n"
+        ));
+}
+
+////////////////////////////////////////////////////////////
 // Pattern space manipulation: D, d, H, h, N, n, P, p, q, x
 check_output!(pattern_print_to_newline, ["-n", r"1{;N;P;P;p;}", LINES1]);
 check_output!(pattern_next_print, ["-n", r"N;N;P", LINES1]);
