@@ -39,6 +39,83 @@ Below is a list of these extensions and incompatibilities.
 ## New extensions
 * Unicode characters can be specified in regular expression pattern, replacement
   and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
+* Script errors are reported with the offending line quoted back and the
+  character at fault underlined, whenever standard error is a terminal. See
+  [Script error diagnostics](#script-error-diagnostics).
+
+## Script error diagnostics
+When standard error is a terminal, a script error is followed by the script
+line it was found on, with the character at fault underlined. The usual
+one-line message always comes first and is unchanged, and when standard error
+is a pipe or a file it is the whole of the output, so nothing that parses
+_sed_'s output is affected.
+
+The `UUTILS_DIAG` environment variable overrides the terminal check, as it does
+for the other uutils: `never` always gives the single-line message, and
+`always` gives the report even when redirected. Colors follow `NO_COLOR`.
+
+Positions are `input:line:column`, where input is the script file name or
+`<script argument N>`, and the column counts bytes, as in GNU _sed_.
+
+An invalid substitute flag:
+```
+$ sed 's/a/b/q'
+sed: <script argument 1>:1:7: error: invalid substitute flag: 'q'
+   ╭─[ <script argument 1>:1:7 ]
+   │
+ 1 │ s/a/b/q
+   │       ┬
+   │       ╰── here
+───╯
+```
+
+An error at the end of the line points just past the last character:
+```
+$ sed '/adrift'
+sed: <script argument 1>:1:8: error: unterminated regular expression
+   ╭─[ <script argument 1>:1:8 ]
+   │
+ 1 │ /adrift
+   │        ┬
+   │        ╰── here
+───╯
+```
+
+In a script file, the file name and line number are shown:
+```
+$ cat edit.sed
+s/foo/bar/
+/start/,/end/{
+  s/x/y/g
+  y/abc/de/
+}
+$ sed -f edit.sed
+sed: edit.sed:4:11: error: transliteration strings are not the same length
+   ╭─[ edit.sed:4:11 ]
+   │
+ 4 │   y/abc/de/
+   │           ┬
+   │           ╰── here
+───╯
+```
+
+Errors found only once the whole script is compiled, such as a branch to an
+undefined label, still quote the line they came from:
+```
+$ sed -e p -e 'b nowhere'
+sed: <script argument 2>:1:1: error: undefined label `nowhere'
+   ╭─[ <script argument 2>:1:1 ]
+   │
+ 1 │ b nowhere
+   │ ┬
+   │ ╰── here
+───╯
+```
+
+Other errors reported this way include an unknown command (`sed k`), an
+unexpected `}` (`sed 'p}'`), a repeated `!` (`sed '/x/!!p'`), a missing label
+or file name (`sed ':'`, `sed r`), a missing `a` text (`sed 'a'`) and an invalid
+regular expression (`sed 's/\(a/b/'`).
 
 ## Incompatible extensions
 The `-U` or `--uutil-extensions` option enables useful extensions or bug fixes

@@ -1184,6 +1184,162 @@ fn pattern_clear_with_z_is_non_posix() {
 check_output!(trans_newline, ["-e", r"1N;2y/\n/X/", LINES1]);
 
 ////////////////////////////////////////////////////////////
+// Rich diagnostics, drawn for a terminal and controlled by UUTILS_DIAG
+#[test]
+fn diagnostics_stay_out_of_the_way_of_scripts() {
+    // A test harness captures stderr, so it is never a terminal and always
+    // gets the bare message -- which is exactly the guarantee anything parsing
+    // sed's output relies on. `never` holds even if a terminal shows up, and
+    // an empty value leaves the terminal check in charge.
+    for value in [None, Some(""), Some("never")] {
+        let mut command = new_ucmd!();
+        if let Some(value) = value {
+            command.env("UUTILS_DIAG", value);
+        }
+        command
+            .args(&["--posix", "z"])
+            .fails()
+            .code_is(1)
+            .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `z'\n");
+    }
+}
+
+#[test]
+fn diagnostics_underline_the_offending_character() {
+    let result = new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["s/a/b/q"])
+        .fails();
+    result.code_is(1);
+    let output = result.stderr_str().to_string();
+
+    // Whatever is added, the first line is the one sed has always printed.
+    let mut lines = output.lines();
+    assert_eq!(
+        lines.next(),
+        Some("sed: <script argument 1>:1:7: error: invalid substitute flag: 'q'")
+    );
+    assert!(
+        output.contains("s/a/b/q"),
+        "script not quoted back: {output}"
+    );
+
+    // The underline sits under column 7, the offending flag.
+    let underline = output
+        .lines()
+        .find(|line| line.contains('┬'))
+        .expect("nothing underlined");
+    let script = output
+        .lines()
+        .find(|line| line.contains("s/a/b/q"))
+        .expect("script line missing");
+    assert_eq!(
+        underline.chars().position(|c| c == '┬'),
+        script
+            .find("s/a/b/q")
+            .map(|at| script[..at].chars().count() + 6)
+    );
+
+    // stderr is a pipe here, so nothing should be colored.
+    assert!(!output.contains('\u{1b}'), "escape sequences on a pipe");
+}
+
+#[test]
+fn diagnostics_can_point_past_the_end_of_the_line() {
+    // An error that runs off the end of the line reports the column just after
+    // the last character. The drawn column has to agree with the one the
+    // message names, rather than falling back a character.
+    let result = new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["/adrift"])
+        .fails();
+    result.code_is(1);
+    let output = result.stderr_str().to_string();
+
+    assert!(
+        output
+            .starts_with("sed: <script argument 1>:1:8: error: unterminated regular expression\n"),
+        "unexpected first line: {output}"
+    );
+    assert!(
+        output.contains("<script argument 1>:1:8 ]"),
+        "drawn column disagrees with the message: {output}"
+    );
+    let underline = output
+        .lines()
+        .find(|line| line.contains('┬'))
+        .expect("nothing underlined");
+    let script = output
+        .lines()
+        .find(|line| line.contains("/adrift"))
+        .expect("script line missing");
+    assert_eq!(
+        underline.chars().position(|c| c == '┬'),
+        script
+            .find("/adrift")
+            .map(|at| script[..at].chars().count() + 7)
+    );
+}
+
+#[test]
+fn diagnostics_count_columns_in_bytes_like_the_message() {
+    // `é` is two bytes: the message names byte column 8, and the frame header
+    // has to name the same column rather than ariadne's character count, 7.
+    let result = new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["s/é/e/z"])
+        .fails();
+    result.code_is(1);
+    let output = result.stderr_str().to_string();
+
+    assert!(
+        output.starts_with("sed: <script argument 1>:1:8: error: invalid substitute flag: 'z'\n"),
+        "unexpected first line: {output}"
+    );
+    assert!(
+        output.contains("[ <script argument 1>:1:8 ]"),
+        "drawn column disagrees with the message: {output}"
+    );
+}
+
+#[test]
+fn diagnostics_reach_errors_raised_after_the_line_was_read() {
+    // An undefined label is only detected once the whole script is compiled,
+    // by which point the line has been consumed -- the location has to have
+    // carried the text along with it. The script spans two lines, so this also
+    // pins the line number shown in the gutter.
+    let result = new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["-e", "p\nb nowhere"])
+        .fails();
+    result.code_is(1);
+    let output = result.stderr_str().to_string();
+
+    assert!(
+        output.starts_with("sed: <script argument 1>:2:1: error: undefined label `nowhere'\n"),
+        "unexpected first line: {output}"
+    );
+    let quoted = output
+        .lines()
+        .find(|line| line.contains("b nowhere"))
+        .expect("offending line not quoted back");
+    assert!(quoted.contains(" 2 "), "wrong line number: {quoted}");
+    assert!(!output.contains(" 1 "), "unrelated line quoted: {output}");
+}
+
+#[test]
+fn diagnostics_leave_errors_at_the_end_of_the_script_alone() {
+    // A trailing backslash asks for another line; once there is none, the
+    // message names line 0 and no script, so there is no line to point at.
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["s/a/b\\"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: :0:7: error: unterminated substitute replacement (unexpected EOF)\n");
+}
+
+////////////////////////////////////////////////////////////
 // Pattern space manipulation: D, d, H, h, N, n, P, p, q, x
 check_output!(pattern_print_to_newline, ["-n", r"1{;N;P;P;p;}", LINES1]);
 check_output!(pattern_next_print, ["-n", r"N;N;P", LINES1]);
