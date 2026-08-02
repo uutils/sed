@@ -836,6 +836,15 @@ fn process_file(
                     let writer = extract_variant!(command, NamedWriter);
                     writer.borrow_mut().write_line_bytes(pattern.as_bytes())?;
                 }
+                'W' => {
+                    // Append only the first line of the pattern space.
+                    let writer = extract_variant!(command, NamedWriter);
+                    let pattern_text = pattern.as_str()?;
+                    let line = pattern_text
+                        .split_once('\n')
+                        .map_or(pattern_text, |(first_line, _)| first_line);
+                    writer.borrow_mut().write_line(line)?;
+                }
                 'x' => {
                     // Exchange the contents of the pattern and hold spaces.
                     let (pat_content, pat_has_newline) = pattern.fields_mut()?;
