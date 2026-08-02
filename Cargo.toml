@@ -63,7 +63,8 @@ sha2 = { version = "0.11.0", default-features = false, features = ["alloc"] }
 tempfile = "3.10.1"
 terminal_size = "0.4.2"
 textwrap = { version = "0.16.1", features = ["terminal_size"] }
-uucore = { version = "0.12.0", features = ["libc"] }
+unicode-width = "0.2.2"
+uucore = { version = "0.12.0", features = ["diagnostics", "libc"] }
 rustix = "1.1.4"
 xattr = "1.3.1"
 
@@ -81,6 +82,7 @@ regex = { workspace = true }
 tempfile = { workspace = true }
 terminal_size = { workspace = true }
 textwrap = { workspace = true }
+unicode-width = { workspace = true }
 uucore = { workspace = true }
 rustix = { workspace = true }
 

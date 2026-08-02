@@ -39,6 +39,17 @@ Below is a list of these extensions and incompatibilities.
 ## New extensions
 * Unicode characters can be specified in regular expression pattern, replacement
   and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
+* On a terminal, script errors also quote the script line and underline the
+  character at fault (`UUTILS_DIAG=always` or `never` overrides this):
+  ```
+  $ sed 's/a/b/q'
+  sed: <script argument 1>:1:7: error: invalid substitute flag: 'q'
+     ╭─[ <script argument 1>:1:7 ]
+     │
+   1 │ s/a/b/q
+     │       ─
+  ───╯
+  ```
 
 ## Incompatible extensions
 The `-U` or `--uutil-extensions` option enables useful extensions or bug fixes
