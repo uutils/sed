@@ -1532,7 +1532,7 @@ fn get_cmd_spec(
             n_addr: if posix { 1 } else { 2 },
             handler: compile_text_command,
         }),
-        'b' | 't' | 'T' => Ok(CommandSpec {
+        'b' | 't' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_label_command,
         }),
@@ -1573,6 +1573,10 @@ fn get_cmd_spec(
         's' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_subst_command,
+        }),
+        'T' if !posix => Ok(CommandSpec {
+            n_addr: 2,
+            handler: compile_label_command,
         }),
         'w' => Ok(CommandSpec {
             n_addr: 2,

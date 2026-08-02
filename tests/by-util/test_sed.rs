@@ -1458,6 +1458,15 @@ s/^/CLEARED /p
     ]
 );
 
+#[test]
+fn test_branch_no_sub_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "T"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("invalid command code");
+}
+
 ////////////////////////////////////////////////////////////
 // Text: a, c, i
 
