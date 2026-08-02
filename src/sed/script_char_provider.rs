@@ -8,10 +8,15 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
+use std::cell::OnceCell;
+use std::rc::Rc;
+
 #[derive(Debug)]
 pub struct ScriptCharProvider {
     line: Vec<u8>,
     pos: usize,
+    /// The line as text, shared by the commands compiled from it.
+    text: OnceCell<Option<Rc<str>>>,
 }
 
 impl ScriptCharProvider {
@@ -20,6 +25,7 @@ impl ScriptCharProvider {
         Self {
             line: line.as_ref().to_vec(),
             pos: 0,
+            text: OnceCell::new(),
         }
     }
 
@@ -65,6 +71,18 @@ impl ScriptCharProvider {
     /// Return current position
     pub fn get_pos(&self) -> usize {
         self.pos
+    }
+
+    /// Return the whole line being scanned.
+    pub fn get_line(&self) -> &[u8] {
+        &self.line
+    }
+
+    /// Return the line as shared text, or `None` if it is not valid UTF-8.
+    pub fn line_text(&self) -> Option<Rc<str>> {
+        self.text
+            .get_or_init(|| str::from_utf8(&self.line).ok().map(Rc::from))
+            .clone()
     }
 }
 
