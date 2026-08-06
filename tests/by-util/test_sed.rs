@@ -38,7 +38,18 @@ fn test_version() {
         .arg("--version")
         .succeeds()
         .no_stderr()
-        .stdout_is(short);
+        .stdout_is(&short);
+
+    assert!(short.contains("uutils"));
+}
+
+#[test]
+fn test_help_mentions_uutils() {
+    new_ucmd!()
+        .arg("--help")
+        .succeeds()
+        .no_stderr()
+        .stdout_contains("part of uutils");
 }
 
 #[test]
