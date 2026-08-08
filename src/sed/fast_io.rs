@@ -407,7 +407,9 @@ impl FastCopy {
         Self {
             fd,
             is_regular: ftype as libc::mode_t == libc::S_IFREG,
-            block_size: st.st_blksize as usize,
+            // st_blksize is always positive and small; fall back to a common
+            // block size if it ever doesn't fit in usize.
+            block_size: usize::try_from(st.st_blksize).unwrap_or(4096),
         }
     }
 
@@ -1009,12 +1011,19 @@ fn aligned_copy_file_range(
     cover: WriteRange,
 ) -> std::io::Result<usize> {
     //  Get current output offset.
-    let out_off = rustix::fs::tell(out_fd)? as usize;
+    // If either offset doesn't fit in usize (only possible on 32-bit
+    // targets), give up on alignment and just copy everything.
+    let (Ok(out_off), Ok(in_off_bytes)) = (
+        usize::try_from(rustix::fs::tell(out_fd)?),
+        usize::try_from(in_off),
+    ) else {
+        return reliable_copy_file_range(in_ptr, in_fd, in_off, out_fd, len);
+    };
     let mut pending = len;
 
     // Obtain head alignment.
     // Bytes to end of block:
-    let remainder = in_off as usize % block_size;
+    let remainder = in_off_bytes % block_size;
     // Bytes to write (block_size becomes 0):
     let head_align = (block_size - remainder) % block_size;
 

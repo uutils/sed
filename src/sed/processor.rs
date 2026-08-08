@@ -796,13 +796,17 @@ fn process_file(
                 }
                 'q' => {
                     // Quit after printing the pattern space.
-                    set_exit_code(*extract_variant!(command, Number) as i32);
+                    set_exit_code(
+                        i32::try_from(*extract_variant!(command, Number)).unwrap_or(i32::MAX),
+                    );
                     context.stop_processing = true;
                     break;
                 }
                 'Q' => {
                     // Quit immediatelly.
-                    set_exit_code(*extract_variant!(command, Number) as i32);
+                    set_exit_code(
+                        i32::try_from(*extract_variant!(command, Number)).unwrap_or(i32::MAX),
+                    );
                     context.stop_processing = true;
                     context.quiet = true;
                     break;

@@ -255,12 +255,12 @@ impl Default for Transliteration {
     /// Create a new Transliteration with identity mapping for the fast-path.
     fn default() -> Self {
         let mut fast = [0u8; 256];
-        for (i, slot) in fast.iter_mut().enumerate() {
-            *slot = i as u8;
+        for (slot, value) in fast.iter_mut().zip(0..=u8::MAX) {
+            *slot = value;
         }
         let mut unicode_fast = ['\0'; COMMON_UNICODE];
-        for (i, slot) in unicode_fast.iter_mut().enumerate() {
-            *slot = char::from_u32(i as u32).unwrap_or('\0');
+        for (slot, cp) in unicode_fast.iter_mut().zip(0u32..) {
+            *slot = char::from_u32(cp).unwrap_or('\0');
         }
         Self {
             byte_fast: fast,
@@ -593,7 +593,7 @@ mod tests {
     fn test_all_fast_path_mapped_to_space() {
         let mut t = Transliteration::default();
         for cp in 0..COMMON_UNICODE {
-            if let Some(ch) = char::from_u32(cp as u32) {
+            if let Some(ch) = u32::try_from(cp).ok().and_then(char::from_u32) {
                 t.insert(ch, ' ');
             }
         }
