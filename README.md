@@ -31,6 +31,13 @@ Further work aims to:
 We provide a Linux x86_64 binary archive from the main branch at
 https://github.com/uutils/sed/releases/tag/latest-commit .
 
+If you have [cargo-binstall](https://github.com/cargo-bins/cargo-binstall),
+the released binaries can be installed directly with:
+
+```bash
+cargo binstall sed
+```
+
 For other platforms, ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).
 
 Clone the repository and build the project using Cargo:

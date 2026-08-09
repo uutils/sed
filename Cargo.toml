@@ -20,6 +20,19 @@ rust-version = "1.88"
 
 build = "build.rs"
 
+# cargo-binstall: fetch the archives published by `dist` in the GitHub releases
+# instead of building from source. The layout below has to stay in sync with
+# `dist-workspace.toml` (targets) and the archives it produces:
+#   sed-<target>.tar.xz (zip on Windows), containing a sed-<target>/ directory.
+# Note that the release tags carry no `v` prefix, hence `{ version }`.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/{ version }/{ name }-{ target }.{ archive-suffix }"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [features]
 default = ["feat_common_core"]
 
