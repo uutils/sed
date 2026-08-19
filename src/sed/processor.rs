@@ -397,7 +397,9 @@ fn substitute(
 
         // Write to file if needed.
         if let Some(ref writer) = sub.write_file {
-            writer.borrow_mut().write_line_bytes(pattern.as_bytes())?;
+            writer
+                .borrow_mut()
+                .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
         }
         context.substitution_made = true;
     }
@@ -861,7 +863,24 @@ fn process_file(
                 'w' => {
                     // Append the pattern space to the specified file.
                     let writer = extract_variant!(command, NamedWriter);
-                    writer.borrow_mut().write_line_bytes(pattern.as_bytes())?;
+                    writer
+                        .borrow_mut()
+                        .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
+                }
+                'W' => {
+                    // Append only the first line of the pattern space.
+                    let writer = extract_variant!(command, NamedWriter);
+                    let pattern_bytes = pattern.as_bytes();
+                    let (first_line, found_newline) =
+                        match pattern_bytes.iter().position(|&b| b == b'\n') {
+                            // A slice including the newline
+                            Some(pos) => (&pattern_bytes[..=pos], true),
+                            None => (pattern_bytes, false),
+                        };
+                    writer.borrow_mut().write_line_bytes(
+                        first_line,
+                        !found_newline && pattern.is_newline_terminated(),
+                    )?;
                 }
                 'x' => {
                     // Exchange the contents of the pattern and hold spaces.

@@ -104,6 +104,7 @@ cargo test
 * An `F` command outputs the name of the file currently being processed.
 * A `Q` command (optionally followed by an exit code) quits immediately.
 * The `q` command can be optionally followed by an exit code.
+* A `W` command writes to a file the pattern's first line.
 * The `l` command can be optionally followed by the output width.
 * The `--follow-symlinks` option for in-place editing.
 * The `--sandbox` option that limits potentially destructive commands.

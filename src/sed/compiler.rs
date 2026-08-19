@@ -1648,6 +1648,10 @@ fn get_cmd_spec(
             n_addr: 2,
             handler: compile_label_command,
         }),
+        'W' if !posix => Ok(CommandSpec {
+            n_addr: 2,
+            handler: compile_write_file_command,
+        }),
         'w' => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_write_file_command,
