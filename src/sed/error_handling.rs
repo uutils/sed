@@ -14,6 +14,7 @@ use crate::sed::script_line_provider::ScriptLineProvider;
 
 use std::rc::Rc;
 
+use uucore::display::Quotable;
 use uucore::error::{UResult, USimpleError};
 
 #[derive(Clone, Debug)]
@@ -108,7 +109,7 @@ pub fn input_runtime_error<T>(
             location.input_name,
             location.line_number,
             location.column_number,
-            context.input_name,
+            context.input_name.quote(),
             context.line_number,
             msg.to_string()
         ),

@@ -248,7 +248,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
         character_mode: character_mode_for_locale(&locale)?,
 
         // Other context
-        input_name: "<stdin>".to_string(),
+        input_name: PathBuf::from("-"),
         line_number: 0,
         last_address: false,
         last_line: false,

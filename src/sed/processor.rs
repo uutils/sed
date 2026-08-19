@@ -737,6 +737,12 @@ fn process_file(
                     }
                     _ => panic!("invalid 'e' command data"),
                 },
+                'F' => {
+                    // Output current input file name.
+                    let mut bytes = context.input_name.as_os_str().as_encoded_bytes().to_vec();
+                    bytes.push(b'\n');
+                    output.write_bytes(&bytes)?;
+                }
                 'g' => {
                     // Replace pattern with the contents of the hold space.
                     pattern.set_to_bytes(context.hold.content.clone(), context.hold.has_newline);
@@ -945,11 +951,11 @@ pub fn process_all_files(
     let mut in_place = InPlace::new(context.clone());
     let last_file_index = files.len() - 1;
 
-    for (index, path) in files.iter().enumerate() {
+    for (index, path) in files.into_iter().enumerate() {
         context.last_file = index == last_file_index;
-        let mut reader = LineReader::open(path)
+        let mut reader = LineReader::open(&path)
             .map_err_context(|| format!("error opening input file {}", path.quote()))?;
-        let output = in_place.begin(path)?;
+        let output = in_place.begin(&path)?;
 
         if context.separate || index == 0 {
             context.line_number = 0;
@@ -960,7 +966,7 @@ pub fn process_all_files(
             context.hold.has_newline = true;
         }
 
-        context.input_name = path.quote().to_string();
+        context.input_name = path;
         process_file(commands.clone(), &mut reader, output, context)?;
 
         // Handle any N command remains.

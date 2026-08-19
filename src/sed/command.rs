@@ -40,8 +40,8 @@ pub struct ProcessingContext {
     pub null_data: bool,
 
     // Other context
-    /// Currently processed input file name (not script) in quoted form
-    pub input_name: String,
+    /// Currently processed input file name (not script)
+    pub input_name: PathBuf,
     /// Current input line number
     pub line_number: usize,
     /// True if this is the last address of a range

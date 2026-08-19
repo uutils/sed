@@ -1745,7 +1745,7 @@ fn write_two_files() -> std::io::Result<()> {
 }
 
 ////////////////////////////////////////////////////////////
-// =, l commands
+// =, l, F commands
 check_output!(number_continuous, ["/l2_/=", LINES1, LINES2]);
 check_output!(number_separate, ["-s", "/l._8/=", LINES1, LINES2]);
 check_output!(number_range, ["-e", "10,12=", LINES1]);
@@ -1753,6 +1753,28 @@ check_output!(number_range_out_of_bounds, ["-e", "47,60=", LINES1]);
 
 check_output!(list_ascii, ["-n", "l 60", "input/ascii"]);
 check_output!(list_empty, ["-n", "l 60", "input/empty"]);
+
+check_output!(filename_file, ["-n", r"F", LINES1]);
+// Non-ASCII filename
+check_output!(filename_αρχείο1, [r"F", "input/αρχείο1"]);
+
+#[test]
+fn filename_stdin() {
+    new_ucmd!()
+        .args(&["-n", "F"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("-\n-\n");
+}
+
+#[test]
+fn filename_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "F"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("invalid command code");
+}
 
 /// List Unicode input under an explicit UTF-8 locale.
 #[test]
