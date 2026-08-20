@@ -11,17 +11,18 @@
 use crate::sed::error_handling::{ScriptLocation, runtime_error};
 
 use std::cell::RefCell;
-use std::fs::{File, OpenOptions};
+use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use uucore::display::Quotable;
 use uucore::error::UResult;
 
 thread_local! {
-    /// Global list of all writers that should be flushed at shutdown
-    static FLUSH_LIST: RefCell<Vec<Rc<RefCell<NamedWriter>>>> = const { RefCell::new(Vec::new()) };
+    /// Writers indexed by canonical output path, used to share duplicate writes.
+    static WRITERS: RefCell<HashMap<PathBuf, Rc<RefCell<NamedWriter>>>> = RefCell::new(HashMap::new());
 }
 
 #[derive(Debug)]
@@ -35,6 +36,13 @@ pub struct NamedWriter {
 impl NamedWriter {
     /// Create a new writer, truncate the file, and register it for flushing.
     pub fn new(path: PathBuf, location: ScriptLocation) -> UResult<Rc<RefCell<Self>>> {
+        let canonical_path = canonicalize_output_path(&path, &location)?;
+
+        if let Some(writer) = WRITERS.with(|writers| writers.borrow().get(&canonical_path).cloned())
+        {
+            return Ok(writer);
+        }
+
         let file = OpenOptions::new()
             .create(true)
             .write(true)
@@ -51,8 +59,17 @@ impl NamedWriter {
             location,
         }));
 
-        FLUSH_LIST.with(|list| list.borrow_mut().push(Rc::clone(&writer)));
+        WRITERS.with(|writers| {
+            writers
+                .borrow_mut()
+                .insert(canonical_path, Rc::clone(&writer));
+        });
         Ok(writer)
+    }
+
+    /// Return the path used when this writer was first opened.
+    pub fn original_path(&self) -> &Path {
+        &self.path
     }
 
     /// Write String to the file, possibly with a newline, returning errors.
@@ -92,11 +109,26 @@ impl NamedWriter {
     }
 }
 
-/// Flush buffered content to the file, returning descriptive errors.
+fn canonicalize_output_path(path: &Path, location: &ScriptLocation) -> UResult<PathBuf> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let canonical_parent = fs::canonicalize(parent).map_err(|e| {
+        runtime_error::<()>(location, format!("creating file {}: {}", path.quote(), e)).unwrap_err()
+    })?;
+
+    Ok(match path.file_name() {
+        Some(file_name) => canonical_parent.join(file_name),
+        None => canonical_parent,
+    })
+}
+
+/// Flush buffered content to all open files, returning descriptive errors.
 pub fn flush_all() -> UResult<()> {
-    FLUSH_LIST.with(|cell| {
-        for handle in cell.borrow().iter() {
-            handle.borrow_mut().flush()?;
+    WRITERS.with(|writers| {
+        for writer in writers.borrow().values() {
+            writer.borrow_mut().flush()?;
         }
 
         Ok(())
@@ -107,7 +139,7 @@ pub fn flush_all() -> UResult<()> {
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, tempdir};
 
     #[test]
     fn test_write_line_bytes_appends_newline() {
@@ -137,5 +169,37 @@ mod tests {
         writer.borrow_mut().flush().unwrap();
 
         assert_eq!(fs::read(path).unwrap(), b"a\xE9");
+    }
+
+    #[test]
+    fn test_new_reuses_writer_for_same_path() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        let first = NamedWriter::new(path.clone(), ScriptLocation::default()).unwrap();
+        let second = NamedWriter::new(path.clone(), ScriptLocation::default()).unwrap();
+
+        assert!(Rc::ptr_eq(&first, &second));
+        assert_eq!(first.borrow().original_path(), path.as_path());
+
+        first.borrow_mut().write_line("first", true).unwrap();
+        second.borrow_mut().write_line("second", true).unwrap();
+        first.borrow_mut().flush().unwrap();
+
+        assert_eq!(fs::read_to_string(path).unwrap(), "first\nsecond\n");
+    }
+
+    #[test]
+    fn test_new_reuses_writer_for_canonical_duplicate_path() {
+        let dir = tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+
+        let path = subdir.join("output");
+        let duplicate_path = subdir.join(".").join("output");
+        let first = NamedWriter::new(path.clone(), ScriptLocation::default()).unwrap();
+        let second = NamedWriter::new(duplicate_path, ScriptLocation::default()).unwrap();
+
+        assert!(Rc::ptr_eq(&first, &second));
+        assert_eq!(first.borrow().original_path(), path.as_path());
     }
 }

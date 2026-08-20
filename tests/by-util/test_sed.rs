@@ -1735,6 +1735,27 @@ fn write_single_file() -> std::io::Result<()> {
 }
 
 #[test]
+fn write_single_file_twice() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    // Write odd and even lines to the same file through different commands.
+    // Unless the writers are unified, this fails on Windows.
+    let cmd1 = format!("3~2w {}", temp.path().display());
+    let cmd2 = format!("4~2w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["-e", &cmd1, "-e", &cmd2, "-e", "12q", LINES1])
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+
+    let expected = fs::read_to_string("tests/fixtures/sed/output/write_single_file")?;
+    assert_eq!(actual, expected, "Output did not match fixture");
+
+    Ok(())
+}
+
+#[test]
 fn write_single_file_no_newline() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
     let cmd = format!("w {}", temp.path().display());
