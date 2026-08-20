@@ -1801,23 +1801,16 @@ fn list_invalid_utf8_byte_locale() {
 // In-place editing
 #[test]
 fn in_place_edit_replace() -> std::io::Result<()> {
-    let mut temp = NamedTempFile::new()?;
-    writeln!(temp.as_file_mut(), "hello, world")?;
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
 
-    // Get the file path before converting to TempPath
-    let path = temp.path().to_path_buf();
+    std::fs::write(&path, "hello, world\n")?;
 
-    // Close temp file and preserve path
-    let temp_path = temp.into_temp_path();
-
-    // Call your tool on the path
     new_ucmd!()
         .args(&["-i", "-e", "s/world/universe/", path.to_str().unwrap()])
         .succeeds();
 
-    // Read the file using standard fs
     let actual = std::fs::read_to_string(&path)?;
-    temp_path.close()?; // Clean up
 
     assert_eq!(actual, "hello, universe\n");
     Ok(())
@@ -1825,13 +1818,11 @@ fn in_place_edit_replace() -> std::io::Result<()> {
 
 #[test]
 fn in_place_edit_backup() -> std::io::Result<()> {
-    let mut temp = NamedTempFile::new()?;
-    writeln!(temp.as_file_mut(), "hello, world")?;
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
 
-    let path = temp.path().to_path_buf();
-    let temp_path = temp.into_temp_path();
+    std::fs::write(&path, b"hello, world\n")?;
 
-    // Run the sed-like command with -i (in-place edit)
     new_ucmd!()
         .args(&[
             "-i",
@@ -1853,9 +1844,6 @@ fn in_place_edit_backup() -> std::io::Result<()> {
     ));
     let backup = std::fs::read_to_string(&backup_path)?;
     assert_eq!(backup, "hello, world\n");
-
-    temp_path.close()?; // Cleanup
-    std::fs::remove_file(backup_path)?; // Cleanup backup
 
     Ok(())
 }
