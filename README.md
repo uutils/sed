@@ -102,6 +102,9 @@ cargo test
 * The `a`, `i`, `=`, `l`, `q` and `r` commands support address range as an extension to POSIX.
 * The substitution command replacement group `\0` is a synonym for &.
 * An `F` command outputs the name of the file currently being processed.
+* The `p` command adds a missing newline.
+  (POSIX is silent; FreeBSD sed ignores the newline; original sed ignores
+  the line).
 * A `Q` command (optionally followed by an exit code) quits immediately.
 * The `q` command can be optionally followed by an exit code.
 * An `R` schedules reading the next line from the specified file.

@@ -1088,6 +1088,15 @@ fn test_e_command_with_arg_non_utf8_output_passthrough() {
         .stdout_is_bytes(b"\xff\na\n");
 }
 
+#[cfg(unix)]
+#[test]
+fn test_e_command_no_newline_ignored() {
+    new_ucmd!()
+        .args(&["3e printf hi", LINES1])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/e_command_no_newline_ignored");
+}
+
 ////////////////////////////////////////////////////////////
 // Transliteration: y
 check_output!(trans_simple, ["-e", r"y/0123456789/9876543210/", LINES1]);
@@ -1478,6 +1487,16 @@ fn test_branch_no_sub_non_posix() {
         .stderr_contains("invalid command code");
 }
 
+check_output!(
+    multiple_no_newline,
+    [
+        "-n",
+        "p",
+        "input/no-new-line.txt",
+        "input/no-new-line.txt",
+        "input/no-new-line.txt",
+    ]
+);
 ////////////////////////////////////////////////////////////
 // Text: a, c, i
 
@@ -1648,7 +1667,30 @@ check_output!(
 ////////////////////////////////////////////////////////////
 // r, R, w, W commands
 check_output!(read_ok, [format!("4r {LINES2}"), LINES1.to_string()]);
-check_output!(read_no_newline, [format!("4r input/no-new-line.txt"), LINES1.to_string()]);
+check_output!(read_no_newline, ["4r input/no-new-line.txt", LINES1]);
+// r Doesn't doesn't record lacking newline
+check_output!(
+    read_no_newline_update,
+    [
+        "-e",
+        "4r input/no-new-line.txt",
+        "-e",
+        "4r input/no-new-line.txt",
+        LINES1
+    ]
+);
+// r respects a lacking newline and adds it and also resets the state
+// to no newline needed.
+check_output!(
+    read_no_newline_respect,
+    [
+        "-e",
+        "s/^/i: /;r input/no-new-line.txt",
+        "-e",
+        "r input/no-new-line.txt",
+        "input/no-new-line.txt"
+    ]
+);
 check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
 check_output!(read_empty, ["6r input/empty", LINES1]);
 check_output!(

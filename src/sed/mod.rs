@@ -265,6 +265,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
         range_commands: Vec::new(),
         substitution_made: false,
         append_elements: Vec::new(),
+        rss: processor::RecordSeparatorState::default(),
     })
 }
 
