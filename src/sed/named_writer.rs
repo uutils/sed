@@ -55,16 +55,22 @@ impl NamedWriter {
         Ok(writer)
     }
 
-    /// Write a line to the file with a newline, returning descriptive errors.
-    pub fn write_line(&mut self, line: &str) -> UResult<()> {
-        self.write_line_bytes(line.as_bytes())
+    /// Write String to the file, possibly with a newline, returning errors.
+    pub fn write_line(&mut self, line: &str, newline: bool) -> UResult<()> {
+        self.write_line_bytes(line.as_bytes(), newline)
     }
 
-    /// Write bytes to the file with a newline, returning descriptive errors.
-    pub fn write_line_bytes(&mut self, line: &[u8]) -> UResult<()> {
+    /// Write bytes to the file, possibly with a newline, returning errors.
+    pub fn write_line_bytes(&mut self, line: &[u8], newline: bool) -> UResult<()> {
         self.writer
             .write_all(line)
-            .and_then(|()| self.writer.write_all(b"\n"))
+            .and_then(|()| {
+                if newline {
+                    self.writer.write_all(b"\n")
+                } else {
+                    Ok(())
+                }
+            })
             .map_err(|e| {
                 runtime_error::<()>(
                     &self.location,
@@ -109,9 +115,27 @@ mod tests {
         let path = file.path().to_path_buf();
         let writer = NamedWriter::new(path.clone(), ScriptLocation::default()).unwrap();
 
-        writer.borrow_mut().write_line_bytes(b"a\xE9").unwrap();
+        writer
+            .borrow_mut()
+            .write_line_bytes(b"a\xE9", true)
+            .unwrap();
         writer.borrow_mut().flush().unwrap();
 
         assert_eq!(fs::read(path).unwrap(), b"a\xE9\n");
+    }
+
+    #[test]
+    fn test_write_line_bytes_appends_no_newline() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        let writer = NamedWriter::new(path.clone(), ScriptLocation::default()).unwrap();
+
+        writer
+            .borrow_mut()
+            .write_line_bytes(b"a\xE9", false)
+            .unwrap();
+        writer.borrow_mut().flush().unwrap();
+
+        assert_eq!(fs::read(path).unwrap(), b"a\xE9");
     }
 }

@@ -1646,7 +1646,7 @@ check_output!(
 );
 
 ////////////////////////////////////////////////////////////
-// r, w commands
+// r, w, W commands
 check_output!(read_ok, [format!("4r {LINES2}"), LINES1.to_string()]);
 check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
 check_output!(read_empty, ["6r input/empty", LINES1]);
@@ -1702,6 +1702,23 @@ fn sandbox_rejects_write_command() -> std::io::Result<()> {
 }
 
 #[test]
+fn sandbox_rejects_first_line_write_command() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("W {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["--sandbox", &cmd, LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert!(actual.is_empty());
+
+    Ok(())
+}
+
+#[test]
 fn write_single_file() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
     let cmd = format!("3,12w {}", temp.path().display());
@@ -1713,6 +1730,23 @@ fn write_single_file() -> std::io::Result<()> {
 
     let expected = fs::read_to_string("tests/fixtures/sed/output/write_single_file")?;
     assert_eq!(actual, expected, "Output did not match fixture");
+
+    Ok(())
+}
+
+#[test]
+fn write_single_file_no_newline() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&[cmd.as_str(), "input/no-new-line.txt"])
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+
+    assert_eq!(actual, "Hello", "Output did not match expected");
 
     Ok(())
 }
@@ -1742,6 +1776,49 @@ fn write_two_files() -> std::io::Result<()> {
     assert_eq!(actual, expected, "Output 2 did not match fixture");
 
     Ok(())
+}
+
+#[test]
+fn write_first_line_newline() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("N;W {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["-n", "-e", &cmd])
+        .pipe_in("abc\ndef\n")
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert_eq!(actual, "abc\n");
+
+    Ok(())
+}
+
+#[test]
+fn write_first_line_no_newline() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let cmd = format!("W {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["-n", "-e", &cmd])
+        .pipe_in("abc")
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert_eq!(actual, "abc");
+
+    Ok(())
+}
+
+#[test]
+fn write_first_line_with_w_command_is_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "W /tmp/out"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `W'\n");
 }
 
 ////////////////////////////////////////////////////////////
