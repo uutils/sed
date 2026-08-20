@@ -29,6 +29,40 @@ use std::rc::Rc;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, set_exit_code};
 
+#[derive(Clone, Copy, Debug)]
+/// Track whether a separator is required before the next output record.
+// This implements the following documented GNU sed behavior:
+// "If sed prints a line without the terminating newline, it will
+// nevertheless print the missing newline as soon as more text is
+// sent to the same output stream."
+pub struct RecordSeparatorState {
+    previous_had_newline: bool,
+}
+
+impl Default for RecordSeparatorState {
+    fn default() -> Self {
+        Self {
+            previous_had_newline: true,
+        }
+    }
+}
+
+impl RecordSeparatorState {
+    /// Begin an output record, terminating the previous one when necessary.
+    pub fn new_record(&mut self, output: &mut OutputBuffer) -> io::Result<()> {
+        if !self.previous_had_newline {
+            output.write_bytes(b"\n")?;
+            self.previous_had_newline = true;
+        }
+        Ok(())
+    }
+
+    /// Record whether the output record ended with a newline.
+    pub fn has_newline(&mut self, has_newline: bool) {
+        self.previous_had_newline = has_newline;
+    }
+}
+
 /// Return the specified command variant or panic.
 // Example: let path = extract_variant!(command, Path);
 macro_rules! extract_variant {
@@ -164,13 +198,41 @@ fn applies(
     }
 }
 
-/// Write the specified chunk to the output for a given processing context.
-fn write_chunk(
+/// Output the specified record as a chunk.
+fn write_chunk_record(
     output: &mut OutputBuffer,
-    context: &ProcessingContext,
+    context: &mut ProcessingContext,
     chunk: &IOChunk,
 ) -> std::io::Result<()> {
+    // Completely empty chunks are no-ops regarding state.
+    if chunk.is_empty() && !chunk.is_newline_terminated() {
+        return Ok(());
+    }
+
+    context.rss.new_record(output)?;
     output.write_chunk(chunk)?;
+    context.rss.has_newline(chunk.is_newline_terminated());
+
+    if context.unbuffered {
+        output.flush()?;
+    }
+
+    Ok(())
+}
+
+/// Write one owned output record.
+fn write_buffer_record(
+    output: &mut OutputBuffer,
+    context: &mut ProcessingContext,
+    bytes: &[u8],
+    has_newline: bool,
+) -> UResult<()> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    context.rss.new_record(output)?;
+    output.write_bytes(bytes)?;
+    context.rss.has_newline(has_newline);
 
     if context.unbuffered {
         output.flush()?;
@@ -386,13 +448,13 @@ fn substitute(
         // prints the pre-execution text then executes, while 'ep' executes
         // then prints the result.
         if sub.print_flag && sub.p_before_e {
-            write_chunk(output, context, pattern)?;
+            write_chunk_record(output, context, pattern)?;
         }
         if sub.execute {
             execute_pattern_as_shell_command(pattern, command, context)?;
         }
         if sub.print_flag && !sub.p_before_e {
-            write_chunk(output, context, pattern)?;
+            write_chunk_record(output, context, pattern)?;
         }
 
         // Write to file if needed.
@@ -467,10 +529,21 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
     for elem in &context.append_elements {
         match elem {
             AppendElement::Text(text) => {
+                context.rss.new_record(output)?;
                 output.write_bytes(text.as_ref())?;
+                context.rss.has_newline(text.ends_with(b"\n"));
+            }
+            AppendElement::ReaderText(text) => {
+                context.rss.new_record(output)?;
+                output.write_bytes(text.as_ref())?;
+                // GNU sed doesn't care about read file \n ending.
+                context.rss.has_newline(true);
             }
             AppendElement::Path(path) => {
+                context.rss.new_record(output)?;
                 output.copy_file(path)?;
+                // GNU sed doesn't care about read file \n ending.
+                context.rss.has_newline(true);
             }
         }
     }
@@ -610,6 +683,7 @@ fn list(
 fn process_address_0(
     commands: Option<Rc<RefCell<Command>>>,
     output: &mut OutputBuffer,
+    context: &mut ProcessingContext,
 ) -> UResult<()> {
     // Prescan for zero-address which must produce output
     // before any input line is read.
@@ -624,7 +698,10 @@ fn process_address_0(
                     && cmd.addr2.is_none()
                 {
                     let path = extract_variant!(cmd, Path);
+                    context.rss.new_record(output)?;
                     output.copy_file(path)?;
+                    // GNU sed doesn't care about read file \n ending.
+                    context.rss.has_newline(true);
                 }
 
                 cmd.next.clone()
@@ -643,7 +720,7 @@ fn process_file(
     output: &mut OutputBuffer,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
-    process_address_0(commands.clone(), output)?;
+    process_address_0(commands.clone(), output, context)?;
 
     // Loop over the input lines as pattern space.
     'lines: while let Some(mut pattern) = reader.get_line()? {
@@ -708,7 +785,7 @@ fn process_file(
                     pattern.clear();
                     if command.addr2.is_none() || context.last_address || reader.last_line()? {
                         let text = extract_variant!(command, Text);
-                        output.write_bytes(text.as_ref())?;
+                        write_buffer_record(output, context, text, true)?;
                     }
                     break;
                 }
@@ -735,7 +812,7 @@ fn process_file(
                     }
                     CommandData::Text(cmd_bytes) => {
                         let shell_out = shell_stdout(cmd_bytes.to_vec(), &command, context)?;
-                        output.write_bytes(&shell_out)?;
+                        write_buffer_record(output, context, &shell_out, true)?;
                     }
                     _ => panic!("invalid 'e' command data"),
                 },
@@ -743,7 +820,7 @@ fn process_file(
                     // Output current input file name.
                     let mut bytes = context.input_name.as_os_str().as_encoded_bytes().to_vec();
                     bytes.push(b'\n');
-                    output.write_bytes(&bytes)?;
+                    write_buffer_record(output, context, &bytes, true)?;
                 }
                 'g' => {
                     // Replace pattern with the contents of the hold space.
@@ -770,11 +847,13 @@ fn process_file(
                 'i' => {
                     // Write text to standard output.
                     let text = extract_variant!(command, Text);
-                    output.write_bytes(text.as_ref())?;
+                    write_buffer_record(output, context, text, true)?;
                 }
                 'l' => {
                     let width = *extract_variant!(command, Number);
+                    context.rss.new_record(output)?;
                     list(output, &pattern, width, &command.location, context)?;
+                    context.rss.has_newline(true);
                 }
                 'n' => {
                     break;
@@ -792,14 +871,14 @@ fn process_file(
                     continue 'lines;
                 }
                 'p' => {
-                    write_chunk(output, context, &pattern)?;
+                    write_chunk_record(output, context, &pattern)?;
                 }
                 'P' => {
                     let line = pattern.as_bytes();
                     if let Some(pos) = memchr(b'\n', line) {
-                        output.write_bytes(&line[..=pos])?;
+                        write_buffer_record(output, context, &line[..=pos], true)?;
                     } else {
-                        write_chunk(output, context, &pattern)?;
+                        write_chunk_record(output, context, &pattern)?;
                     }
                 }
                 'q' => {
@@ -832,7 +911,7 @@ fn process_file(
                     if let Some(line) = reader.borrow_mut().read_line() {
                         context
                             .append_elements
-                            .push(AppendElement::Text(Rc::from(line)));
+                            .push(AppendElement::ReaderText(Rc::from(line)));
                     }
                 }
                 's' => {
@@ -916,7 +995,12 @@ fn process_file(
                 }
                 '=' => {
                     // Output current line number.
-                    output.write_str(format!("{}\n", context.line_number))?;
+                    write_buffer_record(
+                        output,
+                        context,
+                        format!("{}\n", context.line_number).as_bytes(),
+                        true,
+                    )?;
                 }
                 // The compilation should supply only valid codes.
                 _ => panic!("invalid command code"),
@@ -926,13 +1010,13 @@ fn process_file(
         }
 
         if !context.quiet {
-            write_chunk(output, context, &pattern)?;
+            write_chunk_record(output, context, &pattern)?;
         }
 
         flush_appends(output, context)?;
 
         if context.stop_processing {
-            output.flush_pending_newline()?;
+            context.rss.new_record(output)?;
             break;
         }
     }
@@ -944,10 +1028,7 @@ fn process_file(
     {
         let mut pending = action.prepend;
         pending.push(b'\n');
-        output.write_bytes(&pending)?;
-        if context.unbuffered {
-            output.flush()?;
-        }
+        write_buffer_record(output, context, &pending, true)?;
     }
 
     Ok(())
@@ -1005,7 +1086,7 @@ pub fn process_all_files(
         {
             let mut pending = action.prepend;
             pending.push(b'\n');
-            output.write_bytes(&pending)?;
+            write_buffer_record(output, context, &pending, true)?;
         }
 
         in_place.end()?;
@@ -1026,6 +1107,65 @@ mod tests {
     use super::*;
     use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempfile;
+
+    fn record_separator_output(
+        state: &mut RecordSeparatorState,
+        configure: impl FnOnce(&mut RecordSeparatorState),
+    ) -> String {
+        let mut file = tempfile().unwrap();
+        let mut output = OutputBuffer::new(Box::new(file.try_clone().unwrap()));
+        configure(state);
+        state.new_record(&mut output).unwrap();
+        output.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut written = String::new();
+        file.read_to_string(&mut written).unwrap();
+        written
+    }
+
+    #[test]
+    fn record_separator_default_does_not_emit_newline() {
+        let mut state = RecordSeparatorState::default();
+
+        assert_eq!(record_separator_output(&mut state, |_| {}), "");
+    }
+
+    #[test]
+    fn record_separator_terminates_unterminated_record() {
+        let mut state = RecordSeparatorState::default();
+
+        assert_eq!(
+            record_separator_output(&mut state, |state| state.has_newline(false)),
+            "\n"
+        );
+    }
+
+    #[test]
+    fn record_separator_emits_missing_newline_only_once() {
+        let mut state = RecordSeparatorState::default();
+        state.has_newline(false);
+        let mut file = tempfile().unwrap();
+        let mut output = OutputBuffer::new(Box::new(file.try_clone().unwrap()));
+
+        state.new_record(&mut output).unwrap();
+        state.new_record(&mut output).unwrap();
+        output.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut written = String::new();
+        file.read_to_string(&mut written).unwrap();
+
+        assert_eq!(written, "\n");
+    }
+
+    #[test]
+    fn record_separator_newline_terminated_record_needs_no_separator() {
+        let mut state = RecordSeparatorState::default();
+
+        assert_eq!(
+            record_separator_output(&mut state, |state| state.has_newline(true)),
+            ""
+        );
+    }
 
     #[test]
     fn test_readable_ascii_byte_named_escapes() {

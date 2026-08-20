@@ -11,6 +11,7 @@
 use crate::sed::error_handling::{ScriptLocation, runtime_error};
 use crate::sed::fast_regex::{Captures, Match, Regex};
 use crate::sed::named_io::{NamedReader, NamedWriter};
+use crate::sed::processor::RecordSeparatorState;
 use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::ScriptLineProvider;
 
@@ -72,13 +73,16 @@ pub struct ProcessingContext {
     pub substitution_made: bool,
     /// Elements to append at the end of each command processing cycle
     pub append_elements: Vec<AppendElement>,
+    /// State used to separate consecutive output records.
+    pub rss: RecordSeparatorState,
 }
 
 #[derive(Clone, Debug)]
 /// Elements that shall be appended at the end of each command processing cycle
 pub enum AppendElement {
-    Text(Rc<[u8]>), // The specified text bytes
-    Path(PathBuf),  // The contents of the specified file path
+    Text(Rc<[u8]>),       // Text from the a command
+    ReaderText(Rc<[u8]>), // One line from the R command
+    Path(PathBuf),        // The contents of the specified file path
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

@@ -593,7 +593,7 @@ pub struct OutputBuffer {
     #[cfg(unix)]
     mmap_chunk: Option<MmapOutput>, // Chunk to write
     #[cfg(test)]
-    low_level_flushes: usize, // Number of system call flushes
+    low_level_flushes: usize,       // Number of system call flushes
 }
 
 /// Threshold to use buffered writes for output
@@ -624,7 +624,6 @@ impl OutputBuffer {
     pub fn new(w: Box<dyn OutputWrite + 'static>) -> Self {
         Self {
             out: BufWriter::new(w),
-            pending_newline: false,
             #[cfg(test)]
             low_level_flushes: 0,
         }
@@ -826,11 +825,6 @@ impl OutputBuffer {
         Ok(())
     }
 
-    /// Write a deferred newline if the last output didn't end with one.
-    pub fn flush_pending_newline(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-
     /// Flush everything: pending mmap and buffered data.
     pub fn flush(&mut self) -> io::Result<()> {
         self.flush_mmap(WriteRange::Complete)?; // flush mmap if any
@@ -859,11 +853,6 @@ impl OutputBuffer {
                 Ok(())
             }
         }
-    }
-
-    /// Write a deferred newline if the last output didn't end with one.
-    pub fn flush_pending_newline(&mut self) -> io::Result<()> {
-        Ok(())
     }
 
     /// Flush everything: pending mmap and buffered data.
