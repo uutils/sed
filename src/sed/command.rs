@@ -10,7 +10,7 @@
 
 use crate::sed::error_handling::{ScriptLocation, runtime_error};
 use crate::sed::fast_regex::{Captures, Match, Regex};
-use crate::sed::named_writer::NamedWriter;
+use crate::sed::named_io::{NamedReader, NamedWriter};
 use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::ScriptLineProvider;
 
@@ -367,7 +367,8 @@ pub enum CommandData {
     BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't', 'T', '{'
     Label(Option<String>),                      // Label name for 'b', 't', 'T', ':'
     Path(PathBuf),                              // File path for 'r'
-    NamedWriter(Rc<RefCell<NamedWriter>>),      // File output for 'w'
+    NamedReader(Rc<RefCell<NamedReader>>),      // File input for 'R'
+    NamedWriter(Rc<RefCell<NamedWriter>>),      // File output for 'w', 'W'
     Number(usize),                              // Number for 'l', 'q', 'Q' (GNU)
     Substitution(Box<Substitution>),            // Substitute command 's'
     Text(Rc<[u8]>),                             // Text for 'a', 'c', 'i'

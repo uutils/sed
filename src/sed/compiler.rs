@@ -18,7 +18,7 @@ use crate::sed::delimited_parser::{
 };
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
 use crate::sed::fast_regex::Regex;
-use crate::sed::named_writer::NamedWriter;
+use crate::sed::named_io::{NamedReader, NamedWriter};
 use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::{ScriptLineProvider, ScriptValue};
 
@@ -1107,7 +1107,7 @@ fn compile_empty_command(
     Ok(CommandHandling::Continue)
 }
 
-// Handles r
+// Handles r, R
 fn compile_read_file_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
@@ -1118,7 +1118,11 @@ fn compile_read_file_command(
         return compilation_error(lines, line, ERR_SANDBOX);
     }
     let path = read_file_path(lines, line)?;
-    cmd.data = CommandData::Path(path);
+    cmd.data = if cmd.code == 'R' {
+        CommandData::NamedReader(NamedReader::new(path))
+    } else {
+        CommandData::Path(path)
+    };
     Ok(CommandHandling::Continue)
 }
 
@@ -1632,9 +1636,15 @@ fn get_cmd_spec(
             n_addr: 2,
             handler: compile_execute_command,
         }),
+        // F is a GNU extension
         'F' if !posix => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_empty_command,
+        }),
+        // R is a GNU extension
+        'R' if !posix => Ok(CommandSpec {
+            n_addr: 2,
+            handler: compile_read_file_command,
         }),
         'r' => Ok(CommandSpec {
             n_addr: if posix { 1 } else { 2 },
@@ -1648,6 +1658,7 @@ fn get_cmd_spec(
             n_addr: 2,
             handler: compile_label_command,
         }),
+        // W is a GNU extension
         'W' if !posix => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_write_file_command,

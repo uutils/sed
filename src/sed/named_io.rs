@@ -13,7 +13,7 @@ use crate::sed::error_handling::{ScriptLocation, runtime_error};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -21,8 +21,71 @@ use uucore::display::Quotable;
 use uucore::error::UResult;
 
 thread_local! {
-    /// Writers indexed by canonical output path, used to share duplicate writes.
+    /// Readers indexed by canonical input path, used to share state
+    /// between same-named path reads.
+    static READERS: RefCell<HashMap<PathBuf, Rc<RefCell<NamedReader>>>> = RefCell::new(HashMap::new());
+    /// Writers indexed by canonical output path, used to share same-named
+    /// paths and to flush writes.
     static WRITERS: RefCell<HashMap<PathBuf, Rc<RefCell<NamedWriter>>>> = RefCell::new(HashMap::new());
+}
+
+#[derive(Debug)]
+/// Reader that shares line-by-line state for GNU sed's R command.
+pub struct NamedReader {
+    path: PathBuf,
+    reader: Option<BufReader<File>>,
+    done: bool,
+}
+
+impl NamedReader {
+    /// Create or retrieve the reader associated with `path`.
+    pub fn new(path: PathBuf) -> Rc<RefCell<Self>> {
+        let canonical_path = fs::canonicalize(&path).unwrap_or(path);
+        READERS.with(|readers| {
+            readers
+                .borrow_mut()
+                .entry(canonical_path.clone())
+                .or_insert_with(|| {
+                    Rc::new(RefCell::new(Self {
+                        path: canonical_path,
+                        reader: None,
+                        done: false,
+                    }))
+                })
+                .clone()
+        })
+    }
+
+    /// Return the path associated with this reader.
+    pub fn original_path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Read the next line, including its newline. Missing files and read errors
+    /// are treated as end-of-file, as required by the R command.
+    pub fn read_line(&mut self) -> Option<Vec<u8>> {
+        if self.done {
+            return None;
+        }
+
+        if self.reader.is_none() {
+            if let Ok(file) = File::open(&self.path) {
+                self.reader = Some(BufReader::new(file));
+            } else {
+                self.done = true;
+                return None;
+            }
+        }
+
+        let mut line = Vec::new();
+        match self.reader.as_mut().unwrap().read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => {
+                self.done = true;
+                None
+            }
+            Ok(_) => Some(line),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -140,6 +203,62 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::{NamedTempFile, tempdir};
+
+    #[test]
+    fn test_reader_reads_lines_as_bytes() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        fs::write(&path, b"first\nsecond\xE9").unwrap();
+        let reader = NamedReader::new(path);
+
+        assert_eq!(reader.borrow_mut().read_line(), Some(b"first\n".to_vec()));
+        assert_eq!(
+            reader.borrow_mut().read_line(),
+            Some(b"second\xE9".to_vec())
+        );
+        assert_eq!(reader.borrow_mut().read_line(), None);
+        assert_eq!(reader.borrow_mut().read_line(), None);
+    }
+
+    #[test]
+    fn test_new_reuses_reader_and_shared_position_for_same_path() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        fs::write(&path, b"first\nsecond\n").unwrap();
+        let first = NamedReader::new(path.clone());
+        let second = NamedReader::new(path);
+
+        assert!(Rc::ptr_eq(&first, &second));
+        assert_eq!(first.borrow_mut().read_line(), Some(b"first\n".to_vec()));
+        assert_eq!(second.borrow_mut().read_line(), Some(b"second\n".to_vec()));
+    }
+
+    #[test]
+    fn test_new_reuses_reader_for_canonical_duplicate_path() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("input");
+        fs::write(&path, b"first\nsecond\n").unwrap();
+        let duplicate_path = dir.path().join(".").join("input");
+        let first = NamedReader::new(path.clone());
+        let second = NamedReader::new(duplicate_path);
+
+        assert!(Rc::ptr_eq(&first, &second));
+        assert_eq!(
+            first.borrow().original_path(),
+            fs::canonicalize(path).unwrap()
+        );
+        assert_eq!(first.borrow_mut().read_line(), Some(b"first\n".to_vec()));
+        assert_eq!(second.borrow_mut().read_line(), Some(b"second\n".to_vec()));
+    }
+
+    #[test]
+    fn test_reader_silently_ignores_missing_file() {
+        let dir = tempdir().unwrap();
+        let reader = NamedReader::new(dir.path().join("missing"));
+
+        assert_eq!(reader.borrow_mut().read_line(), None);
+        assert_eq!(reader.borrow_mut().read_line(), None);
+    }
 
     #[test]
     fn test_write_line_bytes_appends_newline() {

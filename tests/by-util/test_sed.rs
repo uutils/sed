@@ -1646,8 +1646,9 @@ check_output!(
 );
 
 ////////////////////////////////////////////////////////////
-// r, w, W commands
+// r, R, w, W commands
 check_output!(read_ok, [format!("4r {LINES2}"), LINES1.to_string()]);
+check_output!(read_no_newline, [format!("4r input/no-new-line.txt"), LINES1.to_string()]);
 check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
 check_output!(read_empty, ["6r input/empty", LINES1]);
 check_output!(
@@ -1665,6 +1666,25 @@ fn sandbox_rejects_read_command() {
         .args(&["--sandbox", &format!("1r {LINES2}"), LINES1])
         .fails()
         .stderr_contains("command not allowed with --sandbox");
+}
+
+check_output!(read_one, ["6R input/lines2", LINES1]);
+check_output!(
+    read_one_twice,
+    ["-e", "5R input/lines2", "-e", "7R input/lines2", LINES1]
+);
+check_output!(read_one_many, ["R input/lines2", LINES1]);
+check_output!(read_one_empty, ["R input/empty", LINES1]);
+check_output!(read_one_missing, ["R input/xyzzy42", LINES1]);
+check_output!(read_one_no_newline, ["R input/no-new-line.txt", LINES1]);
+
+#[test]
+fn read_one_line_rejected_in_posix_mode() {
+    new_ucmd!()
+        .args(&["--posix", "R /tmp/read-one-line"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `R'\n");
 }
 
 #[test]

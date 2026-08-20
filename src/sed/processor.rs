@@ -17,7 +17,7 @@ use crate::sed::error_handling::{ScriptLocation, input_runtime_error};
 use crate::sed::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::sed::fast_regex::Regex;
 use crate::sed::in_place::InPlace;
-use crate::sed::named_writer;
+use crate::sed::named_io;
 
 use memchr::memchr;
 use std::borrow::Cow;
@@ -826,6 +826,15 @@ fn process_file(
                         .append_elements
                         .push(AppendElement::Path(path.clone()));
                 }
+                'R' => {
+                    // Copy one line from the file to standard output later.
+                    let reader = extract_variant!(command, NamedReader);
+                    if let Some(line) = reader.borrow_mut().read_line() {
+                        context
+                            .append_elements
+                            .push(AppendElement::Text(Rc::from(line)));
+                    }
+                }
                 's' => {
                     substitute(&mut pattern, &command, context, output)?;
                 }
@@ -1007,7 +1016,7 @@ pub fn process_all_files(
     }
 
     // Flush all output files
-    named_writer::flush_all()?;
+    named_io::flush_all()?;
 
     Ok(())
 }
