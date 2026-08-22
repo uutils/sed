@@ -120,8 +120,13 @@ cargo test
 ### New extensions
 * Unicode characters can be specified in regular expression pattern, replacement
   and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
+
+### Incompatible extensions
+The `-U` or `--uutil-extensions` option enables useful extensions or bug fixes
+that aren't compatible with GNU sed or POSIX.
+
 * The `l` command lists Unicode characters using the `\uXXXX` and `\UXXXXXXXX`
-  sequences.
+  escapes rather than as octal UTF-8 byte sequences.
 
 ### Incompatibilities
 * Similarly to GNU _sed_, input is processed as raw bytes or as valid UTF-8

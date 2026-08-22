@@ -573,7 +573,8 @@ fn list(
 
     let mut list_line = ListLine::new(max_width);
 
-    if context.character_mode == CharacterMode::Byte {
+    if !context.uutil_extensions || context.character_mode == CharacterMode::Byte {
+        // List non-ASCII bytes in octal.
         for &byte in line.as_bytes() {
             if byte == b'\n' {
                 list_line.write_embedded_newline(output)?;
@@ -583,6 +584,7 @@ fn list(
             list_line.write_item(output, &out_str)?;
         }
     } else {
+        // List non-ASCII 8-bit characters in octal; Unicode in hex \u or \U.
         let line = line.as_str().map_err(|e| {
             input_runtime_error::<()>(
                 location,

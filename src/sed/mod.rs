@@ -114,6 +114,11 @@ pub fn uu_app() -> Command {
             arg!(-s --separate "Consider files as separate rather than as a long stream."),
             arg!(--sandbox "Operate in a sandbox by disabling e/r/w commands."),
             arg!(-u --unbuffered "Load minimal input data and flush output buffers regularly."),
+            Arg::new("uutil-extensions")
+                .short('U')
+                .long("uutil-extensions")
+                .help("Enable incompatible extensions.")
+                .action(clap::ArgAction::SetTrue),
             Arg::new("null-data")
                 .short('z')
                 .long("null-data")
@@ -243,6 +248,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
         sandbox: matches.get_flag("sandbox"),
         unbuffered: matches.get_flag("unbuffered"),
         null_data: matches.get_flag("null-data"),
+        uutil_extensions: matches.get_flag("uutil-extensions"),
 
         // Environment
         character_mode: character_mode_for_locale(&locale)?,
@@ -389,6 +395,7 @@ mod tests {
         assert!(!ctx.sandbox);
         assert!(!ctx.unbuffered);
         assert!(!ctx.null_data);
+        assert!(!ctx.uutil_extensions);
     }
 
     #[test]
@@ -406,6 +413,7 @@ mod tests {
             "-s",
             "--sandbox",
             "-u",
+            "-U",
             "-z",
         ]);
 
@@ -424,6 +432,7 @@ mod tests {
         assert!(ctx.sandbox);
         assert!(ctx.unbuffered);
         assert!(ctx.null_data);
+        assert!(ctx.uutil_extensions);
     }
 
     #[test]
