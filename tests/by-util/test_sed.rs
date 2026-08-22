@@ -1776,14 +1776,29 @@ fn filename_non_posix() {
         .stderr_contains("invalid command code");
 }
 
-/// List Unicode input under an explicit UTF-8 locale.
+/// List Unicode input under an explicit UTF-8 locale
+/// with uutil extensions enabled.
 #[test]
 fn list_unicode() {
     new_ucmd!()
         .env("LC_ALL", "C.UTF-8")
-        .args(&["l 60", "input/unicode"])
+        .args(&["--uutil-extensions", "l 60", "input/unicode"])
         .succeeds()
         .stdout_is_fixture_bytes("output/list_unicode");
+}
+
+// List Unicode input without uutil extensions should generate octal bytes.
+check_output!(list_unicode_octal, ["l 60", "input/unicode"]);
+
+/// List Unicode input without uutil extensions should generate octal bytes,
+/// even under an explicit UTF-8 locale.
+#[test]
+fn list_unicode_octal_env() {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["l 60", "input/unicode"])
+        .succeeds()
+        .stdout_is_fixture_bytes("output/list_unicode_octal");
 }
 
 /// List invalid UTF-8 bytes without decoding in byte mode.

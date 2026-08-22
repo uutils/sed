@@ -38,6 +38,7 @@ pub struct ProcessingContext {
     pub sandbox: bool,
     pub unbuffered: bool,
     pub null_data: bool,
+    pub uutil_extensions: bool,
 
     // Other context
     /// Currently processed input file name (not script)
