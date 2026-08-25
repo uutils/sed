@@ -49,6 +49,19 @@ jobs:
 
     # Omit installing part of https://github.com/actions/runner-images/tree/main/images/ubuntu
 
+    ### Locales
+    # Several testsuite scripts guard themselves with require_*_locale_ and
+    # silently skip when the locale is missing, which hides both regressions
+    # and improvements in the multibyte code paths.
+    - name: Generate the locales required by the testsuite
+      shell: bash
+      run: |
+        ## Generate the locales required by the testsuite
+        sudo localedef -i en_US -f UTF-8 en_US.UTF-8
+        sudo localedef -i ru_RU -f UTF-8 ru_RU.UTF-8
+        sudo localedef -i el_GR -f ISO-8859-7 el_GR.iso88597
+        locale -a
+
     ### Build
     - name: Build Rust sed binary
       shell: bash

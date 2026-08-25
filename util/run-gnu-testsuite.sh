@@ -56,6 +56,11 @@ usage() {
     echo "Setup:"
     echo "  To get the GNU sed testsuite for comprehensive testing:"
     echo "    git clone https://github.com/mirror/sed.git ../gnu.sed"
+    echo ""
+    echo "  Multibyte tests are skipped unless these locales are installed:"
+    echo "    sudo localedef -i en_US -f UTF-8 en_US.UTF-8"
+    echo "    sudo localedef -i ru_RU -f UTF-8 ru_RU.UTF-8"
+    echo "    sudo localedef -i el_GR -f ISO-8859-7 el_GR.iso88597"
 }
 
 log_info() {
@@ -352,6 +357,10 @@ require_ru_utf8_locale_() {
 }
 
 require_el_iso88597_locale_() {
+    # Check if el_GR.iso88597 locale is available (glibc may spell it iso-88597)
+    if locale -a 2>/dev/null | grep -qi 'el_GR\.iso-\?88597'; then
+        return 0
+    fi
     skip_ "el_GR.iso88597 locale not available"
 }
 
