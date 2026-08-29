@@ -18,6 +18,7 @@ use crate::sed::delimited_parser::{
 };
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
 use crate::sed::fast_regex::Regex;
+use crate::sed::named_reader::NamedReader;
 use crate::sed::named_writer::NamedWriter;
 use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::{ScriptLineProvider, ScriptValue};
@@ -1122,6 +1123,21 @@ fn compile_read_file_command(
     Ok(CommandHandling::Continue)
 }
 
+// Handles R
+fn compile_read_line_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    if context.sandbox {
+        return compilation_error(lines, line, ERR_SANDBOX);
+    }
+    let path = read_file_path(lines, line)?;
+    cmd.data = CommandData::NamedReader(NamedReader::new(path));
+    Ok(CommandHandling::Continue)
+}
+
 // Handles w
 fn compile_write_file_command(
     lines: &mut ScriptLineProvider,
@@ -1635,6 +1651,10 @@ fn get_cmd_spec(
         'F' if !posix => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_empty_command,
+        }),
+        'R' if !posix => Ok(CommandSpec {
+            n_addr: 2,
+            handler: compile_read_line_command,
         }),
         'r' => Ok(CommandSpec {
             n_addr: if posix { 1 } else { 2 },

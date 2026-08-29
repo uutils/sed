@@ -821,6 +821,15 @@ fn process_file(
                     context.quiet = true;
                     break;
                 }
+                'R' => {
+                    // Queue the file's next line for output at end of cycle.
+                    let reader = extract_variant!(command, NamedReader);
+                    if let Some(line) = reader.borrow_mut().next_line() {
+                        context
+                            .append_elements
+                            .push(AppendElement::Text(line.into()));
+                    }
+                }
                 'r' => {
                     // Copy the file to standard output at a later point.
                     let path = extract_variant!(command, Path);

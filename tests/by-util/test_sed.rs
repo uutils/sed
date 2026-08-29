@@ -1862,6 +1862,48 @@ fn write_first_line_with_w_command_is_non_posix() {
         .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `W'\n");
 }
 
+#[test]
+fn read_one_line_reads_successive_lines() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    fs::write(temp.path(), "one\ntwo\n")?;
+    let cmd = format!("R {}", temp.path().display());
+
+    // One line of the file is queued per cycle; the third cycle finds EOF.
+    new_ucmd!()
+        .args(&["-e", &cmd])
+        .pipe_in("a\nb\nc\n")
+        .succeeds()
+        .stdout_is("a\none\nb\ntwo\nc\n");
+
+    Ok(())
+}
+
+#[test]
+fn read_one_line_missing_file_is_silent() {
+    new_ucmd!()
+        .args(&["-e", "R /nonexistent/xyzzy-42-does-not-exist"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+}
+
+#[test]
+fn sandbox_rejects_read_one_line_command() {
+    new_ucmd!()
+        .args(&["--sandbox", "R /tmp/out", LINES1])
+        .fails()
+        .stderr_contains("command not allowed with --sandbox");
+}
+
+#[test]
+fn read_one_line_with_r_command_is_non_posix() {
+    new_ucmd!()
+        .args(&["--posix", "R /tmp/out"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `R'\n");
+}
+
 ////////////////////////////////////////////////////////////
 // =, l, F commands
 check_output!(number_continuous, ["/l2_/=", LINES1, LINES2]);
