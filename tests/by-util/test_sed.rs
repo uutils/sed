@@ -636,14 +636,26 @@ fn subst_word() {
         .stdout_is_fixture_bytes("output/subst_word");
 }
 
-/// Reject FancyRegex-only substitution patterns in byte mode.
+/// Match address back-references when the locale selects byte mode.
 #[test]
-fn subst_backref_rejected_in_c_locale() {
+fn address_backref_allowed_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-n", r"/\(a\)b\1/p"])
+        .pipe_in("aba\nabc\n")
+        .succeeds()
+        .stdout_is_bytes(b"aba\n");
+}
+
+/// Substitute byte back-references without requiring valid UTF-8 input.
+#[test]
+fn subst_backref_matches_invalid_utf8_in_c_locale() {
     new_ucmd!()
         .env("LC_ALL", "C")
         .args(&["-e", r"s/\(.\)\1/X/"])
-        .fails()
-        .stderr_contains("back-references are not supported in byte mode");
+        .pipe_in(b"\xE9\xE9\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"X\n");
 }
 
 /// Allow substitution back-references when the locale selects UTF-8 mode.

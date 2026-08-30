@@ -39,6 +39,54 @@ fn byte_regex_pattern(pattern: &[u8]) -> String {
     out
 }
 
+/// Map each byte to the Unicode scalar with the same value.
+///
+/// `fancy_regex` only accepts UTF-8 strings. Using a one-scalar-per-byte
+/// representation lets its back-reference engine operate in byte mode while
+/// keeping byte identity intact, including for invalid UTF-8 input.
+fn byte_fancy_text(bytes: &[u8]) -> (String, Vec<usize>) {
+    let mut text = String::with_capacity(bytes.len());
+    let mut byte_offsets = Vec::with_capacity(bytes.len() + 1);
+    byte_offsets.push(0);
+
+    for (index, &byte) in bytes.iter().enumerate() {
+        let character = char::from(byte);
+        text.push(character);
+        for _ in 1..character.len_utf8() {
+            byte_offsets.push(index);
+        }
+        byte_offsets.push(index + 1);
+    }
+
+    (text, byte_offsets)
+}
+
+fn mapped_fancy_match<'t>(
+    matched: fancy_regex::Match<'_>,
+    haystack: &'t [u8],
+    byte_offsets: &[usize],
+) -> Match<'t> {
+    let start = byte_offsets[matched.start()];
+    let end = byte_offsets[matched.end()];
+    Match::from_bytes(start, end, &haystack[start..end])
+}
+
+fn mapped_fancy_captures<'t>(
+    captures: &FancyCaptures<'_>,
+    haystack: &'t [u8],
+    byte_offsets: &[usize],
+) -> Captures<'t> {
+    Captures::MappedByte(
+        (0..captures.len())
+            .map(|index| {
+                captures
+                    .get(index)
+                    .map(|matched| mapped_fancy_match(matched, haystack, byte_offsets))
+            })
+            .collect(),
+    )
+}
+
 /// REs requiring the fancy_regex capabilities rather than the
 /// faster regex::bytes engine.
 // False positives only result in a small performance pessimization,
@@ -214,6 +262,7 @@ pub fn remove_escapes(pattern: &[u8]) -> Vec<u8> {
 pub enum Regex {
     Literal(LiteralMatcher), // Fastest: literal bytes
     Byte(ByteRegex),         // Slower: byte-based RE
+    FancyByte(FancyRegex),   // Byte-mapped RE supporting back-references
     Fancy(FancyRegex),       // Slowest: RE supporting UTF-8 and back-references
 }
 
@@ -246,9 +295,10 @@ impl Regex {
         let pattern = pattern.as_ref();
         if NEEDS_FANCY_RE.is_match(pattern) {
             if character_mode == CharacterMode::Byte {
-                return Err(USimpleError::new(
-                    2,
-                    "back-references are not supported in byte mode",
+                let (pattern, _) = byte_fancy_text(pattern);
+                let pattern = &ensure_dotall(&pattern);
+                return Ok(Self::FancyByte(
+                    FancyRegex::new(pattern).map_err(|e| USimpleError::new(2, e.to_string()))?,
                 ));
             }
             let pattern =
@@ -286,6 +336,11 @@ impl Regex {
         match self {
             Regex::Literal(m) => Ok(m.is_match(chunk.as_bytes())),
             Regex::Byte(re) => Ok(re.is_match(chunk.as_bytes())),
+            Regex::FancyByte(re) => {
+                let (text, _) = byte_fancy_text(chunk.as_bytes());
+                re.is_match(&text)
+                    .map_err(|e| USimpleError::new(2, e.to_string()))
+            }
             Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
                 re.is_match(text)
@@ -308,6 +363,13 @@ impl Regex {
 
             Regex::Byte(re) => Ok(CaptureMatches::Byte(re.captures_iter(chunk.as_bytes()))),
 
+            Regex::FancyByte(re) => {
+                let haystack = chunk.as_bytes();
+                Ok(CaptureMatches::MappedByte(Box::new(
+                    MappedByteCaptureMatches::new(re, haystack),
+                )))
+            }
+
             Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
                 Ok(CaptureMatches::Fancy(re.captures_iter(text)))
@@ -320,6 +382,7 @@ impl Regex {
         match self {
             Regex::Literal(_) => 1, // Only group 0
             Regex::Byte(re) => re.captures_len(),
+            Regex::FancyByte(re) => re.captures_len(),
             Regex::Fancy(re) => re.captures_len(),
         }
     }
@@ -340,6 +403,20 @@ impl Regex {
             Regex::Byte(re) => {
                 let bytes = chunk.as_bytes();
                 Ok(re.captures(bytes).map(Captures::Byte))
+            }
+
+            Regex::FancyByte(re) => {
+                let haystack = chunk.as_bytes();
+                let (text, byte_offsets) = byte_fancy_text(haystack);
+                match re.captures(&text) {
+                    Ok(Some(captures)) => Ok(Some(mapped_fancy_captures(
+                        &captures,
+                        haystack,
+                        &byte_offsets,
+                    ))),
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(USimpleError::new(2, e.to_string())),
+                }
             }
 
             Regex::Fancy(re) => {
@@ -377,6 +454,18 @@ impl Regex {
                 }
             }
 
+            Regex::FancyByte(re) => {
+                let haystack = chunk.as_bytes();
+                let (text, byte_offsets) = byte_fancy_text(haystack);
+                match re.find(&text) {
+                    Ok(Some(matched)) => {
+                        Ok(Some(mapped_fancy_match(matched, haystack, &byte_offsets)))
+                    }
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(USimpleError::new(2, e.to_string())),
+                }
+            }
+
             Regex::Fancy(re) => {
                 let text = chunk.as_str()?;
                 match re.find(text) {
@@ -393,7 +482,78 @@ impl Regex {
 pub enum CaptureMatches<'t> {
     Literal(Box<dyn Iterator<Item = UResult<Captures<'t>>> + 't>),
     Byte(ByteCaptureMatches<'t, 't>),
+    MappedByte(Box<dyn Iterator<Item = UResult<Captures<'t>>> + 't>),
     Fancy(FancyCaptureMatches<'t, 't>),
+}
+
+struct MappedByteCaptureMatches<'r, 't> {
+    regex: &'r FancyRegex,
+    text: String,
+    haystack: &'t [u8],
+    byte_offsets: Vec<usize>,
+    last_end: usize,
+    last_match: Option<usize>,
+}
+
+impl<'r, 't> MappedByteCaptureMatches<'r, 't> {
+    fn new(regex: &'r FancyRegex, haystack: &'t [u8]) -> Self {
+        let (text, byte_offsets) = byte_fancy_text(haystack);
+        Self {
+            regex,
+            text,
+            haystack,
+            byte_offsets,
+            last_end: 0,
+            last_match: None,
+        }
+    }
+}
+
+impl<'t> Iterator for MappedByteCaptureMatches<'_, 't> {
+    type Item = UResult<Captures<'t>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.last_end > self.text.len() {
+                return None;
+            }
+
+            let search_start = self.last_end;
+            let captures = match self.regex.captures_from_pos(&self.text, search_start) {
+                Ok(Some(captures)) => captures,
+                Ok(None) => return None,
+                Err(e) => {
+                    self.last_end = self.text.len() + 1;
+                    return Some(Err(USimpleError::new(
+                        2,
+                        format!("error retrieving RE captures: {e}"),
+                    )));
+                }
+            };
+            let matched = captures
+                .get(0)
+                .expect("captures always include the full match");
+
+            if matched.start() == matched.end() {
+                self.last_end = self.text[matched.end()..]
+                    .chars()
+                    .next()
+                    .map_or(self.text.len() + 1, |c| matched.end() + c.len_utf8());
+                if Some(matched.end()) == self.last_match {
+                    continue;
+                }
+            } else {
+                self.last_end = matched.end();
+            }
+
+            self.last_match = Some(matched.end());
+            return Some(Ok(mapped_fancy_captures(
+                &captures,
+                self.haystack,
+                &self.byte_offsets,
+            )));
+        }
+    }
 }
 
 impl<'t> Iterator for CaptureMatches<'t> {
@@ -403,6 +563,7 @@ impl<'t> Iterator for CaptureMatches<'t> {
         match self {
             CaptureMatches::Literal(iter) => iter.next(),
             CaptureMatches::Byte(iter) => iter.next().map(|caps| Ok(Captures::Byte(caps))),
+            CaptureMatches::MappedByte(iter) => iter.next(),
             CaptureMatches::Fancy(iter) => match iter.next() {
                 Some(Ok(caps)) => Some(Ok(Captures::Fancy(caps))),
                 Some(Err(e)) => Some(Err(USimpleError::new(
@@ -471,6 +632,7 @@ impl<'t> Match<'t> {
 pub enum Captures<'t> {
     Literal(Match<'t>), // only group 0
     Byte(ByteCaptures<'t>),
+    MappedByte(Vec<Option<Match<'t>>>),
     Fancy(FancyCaptures<'t>),
 }
 
@@ -485,6 +647,7 @@ impl<'t> Captures<'t> {
                 Some(m) => Ok(Some(Match::from_bytes(m.start(), m.end(), m.as_bytes()))),
                 None => Ok(None),
             },
+            Captures::MappedByte(captures) => Ok(captures.get(i).cloned().flatten()),
             Captures::Fancy(caps) => match caps.get(i) {
                 Some(m) => Ok(Some(Match::from_str(m.start(), m.end(), m.as_str()))),
                 None => Ok(None),
@@ -497,6 +660,7 @@ impl<'t> Captures<'t> {
         match self {
             Captures::Literal(_) => 1,
             Captures::Byte(caps) => caps.len(),
+            Captures::MappedByte(captures) => captures.len(),
             Captures::Fancy(caps) => caps.len(),
         }
     }
@@ -507,6 +671,7 @@ impl<'t> Captures<'t> {
         match self {
             Captures::Literal(_) => false, // A literal match always has group 0
             Captures::Byte(caps) => caps.len() == 0,
+            Captures::MappedByte(captures) => captures.is_empty(),
             Captures::Fancy(caps) => caps.len() == 0,
         }
     }
@@ -622,11 +787,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_fancy_in_byte_mode() {
-        let err = Regex::new(r"(.)\1", CharacterMode::Byte)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("back-references are not supported in byte mode"));
+    fn assert_fancy_byte() {
+        let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
+        assert!(matches!(re, Regex::FancyByte(_)));
+    }
+
+    #[test]
+    fn fancy_byte_matches_and_captures_invalid_utf8() {
+        let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"\xFF\xFF".to_vec(), true);
+
+        assert!(re.is_match(&mut chunk).unwrap());
+        let captures = re.captures(&chunk).unwrap().expect("captures");
+        let full_match = captures.get(0).unwrap().expect("full match");
+        let group = captures.get(1).unwrap().expect("capture group");
+
+        assert_eq!((full_match.start(), full_match.end()), (0, 2));
+        assert_eq!(full_match.as_bytes(), b"\xFF\xFF");
+        assert_eq!((group.start(), group.end()), (0, 1));
+        assert_eq!(group.as_bytes(), b"\xFF");
     }
 
     #[test]
