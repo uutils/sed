@@ -3041,6 +3041,31 @@ mod tests {
         assert!(err.to_string().contains(ERR_SANDBOX));
     }
 
+    // compile_read_line_command (R)
+    #[test]
+    fn test_compile_read_line_command_rejected_under_sandbox() {
+        let (mut lines, mut chars) = make_providers("R input.txt");
+        let mut cmd = Command::default();
+        let mut context = ctx();
+        context.sandbox = true;
+
+        let err =
+            compile_read_line_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
+        assert!(err.to_string().contains(ERR_SANDBOX));
+    }
+
+    #[test]
+    fn test_compile_read_line_command_sets_named_reader() {
+        let (mut lines, mut chars) = make_providers("R input.txt");
+        let mut cmd = Command::default();
+        let mut context = ctx();
+
+        let handling =
+            compile_read_line_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        assert!(matches!(handling, CommandHandling::Continue));
+        assert!(matches!(cmd.data, CommandData::NamedReader(_)));
+    }
+
     // compile_write_file_command
     #[test]
     fn test_compile_write_file_command_rejected_under_sandbox() {

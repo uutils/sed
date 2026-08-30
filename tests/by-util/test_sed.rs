@@ -1904,6 +1904,39 @@ fn read_one_line_with_r_command_is_non_posix() {
         .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `R'\n");
 }
 
+#[test]
+fn read_one_line_appends_even_with_suppressed_autoprint() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    fs::write(temp.path(), "x1\nx2\n")?;
+    let cmd = format!("R {}", temp.path().display());
+
+    // `-n` suppresses the pattern space auto-print, but `R` still queues the
+    // file's lines to the output stream (like `a`/`r`).
+    new_ucmd!()
+        .args(&["-n", "-e", &cmd])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("x1\nx2\n");
+
+    Ok(())
+}
+
+#[test]
+fn read_one_line_stops_when_file_shorter_than_input() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    fs::write(temp.path(), "only\n")?;
+    let cmd = format!("R {}", temp.path().display());
+
+    // The file has one line; later cycles read nothing and emit no extra text.
+    new_ucmd!()
+        .args(&["-e", &cmd])
+        .pipe_in("a\nb\nc\n")
+        .succeeds()
+        .stdout_is("a\nonly\nb\nc\n");
+
+    Ok(())
+}
+
 ////////////////////////////////////////////////////////////
 // =, l, F commands
 check_output!(number_continuous, ["/l2_/=", LINES1, LINES2]);
