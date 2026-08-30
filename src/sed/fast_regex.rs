@@ -810,6 +810,85 @@ mod tests {
     }
 
     #[test]
+    fn fancy_byte_find_maps_non_ascii_offsets() {
+        let re = Regex::new(b"(\xE9)\\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"0\xE9\xE91".to_vec(), true);
+
+        let matched = re.find(&chunk).unwrap().expect("match");
+
+        assert_eq!((matched.start(), matched.end()), (1, 3));
+        assert_eq!(matched.as_bytes(), b"\xE9\xE9");
+        assert_eq!(re.captures_len(), 2);
+    }
+
+    #[test]
+    fn fancy_byte_captures_optional_groups() {
+        let re = Regex::new(r"(a)?(b)\2", CharacterMode::Byte).unwrap();
+        let chunk = IOChunk::new_from_str("bb");
+
+        let captures = re.captures(&chunk).unwrap().expect("captures");
+
+        assert_eq!(captures.len(), 3);
+        assert!(!captures.is_empty());
+        assert!(captures.get(1).unwrap().is_none());
+        assert_eq!(captures.get(2).unwrap().unwrap().as_bytes(), b"b");
+        assert!(captures.get(3).unwrap().is_none());
+    }
+
+    #[test]
+    fn fancy_byte_captures_iter_maps_multiple_invalid_utf8_matches() {
+        let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"\xFF\xFFaa\x80\x80".to_vec(), true);
+
+        let groups: Vec<Vec<u8>> = re
+            .captures_iter(&chunk)
+            .unwrap()
+            .map(|captures| {
+                captures
+                    .unwrap()
+                    .get(1)
+                    .unwrap()
+                    .expect("capture group")
+                    .as_bytes()
+                    .to_vec()
+            })
+            .collect();
+
+        assert_eq!(groups, [b"\xFF".to_vec(), b"a".to_vec(), b"\x80".to_vec()]);
+    }
+
+    #[test]
+    fn fancy_byte_captures_iter_advances_after_empty_matches() {
+        let re = Regex::new(r"()\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"\xFFa".to_vec(), true);
+
+        let matches: Vec<(usize, usize)> = re
+            .captures_iter(&chunk)
+            .unwrap()
+            .map(|captures| {
+                let captures = captures.unwrap();
+                let matched = captures.get(0).unwrap().expect("full match");
+                (matched.start(), matched.end())
+            })
+            .collect();
+
+        assert_eq!(matches, [(0, 0), (1, 1), (2, 2)]);
+    }
+
+    #[test]
+    fn fancy_byte_reports_no_match() {
+        let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("ab");
+
+        assert!(!re.is_match(&mut chunk).unwrap());
+        assert!(re.captures(&chunk).unwrap().is_none());
+        assert!(re.find(&chunk).unwrap().is_none());
+    }
+
+    #[test]
     fn assert_literal() {
         let re = Regex::new(r"x\.", CharacterMode::Utf8).unwrap();
         assert!(matches!(re, Regex::Literal(_)));
