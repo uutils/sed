@@ -913,7 +913,7 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "textwrap",
- "uucore",
+ "uucore 0.11.0",
 ]
 
 [[package]]
@@ -1161,7 +1161,6 @@ dependencies = [
  "fluent",
  "fluent-syntax",
  "glob",
- "libc",
  "nix",
  "num-traits",
  "os_display",
@@ -1171,7 +1170,28 @@ dependencies = [
  "thiserror",
  "unic-langid",
  "unicode-width",
- "uucore_procs",
+ "uucore_procs 0.10.0",
+ "wild",
+]
+
+[[package]]
+name = "uucore"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9962a5082023875505c7b74a6ef8b5b5d50081b7b09b998973f6da7b9514eed8"
+dependencies = [
+ "clap",
+ "fluent",
+ "fluent-syntax",
+ "libc",
+ "nix",
+ "os_display",
+ "rustc-hash",
+ "rustix",
+ "thiserror",
+ "unic-langid",
+ "unicode-width",
+ "uucore_procs 0.11.0",
  "wild",
 ]
 
@@ -1186,7 +1206,7 @@ dependencies = [
  "sed",
  "similar",
  "tempfile",
- "uucore",
+ "uucore 0.11.0",
  "uufuzz",
 ]
 
@@ -1195,6 +1215,16 @@ name = "uucore_procs"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "907f1b828046ea42cdb4bd898f05b48ab873a41937bf75ebe12f09a5bf411f58"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "uucore_procs"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92ef57c6e2299a853551cabee2fae52f340575621903d5250271738773c6a6e6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1211,7 +1241,7 @@ dependencies = [
  "rustix",
  "similar",
  "tempfile",
- "uucore",
+ "uucore 0.10.0",
 ]
 
 [[package]]
