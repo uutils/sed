@@ -913,7 +913,7 @@ dependencies = [
  "tempfile",
  "terminal_size",
  "textwrap",
- "uucore 0.11.0",
+ "uucore",
 ]
 
 [[package]]
@@ -1152,15 +1152,16 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uucore"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e97dd0fd8bb2ed12affba9f956c3b94b8ad3f9432746717475420e916ae0b8d4"
+checksum = "9962a5082023875505c7b74a6ef8b5b5d50081b7b09b998973f6da7b9514eed8"
 dependencies = [
  "bigdecimal",
  "clap",
  "fluent",
  "fluent-syntax",
  "glob",
+ "libc",
  "nix",
  "num-traits",
  "os_display",
@@ -1170,28 +1171,7 @@ dependencies = [
  "thiserror",
  "unic-langid",
  "unicode-width",
- "uucore_procs 0.10.0",
- "wild",
-]
-
-[[package]]
-name = "uucore"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9962a5082023875505c7b74a6ef8b5b5d50081b7b09b998973f6da7b9514eed8"
-dependencies = [
- "clap",
- "fluent",
- "fluent-syntax",
- "libc",
- "nix",
- "os_display",
- "rustc-hash",
- "rustix",
- "thiserror",
- "unic-langid",
- "unicode-width",
- "uucore_procs 0.11.0",
+ "uucore_procs",
  "wild",
 ]
 
@@ -1206,18 +1186,8 @@ dependencies = [
  "sed",
  "similar",
  "tempfile",
- "uucore 0.11.0",
+ "uucore",
  "uufuzz",
-]
-
-[[package]]
-name = "uucore_procs"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "907f1b828046ea42cdb4bd898f05b48ab873a41937bf75ebe12f09a5bf411f58"
-dependencies = [
- "proc-macro2",
- "quote",
 ]
 
 [[package]]
@@ -1232,16 +1202,16 @@ dependencies = [
 
 [[package]]
 name = "uufuzz"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72d4c5bac0f8ccabaa8e8ccbf2724446f8b007c06ad343fabfe1a1525a4ff4f2"
+checksum = "89cefc6af3f159159c3e5927d87da2bdc7430b92bf05ee4d180ffc09ec6b332b"
 dependencies = [
  "console",
  "rand",
  "rustix",
  "similar",
  "tempfile",
- "uucore 0.10.0",
+ "uucore",
 ]
 
 [[package]]
