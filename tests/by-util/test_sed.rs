@@ -1930,6 +1930,190 @@ fn list_invalid_utf8_byte_locale() {
         .stdout_is_bytes(b"\\351$\n");
 }
 
+/// Without -l the wrap length defaults to 70, so lines fold after 69
+/// characters followed by a backslash.
+#[test]
+fn list_default_wrap_length() {
+    new_ucmd!()
+        .args(&["-n", "l"])
+        .pipe_in("a".repeat(75))
+        .succeeds()
+        .stdout_is_bytes(format!("{}\\\n{}$\n", "a".repeat(69), "a".repeat(6)));
+}
+
+/// The -l option sets the wrap length used by an l command without an argument.
+#[test]
+fn list_length_option() {
+    new_ucmd!()
+        .args(&["-n", "-l", "5", "l"])
+        .pipe_in(b"abcdefghij\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"abcd\\\nefgh\\\nij$\n");
+}
+
+/// GNU sed documents the long form of -l as --line-length.
+#[test]
+fn list_line_length_option() {
+    new_ucmd!()
+        .args(&["-n", "--line-length=5", "l"])
+        .pipe_in(b"abcdefghij\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"abcd\\\nefgh\\\nij$\n");
+}
+
+/// The earlier long option name --length remains accepted as an alias.
+#[test]
+fn list_length_option_alias() {
+    new_ucmd!()
+        .args(&["-n", "--length=5", "l"])
+        .pipe_in(b"abcdefghij\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"abcd\\\nefgh\\\nij$\n");
+}
+
+/// A -l length of zero means never wrap long lines.
+#[test]
+fn list_length_option_zero_never_wraps() {
+    new_ucmd!()
+        .args(&["-n", "-l", "0", "l"])
+        .pipe_in("a".repeat(80))
+        .succeeds()
+        .stdout_is_bytes(format!("{}$\n", "a".repeat(80)));
+}
+
+/// An l command argument of zero means never wrap long lines.
+#[test]
+fn list_command_length_zero_never_wraps() {
+    new_ucmd!()
+        .args(&["-n", "l 0"])
+        .pipe_in("a".repeat(80))
+        .succeeds()
+        .stdout_is_bytes(format!("{}$\n", "a".repeat(80)));
+}
+
+/// A wrap length of one folds before every character, so the first fold
+/// comes before any output has been emitted for the line.
+#[test]
+fn list_length_option_one() {
+    new_ucmd!()
+        .args(&["-n", "-l", "1", "l"])
+        .pipe_in(b"abc\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"\\\na\\\nb\\\nc$\n");
+}
+
+/// An l command argument of one folds before every character, like -l 1.
+#[test]
+fn list_command_length_one() {
+    new_ucmd!()
+        .args(&["-n", "l 1"])
+        .pipe_in(b"abc\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"\\\na\\\nb\\\nc$\n");
+}
+
+/// The length argument of an l command takes precedence over -l.  Both
+/// lengths fold this input, at different columns, so the expected bytes
+/// match only the l argument and not the -l option.
+#[test]
+fn list_command_length_overrides_option() {
+    new_ucmd!()
+        .args(&["-n", "-l", "9", "l 4"])
+        .pipe_in(b"abcdefghijklmnopqrst\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"abc\\\ndef\\\nghi\\\njkl\\\nmno\\\npqr\\\nst$\n");
+}
+
+/// With a wrap length of zero the rendered line is drained to the output
+/// every few KB instead of being held whole.  The terminator must still
+/// follow the complete line whether its length falls just below, at, or
+/// just above a multiple of the drain threshold.
+#[test]
+fn list_length_zero_drains_long_line() {
+    // LIST_FLUSH_THRESHOLD in src/sed/processor.rs.
+    const THRESHOLD: usize = 4096;
+    for length in [
+        THRESHOLD - 1,
+        THRESHOLD,
+        THRESHOLD + 1,
+        2 * THRESHOLD - 1,
+        2 * THRESHOLD,
+        2 * THRESHOLD + 1,
+    ] {
+        new_ucmd!()
+            .args(&["-n", "-l", "0", "l"])
+            .pipe_in("a".repeat(length))
+            .succeeds()
+            .stdout_is_bytes(format!("{}$\n", "a".repeat(length)));
+    }
+}
+
+/// A drained list line starts after the newline deferred by a preceding p
+/// command rather than being spliced into that command's line.
+#[test]
+fn list_length_zero_after_print() {
+    let line = "a".repeat(5000);
+    new_ucmd!()
+        .args(&["-n", "-l", "0", "p;l"])
+        .pipe_in(line.clone())
+        .succeeds()
+        .stdout_is_bytes(format!("{line}\n{line}$\n"));
+}
+
+/// An input line printed from a memory-mapped file is written out before a
+/// list line drained after it, keeping the two in order.
+#[test]
+fn list_length_zero_after_mmap_output() {
+    let dots = ".".repeat(4096);
+    new_ucmd!()
+        .args(&["-l", "0", "l", "input/dots-8k.txt"])
+        .succeeds()
+        .stdout_is_bytes(format!("{dots}$\n{dots}\n{dots}$\n{dots}\n"));
+}
+
+/// An unterminated input line printed from a memory-mapped file leaves its
+/// mmapped output pending together with a deferred newline.  A list line
+/// drained after it must follow the newline, which must follow the mmapped
+/// output.
+#[test]
+fn list_length_zero_after_mmap_print_unterminated() -> std::io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
+    let line = "k".repeat(5000);
+    std::fs::write(&path, &line)?;
+
+    new_ucmd!()
+        .args(&["-n", "-l", "0", "p;l", path.to_str().unwrap()])
+        .succeeds()
+        .stdout_is_bytes(format!("{line}\n{line}$\n"));
+    Ok(())
+}
+
+/// Mmapped output of at least 4 KB going to a regular file, as when editing
+/// in place, is copied block-aligned and its remainder after the last full
+/// block written separately.  A list line drained after it must still
+/// follow that remainder.
+#[test]
+fn list_length_zero_after_mmap_print_to_file() -> std::io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
+    // The shortest line whose list output is drained; with its newline the
+    // mmapped output overruns a 4 KB block by one byte.
+    let line = "k".repeat(4096);
+    std::fs::write(&path, format!("{line}\n"))?;
+
+    new_ucmd!()
+        .args(&["-n", "-l", "0", "-i", "-e", "p;l", path.to_str().unwrap()])
+        .succeeds()
+        .no_stdout();
+
+    assert_eq!(
+        std::fs::read_to_string(&path)?,
+        format!("{line}\n{line}$\n")
+    );
+    Ok(())
+}
+
 ////////////////////////////////////////////////////////////
 // In-place editing
 #[test]

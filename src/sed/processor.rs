@@ -506,29 +506,56 @@ fn readable_char(ch: char) -> Cow<'static, str> {
     }
 }
 
+/// Bound on the rendered list output buffered when never wrapping.
+// A wrap width of zero never folds, so without periodic draining the whole
+// rendered line would be held in memory.  A few KB amortize the write calls
+// while keeping the buffer bounded.
+const LIST_FLUSH_THRESHOLD: usize = 4 * 1024;
+
 /// Buffered state for rendering one list command output line.
 struct ListLine {
     buffer: String,
+    // Rendered bytes buffered since the last fold or drain; when wrapping,
+    // also the current column.
     width: usize,
-    max_width: usize,
+    // Width at which write_item() acts: the wrap width, or
+    // LIST_FLUSH_THRESHOLD when never wrapping.
+    fold_at: usize,
+    // The wrap width; zero means never wrap.
+    wrap_width: usize,
 }
 
 impl ListLine {
     /// Create an empty list output line with the specified maximum width.
     fn new(max_width: usize) -> Self {
+        // Width zero never wraps, per the GNU sed manual; draining every few
+        // KB bounds the buffer and keeps one width test in write_item().
         Self {
             buffer: String::new(),
             width: 0,
-            max_width,
+            fold_at: if max_width == 0 {
+                LIST_FLUSH_THRESHOLD
+            } else {
+                max_width
+            },
+            wrap_width: max_width,
         }
     }
 
-    /// Write a rendered list item, folding before the item if needed.
+    /// Write a rendered list item, folding the line before it when wrapping
+    /// and draining the buffer when not.
     fn write_item(&mut self, output: &mut OutputBuffer, out_str: &str) -> UResult<()> {
         let out_len = out_str.len();
-        if self.width + out_len + 1 > self.max_width {
-            self.buffer.push_str("\\\n");
-            output.write_str(std::mem::take(&mut self.buffer))?;
+        if self.width + out_len + 1 > self.fold_at {
+            if self.wrap_width == 0 {
+                // Drain before out_str: finish() terminates only a non-empty
+                // buffer, so draining after the last item would lose the "$".
+                output.write_partial_str(&self.buffer)?;
+                self.buffer.clear();
+            } else {
+                self.buffer.push_str("\\\n");
+                output.write_str(std::mem::take(&mut self.buffer))?;
+            }
             self.width = 0;
         }
         self.buffer.push_str(out_str);
@@ -1080,6 +1107,55 @@ mod tests {
         let mut written = String::new();
         file.read_to_string(&mut written).unwrap();
         assert_eq!(written, "abcd\\\n");
+    }
+
+    #[test]
+    fn test_write_list_item_zero_width_never_folds() {
+        let mut file = tempfile().unwrap();
+        let mut output = OutputBuffer::new(Box::new(file.try_clone().unwrap()));
+        let mut line = ListLine::new(0);
+        line.write_item(&mut output, "abcd").unwrap();
+
+        line.write_item(&mut output, "e").unwrap();
+        output.flush().unwrap();
+
+        assert_eq!(line.buffer, "abcde");
+        assert_eq!(line.width, 5);
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut written = String::new();
+        file.read_to_string(&mut written).unwrap();
+        assert_eq!(written, "");
+    }
+
+    #[test]
+    fn test_write_list_item_zero_width_drains_buffer() {
+        let mut file = tempfile().unwrap();
+        let mut output = OutputBuffer::new(Box::new(file.try_clone().unwrap()));
+        let mut line = ListLine::new(0);
+
+        // Exactly as many items as the drain threshold.
+        let items = LIST_FLUSH_THRESHOLD;
+        for _ in 0..items {
+            line.write_item(&mut output, "a").unwrap();
+        }
+
+        // The drain took place before the item that reached the threshold
+        // was appended, so that item is still buffered.
+        assert_eq!(line.buffer, "a");
+        assert_eq!(line.width, 1);
+        output.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut drained = String::new();
+        file.read_to_string(&mut drained).unwrap();
+        assert_eq!(drained, "a".repeat(items - 1));
+
+        // The complete output is still the unfolded line and its terminator.
+        line.finish(&mut output).unwrap();
+        output.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut written = String::new();
+        file.read_to_string(&mut written).unwrap();
+        assert_eq!(written, format!("{}$\n", "a".repeat(items)));
     }
 
     #[test]

@@ -107,7 +107,9 @@ pub fn uu_app() -> Command {
                 .num_args(0..=1)
                 .default_missing_value(""),
             // Access with .get_one::<u32>("line-length")
-            arg!(-l --length <NUM> "Specify the 'l' command line-wrap length.")
+            arg!(-l --"line-length" <NUM> "Specify the 'l' command line-wrap length.")
+                // The long name used before GNU sed's --line-length was accepted.
+                .alias("length")
                 .value_parser(clap::value_parser!(u32)),
             arg!(-n --quiet "Suppress automatic printing of pattern space.").aliases(["silent"]),
             arg!(--posix "Disable non-POSIX extensions."),
@@ -241,7 +243,9 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
         in_place_suffix: matches
             .get_one::<String>("in-place")
             .and_then(|s| if s.is_empty() { None } else { Some(s.clone()) }),
-        length: matches.get_one::<u32>("length").map_or(70, |v| *v as usize),
+        length: matches
+            .get_one::<u32>("line-length")
+            .map_or(70, |v| *v as usize),
         quiet: matches.get_flag("quiet"),
         posix: matches.get_flag("posix"),
         separate: matches.get_flag("separate"),

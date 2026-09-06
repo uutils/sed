@@ -60,7 +60,6 @@ rand = { version = "0.10.0" }
 regex = "1.10.4"
 sha2 = { version = "0.11.0", default-features = false, features = ["alloc"] }
 tempfile = "3.10.1"
-terminal_size = "0.4.2"
 textwrap = { version = "0.16.1", features = ["terminal_size"] }
 uucore = { version = "0.11.0", features = ["libc"] }
 rustix = "1.1.4"
@@ -78,7 +77,6 @@ phf = { workspace = true }
 predicates = { workspace = true }
 regex = { workspace = true }
 tempfile = { workspace = true }
-terminal_size = { workspace = true }
 textwrap = { workspace = true }
 uucore = { workspace = true }
 rustix = { workspace = true }

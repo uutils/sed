@@ -665,6 +665,29 @@ impl OutputBuffer {
         )))
     }
 
+    /// Schedule the specified string for output as part of an output line.
+    /// Unlike `write_str`, the string is not treated as a complete line, so
+    /// no newline is deferred after it and output that follows continues on
+    /// the same line.
+    pub(crate) fn write_partial_str(&mut self, s: &str) -> io::Result<()> {
+        if s.is_empty() {
+            return Ok(());
+        }
+
+        // End a preceding complete line whose newline was deferred.
+        self.flush_pending_newline()?;
+
+        // Mmapped output can be pending without a deferred newline, e.g. a
+        // newline-terminated input line printed from the mmapped input, so
+        // keep it ahead of this write.  (After a deferred newline was
+        // written it has already been flushed and this does nothing.)
+        #[cfg(unix)]
+        {
+            self.flush_mmap(WriteRange::Complete)?;
+        }
+        self.out.write_all(s.as_bytes())
+    }
+
     /// Schedule the specified bytes for eventual output.
     pub fn write_bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
         let (content, has_newline) = if bytes.ends_with(b"\n") {
@@ -2150,5 +2173,51 @@ mod tests {
         let mut out = String::new();
         file.read_to_string(&mut out).unwrap();
         assert_eq!(out, "baz\n");
+    }
+
+    // write_partial_str emits a deferred newline before its string
+    #[test]
+    fn write_partial_str_after_pending_newline() {
+        let (mut buf, mut file) = new_for_test();
+        buf.write_str("foo").unwrap();
+        assert!(buf.pending_newline);
+        buf.write_partial_str("bar").unwrap();
+        buf.out.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = String::new();
+        file.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "foo\nbar");
+    }
+
+    // write_partial_str leaves no newline pending, so the output that
+    // follows continues its line
+    #[test]
+    fn write_partial_str_defers_no_newline() {
+        let (mut buf, mut file) = new_for_test();
+        buf.write_str("foo").unwrap();
+        buf.write_partial_str("bar").unwrap();
+        assert!(!buf.pending_newline);
+        buf.write_str("baz\n").unwrap();
+        buf.out.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = String::new();
+        file.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "foo\nbarbaz\n");
+    }
+
+    // write_partial_str writes out pending mmapped output before its string
+    #[cfg(unix)]
+    #[test]
+    fn write_partial_str_after_mmap_chunk() {
+        let (mut buf, mut file) = new_for_test();
+        buf.write_chunk(&make_mmap_chunk(b"abc\n")).unwrap();
+        assert_eq!(buf.mmap_chunk.as_ref().unwrap().len, 4);
+        buf.write_partial_str("xyz").unwrap();
+        assert_eq!(buf.mmap_chunk.as_ref().unwrap().len, 0);
+        buf.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = String::new();
+        file.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "abc\nxyz");
     }
 }
