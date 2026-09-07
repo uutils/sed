@@ -1937,6 +1937,77 @@ fn read_one_line_stops_when_file_shorter_than_input() -> std::io::Result<()> {
     Ok(())
 }
 
+#[test]
+fn read_one_line_preserves_last_line_without_newline() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    // Final line has no trailing newline.
+    fs::write(temp.path(), "N1\nN2")?;
+    let cmd = format!("R {}", temp.path().display());
+
+    // The unterminated last line is emitted verbatim, with no newline added.
+    new_ucmd!()
+        .args(&["-e", &cmd])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\nN1\nb\nN2");
+
+    Ok(())
+}
+
+#[test]
+fn read_one_line_honors_address_and_advances_only_when_run() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    fs::write(temp.path(), "f1\nf2\nf3\n")?;
+    let cmd = format!("2R {}", temp.path().display());
+
+    // `R` runs only on the matched cycle, so the cursor advances only then:
+    // line 2 pulls the file's first line, other cycles read nothing.
+    new_ucmd!()
+        .args(&["-e", &cmd])
+        .pipe_in("a\nb\nc\n")
+        .succeeds()
+        .stdout_is("a\nb\nf1\nc\n");
+
+    Ok(())
+}
+
+#[test]
+fn read_one_line_distinct_files_have_independent_cursors() -> std::io::Result<()> {
+    let f1 = NamedTempFile::new()?;
+    let f2 = NamedTempFile::new()?;
+    fs::write(f1.path(), "f1\nf2\nf3\n")?;
+    fs::write(f2.path(), "x1\nx2\n")?;
+    let r1 = format!("R {}", f1.path().display());
+    let r2 = format!("R {}", f2.path().display());
+
+    // Each `R` reads from its own file and advances its own cursor; the
+    // shorter file simply runs out first.
+    new_ucmd!()
+        .args(&["-e", &r1, "-e", &r2])
+        .pipe_in("a\nb\nc\n")
+        .succeeds()
+        .stdout_is("a\nf1\nx1\nb\nf2\nx2\nc\nf3\n");
+
+    Ok(())
+}
+
+#[test]
+fn read_one_line_same_file_shares_cursor() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    fs::write(temp.path(), "l1\nl2\n")?;
+    let cmd = format!("R {}", temp.path().display());
+
+    // Both `R` commands name the same file, so they share one cursor and read
+    // successive lines ("l1" then "l2") rather than each restarting at "l1".
+    new_ucmd!()
+        .args(&["-e", &cmd, "-e", &cmd])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\nl1\nl2\n");
+
+    Ok(())
+}
+
 ////////////////////////////////////////////////////////////
 // =, l, F commands
 check_output!(number_continuous, ["/l2_/=", LINES1, LINES2]);
