@@ -269,6 +269,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
         },
         parsed_block_nesting: 0,
         label_to_command_map: HashMap::new(),
+        named_readers: HashMap::new(),
         range_commands: Vec::new(),
         substitution_made: false,
         append_elements: Vec::new(),

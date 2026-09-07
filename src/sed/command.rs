@@ -68,6 +68,9 @@ pub struct ProcessingContext {
     pub parsed_block_nesting: usize,
     /// Command associated with each label
     pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
+    /// Shared `R` readers keyed by file path, so that all `R` commands naming
+    /// the same file advance a single cursor, matching GNU sed.
+    pub named_readers: HashMap<PathBuf, Rc<RefCell<NamedReader>>>,
     /// Commands with a (latchable and resetable) address range
     pub range_commands: Vec<Rc<RefCell<Command>>>,
     /// True if a substitution was made as specified in the t command

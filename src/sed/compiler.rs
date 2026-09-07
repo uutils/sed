@@ -1134,7 +1134,15 @@ fn compile_read_line_command(
         return compilation_error(lines, line, ERR_SANDBOX);
     }
     let path = read_file_path(lines, line)?;
-    cmd.data = CommandData::NamedReader(NamedReader::new(path));
+    // GNU sed shares a single cursor per file path among all `R` commands
+    // naming that file, so they read successive lines rather than each
+    // restarting from the top. Reuse a reader keyed by the (textual) path.
+    let reader = context
+        .named_readers
+        .entry(path.clone())
+        .or_insert_with(|| NamedReader::new(path))
+        .clone();
+    cmd.data = CommandData::NamedReader(reader);
     Ok(CommandHandling::Continue)
 }
 
