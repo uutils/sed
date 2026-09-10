@@ -1108,4 +1108,46 @@ mod tests {
         file.read_to_string(&mut written).unwrap();
         assert_eq!(written, "abc$\n");
     }
+
+    #[test]
+    fn test_execute_read_line_command_queues_next_line() {
+        use crate::sed::command::CommandData;
+        use crate::sed::named_reader::NamedReader;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // File whose successive lines the `R` command reads.
+        let mut read_file = NamedTempFile::new().unwrap();
+        read_file.write_all(b"first\nsecond\n").unwrap();
+
+        // Single input line to drive one processing cycle.
+        let mut input_file = NamedTempFile::new().unwrap();
+        input_file.write_all(b"x\n").unwrap();
+
+        // One `R` command with no address, so it always applies.
+        let reader = NamedReader::new(read_file.path().to_path_buf());
+        let command = Rc::new(RefCell::new(Command {
+            code: 'R',
+            data: CommandData::NamedReader(reader),
+            ..Command::default()
+        }));
+
+        let mut out_file = tempfile().unwrap();
+        let mut output = OutputBuffer::new(Box::new(out_file.try_clone().unwrap()));
+        let mut line_reader = LineReader::open(&input_file.path().to_path_buf()).unwrap();
+
+        let mut context = ProcessingContext {
+            quiet: true, // Suppress auto-print so only the appended line shows.
+            ..ProcessingContext::default()
+        };
+
+        process_file(Some(command), &mut line_reader, &mut output, &mut context).unwrap();
+        output.flush().unwrap();
+
+        // The `R` arm queued the file's first line, which flush_appends wrote.
+        out_file.seek(SeekFrom::Start(0)).unwrap();
+        let mut written = String::new();
+        out_file.read_to_string(&mut written).unwrap();
+        assert_eq!(written, "first\n");
+    }
 }
