@@ -359,15 +359,27 @@ pub fn parse_regex(
     line: &mut ScriptCharProvider,
     regex_mode: RegexMode,
 ) -> UResult<Vec<u8>> {
-    parse_regex_for_mode(lines, line, regex_mode, CharacterMode::Utf8)
+    parse_regex_for_mode(lines, line, regex_mode, CharacterMode::Utf8, false)
+}
+
+/// Return true if a backslash followed by `c` is a GNU regular expression
+/// extension, which under --posix stands for the literal character `c`.
+fn is_gnu_regex_escape(c: char) -> bool {
+    matches!(
+        c,
+        '?' | '+' | '|' | 'w' | 'W' | 's' | 'S' | 'b' | 'B' | '<' | '>' | '`' | '\''
+    )
 }
 
 /// Parse a regular expression according to the current character mode.
+/// Under `posix` the GNU regular expression extensions are disabled, with each
+/// one standing for the literal character that follows its backslash.
 pub fn parse_regex_for_mode(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     regex_mode: RegexMode,
     character_mode: CharacterMode,
+    posix: bool,
 ) -> UResult<Vec<u8>> {
     let delimiter = scan_delimiter(lines, line)?;
     let mut result = Vec::new();
@@ -385,6 +397,17 @@ pub fn parse_regex_for_mode(
                 }
                 if line.current() == delimiter {
                     // Push escaped delimiter
+                    result.push(line.current_byte());
+                    line.advance();
+                    continue;
+                }
+                if posix && is_gnu_regex_escape(line.current()) {
+                    // ? + | must keep their backslash to remain literals.
+                    if matches!(regex_mode, RegexMode::Extended)
+                        && matches!(line.current(), '?' | '+' | '|')
+                    {
+                        result.push(b'\\');
+                    }
                     result.push(line.current_byte());
                     line.advance();
                     continue;
@@ -1252,6 +1275,59 @@ mod tests {
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
         assert_eq!(parsed, br"\(\\");
         assert_eq!(line.current(), '/');
+    }
+
+    // parse_regex_for_mode: GNU extensions under --posix
+    #[test]
+    fn test_posix_bre_emits_bare_characters() {
+        // bre_to_ere() escapes the ERE metacharacters, so they are left bare.
+        let (lines, mut line) = make_providers(r"/0\?a\+b\|/");
+        let parsed = parse_regex_for_mode(
+            &lines,
+            &mut line,
+            RegexMode::Basic,
+            CharacterMode::Utf8,
+            true,
+        )
+        .unwrap();
+        assert_eq!(parsed, b"0?a+b|");
+
+        let (lines, mut line) = make_providers(r"/\w\s\b\<\`/");
+        let parsed = parse_regex_for_mode(
+            &lines,
+            &mut line,
+            RegexMode::Basic,
+            CharacterMode::Utf8,
+            true,
+        )
+        .unwrap();
+        assert_eq!(parsed, b"wsb<`");
+    }
+
+    #[test]
+    fn test_posix_ere_keeps_metacharacters_escaped() {
+        // In EREs \? \+ \| are already literals, so the backslash stays.
+        let (lines, mut line) = make_providers(r"/a\?b\+c\|/");
+        let parsed = parse_regex_for_mode(
+            &lines,
+            &mut line,
+            RegexMode::Extended,
+            CharacterMode::Utf8,
+            true,
+        )
+        .unwrap();
+        assert_eq!(parsed, br"a\?b\+c\|");
+
+        let (lines, mut line) = make_providers(r"/\w\s\b/");
+        let parsed = parse_regex_for_mode(
+            &lines,
+            &mut line,
+            RegexMode::Extended,
+            CharacterMode::Utf8,
+            true,
+        )
+        .unwrap();
+        assert_eq!(parsed, b"wsb");
     }
 
     // validate_quantifier_structure

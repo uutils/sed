@@ -809,6 +809,73 @@ fn test_subst_e_flag_no_match_no_exec() {
 }
 
 ////////////////////////////////////////////////////////////
+// GNU regular expression extensions and --posix
+// Under --posix the GNU extensions \? \+ \| \w \W \s \S \b \B \< \> \` \'
+// stand for the literal character following the backslash.
+
+#[test]
+fn test_posix_disables_gnu_bre_operators() {
+    // The non-POSIX behavior is covered by the subst_quantifier_* and
+    // subst_alternation_operator tests above.
+    new_ucmd!()
+        .args(&["--posix", "-e", r"/0\?/d"])
+        .pipe_in("a\nb\n0?\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+    new_ucmd!()
+        .args(&["--posix", "-e", r"/a\+/d"])
+        .pipe_in("a\nb\na+\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+    new_ucmd!()
+        .args(&["--posix", "-e", r"/a\|b/d"])
+        .pipe_in("a\nb\na|b\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+}
+
+#[test]
+fn test_posix_disables_gnu_character_classes() {
+    new_ucmd!()
+        .args(&["--posix", "-e", r"/\w/d"])
+        .pipe_in("a\nb\nw\n")
+        .succeeds()
+        .stdout_is("a\nb\n");
+    new_ucmd!()
+        .args(&["-e", r"/\w/d"])
+        .pipe_in("a\nb\nw\n")
+        .succeeds()
+        .stdout_is("");
+}
+
+#[test]
+fn test_posix_disables_gnu_extensions_in_ere() {
+    new_ucmd!()
+        .args(&["--posix", "-E", "-e", r"/\w/d"])
+        .pipe_in("aw\nx\n")
+        .succeeds()
+        .stdout_is("x\n");
+    new_ucmd!()
+        .args(&["-E", "-e", r"/\w/d"])
+        .pipe_in("aw\nx\n")
+        .succeeds()
+        .stdout_is("");
+}
+
+#[test]
+fn test_posix_keeps_posix_regex_constructs() {
+    // Groups, quantifiers, operators and character escapes are POSIX,
+    // so --posix must leave them alone
+    for script in [r"s/\(a\)a/X/", r"s/a\{2\}/X/", r"s/a\x61/X/"] {
+        new_ucmd!()
+            .args(&["--posix", "-e", script])
+            .pipe_in("aab\n")
+            .succeeds()
+            .stdout_is("Xb\n");
+    }
+}
+
+////////////////////////////////////////////////////////////
 // e command (execute)
 // The with-argument form writes the shell's raw, unmodified output to the
 // stream, so its byte-exact terminator differs by platform: LF from /bin/sh
