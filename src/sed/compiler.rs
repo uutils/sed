@@ -27,10 +27,7 @@ use std::mem;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use terminal_size::{Width, terminal_size};
 use uucore::error::{UResult, USimpleError};
-
-const DEFAULT_OUTPUT_WIDTH: usize = 60;
 
 const ERR_ADDRESS_0_USAGE: &str =
     "address 0 can only be used with ~step, a second regular expression, or a read command";
@@ -1188,22 +1185,13 @@ fn compile_label_command(
     Ok(CommandHandling::Continue)
 }
 
-/// Return the width of the command's terminal or a default.
-fn output_width() -> usize {
-    if let Some((Width(w), _)) = terminal_size() {
-        w as usize
-    } else {
-        DEFAULT_OUTPUT_WIDTH
-    }
-}
-
 /// Compile commands that take a number as an argument.
 // Handles l q Q
 fn compile_number_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    _context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     line.advance(); // Skip the command character
     line.eat_spaces(); // Skip any leading whitespace
@@ -1217,7 +1205,7 @@ fn compile_number_command(
                 cmd.data = CommandData::Number(0);
             }
             'l' => {
-                cmd.data = CommandData::Number(output_width());
+                cmd.data = CommandData::Number(context.length);
             }
             _ => panic!("invalid number-expecting command"),
         },
