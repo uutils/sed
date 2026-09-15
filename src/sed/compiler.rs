@@ -771,6 +771,48 @@ pub fn compile_replacement(
                             line.advance();
                         }
 
+                        // GNU case-conversion escapes: \U \L \u \l \E.
+                        // These produce no output themselves; they control how
+                        // following replacement text (literals, &, \1..\9) is
+                        // cased. Handled before parse_char_escape so that \u
+                        // and \U are not mistaken for \uXXXX / \UXXXXXXXX
+                        // Unicode escapes (GNU reserves them for conversion).
+                        'U' => {
+                            if !literal.is_empty() {
+                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
+                            }
+                            parts.push(ReplacementPart::Upper);
+                            line.advance();
+                        }
+                        'L' => {
+                            if !literal.is_empty() {
+                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
+                            }
+                            parts.push(ReplacementPart::Lower);
+                            line.advance();
+                        }
+                        'u' => {
+                            if !literal.is_empty() {
+                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
+                            }
+                            parts.push(ReplacementPart::UpperFirst);
+                            line.advance();
+                        }
+                        'l' => {
+                            if !literal.is_empty() {
+                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
+                            }
+                            parts.push(ReplacementPart::LowerFirst);
+                            line.advance();
+                        }
+                        'E' => {
+                            if !literal.is_empty() {
+                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
+                            }
+                            parts.push(ReplacementPart::End);
+                            line.advance();
+                        }
+
                         // other escape sequences
                         _ => {
                             if let Some(decoded) = parse_char_escape(line) {
@@ -2516,6 +2558,41 @@ mod tests {
 
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == br"a\q"));
+    }
+
+    #[test]
+    fn test_compile_replacement_case_conversion_escapes() {
+        let (mut lines, mut chars) = make_providers(r"/\Uabc\Edef/");
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 4);
+        assert!(matches!(&template.parts[0], ReplacementPart::Upper));
+        assert!(matches!(&template.parts[1], ReplacementPart::Literal(s) if s == b"abc"));
+        assert!(matches!(&template.parts[2], ReplacementPart::End));
+        assert!(matches!(&template.parts[3], ReplacementPart::Literal(s) if s == b"def"));
+    }
+
+    #[test]
+    fn test_compile_replacement_case_single_shot_and_backref() {
+        let (mut lines, mut chars) = make_providers(r"/\u\1\l&/");
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 4);
+        assert!(matches!(&template.parts[0], ReplacementPart::UpperFirst));
+        assert!(matches!(&template.parts[1], ReplacementPart::Group(1)));
+        assert!(matches!(&template.parts[2], ReplacementPart::LowerFirst));
+        assert!(matches!(&template.parts[3], ReplacementPart::WholeMatch));
+        assert_eq!(template.max_group_number, 1);
+    }
+
+    #[test]
+    fn test_compile_replacement_escaped_delimiter_wins_over_case_escape() {
+        // With `U` as delimiter, `\U` is an escaped delimiter, not a directive.
+        let (mut lines, mut chars) = make_providers(r"U\UU");
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"U"));
     }
 
     #[test]
