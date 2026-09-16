@@ -187,12 +187,7 @@ fn decode_one_utf8(bytes: &[u8]) -> (Option<char>, usize) {
     (None, 1)
 }
 
-fn push_case_converted_char(
-    result: &mut Vec<u8>,
-    ch: char,
-    orig_bytes: &[u8],
-    upper: bool,
-) {
+fn push_case_converted_char(result: &mut Vec<u8>, ch: char, orig_bytes: &[u8], upper: bool) {
     if upper {
         for c in ch.to_uppercase() {
             let mut buf = [0u8; 4];
@@ -279,12 +274,9 @@ fn append_with_case(
         };
         if let Some(ch) = ch_opt {
             match target_upper {
-                Some(upper) => push_case_converted_char(
-                    result,
-                    ch,
-                    &input[idx..idx + char_len],
-                    upper,
-                ),
+                Some(upper) => {
+                    push_case_converted_char(result, ch, &input[idx..idx + char_len], upper)
+                }
                 None => result.extend_from_slice(&input[idx..idx + char_len]),
             }
             idx += char_len;
@@ -400,7 +392,13 @@ impl ReplacementTemplate {
                 }
 
                 ReplacementPart::WholeMatch => {
-                    append_with_case(&mut result, m.as_bytes(), persistent, &mut single, character_mode);
+                    append_with_case(
+                        &mut result,
+                        m.as_bytes(),
+                        persistent,
+                        &mut single,
+                        character_mode,
+                    );
                 }
 
                 ReplacementPart::Group(_) => {
@@ -639,7 +637,9 @@ mod tests {
         let caps = caps_for("foo", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps, CharacterMode::Utf8).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"");
     }
 
@@ -651,7 +651,9 @@ mod tests {
         let caps = caps_for("abc", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps, CharacterMode::Utf8).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"hello");
     }
 
@@ -666,7 +668,9 @@ mod tests {
         let caps = caps_for(r"foo\d+", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps, CharacterMode::Utf8).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"got: foo42");
     }
 
@@ -693,7 +697,9 @@ mod tests {
         let caps = caps_for(r"foo(\d+)", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps, CharacterMode::Utf8).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"number: 42");
     }
 
@@ -710,7 +716,9 @@ mod tests {
         let caps = caps_for(r"(\w+):(\d+)", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps, CharacterMode::Utf8).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"key: x, value: 123");
     }
 
@@ -774,9 +782,7 @@ mod tests {
         let input = &mut IOChunk::new_from_str("x");
         let caps = caps_for("x", input);
         let cmd = Command::default();
-        template
-            .apply_captures(&cmd, &caps, mode)
-            .unwrap()
+        template.apply_captures(&cmd, &caps, mode).unwrap()
     }
 
     #[test]
@@ -864,10 +870,8 @@ mod tests {
 
     #[test]
     fn test_case_applies_to_whole_match() {
-        let template = ReplacementTemplate::new(vec![
-            ReplacementPart::Upper,
-            ReplacementPart::WholeMatch,
-        ]);
+        let template =
+            ReplacementTemplate::new(vec![ReplacementPart::Upper, ReplacementPart::WholeMatch]);
         let input = &mut IOChunk::new_from_str("aBc DeF");
         let caps = caps_for(".*", input);
         let cmd = Command::default();
