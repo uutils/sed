@@ -136,6 +136,7 @@ pub enum RegexMode {
 pub struct ReplacementTemplate {
     pub parts: Vec<ReplacementPart>,
     pub max_group_number: usize, // Highest used group number (e.g. 8 for \8)
+    pub has_case_conversion: bool, // True if any \U \L \u \l \E present
 }
 
 impl Default for ReplacementTemplate {
@@ -165,23 +166,47 @@ fn decode_one_utf8(bytes: &[u8]) -> (Option<char>, usize) {
     if bytes.is_empty() {
         return (None, 0);
     }
-    if bytes[0] < 0x80 {
-        return (Some(bytes[0] as char), 1);
+    let b0 = bytes[0];
+    if b0 < 0x80 {
+        return (Some(b0 as char), 1);
     }
-    let max_len = bytes.len().min(4);
-    for len in 2..=max_len {
-        if let Ok(s) = std::str::from_utf8(&bytes[..len])
-            && let Some(ch) = s.chars().next()
-            && ch.len_utf8() == len
-        {
-            return (Some(ch), len);
-        }
+    // Determine expected length from the leading byte (single check below,
+    // instead of trial-decoding lengths 2..=4).
+    let expected = if (0xC2..=0xDF).contains(&b0) {
+        2
+    } else if (0xE0..=0xEF).contains(&b0) {
+        3
+    } else if (0xF0..=0xF4).contains(&b0) {
+        4
+    } else {
+        // Continuation byte, overlong C0/C1, or > F4: invalid single byte.
+        return (None, 1);
+    };
+    if bytes.len() < expected {
+        // Incomplete sequence at end of input: passthrough single byte.
+        return (None, 1);
     }
-    // Invalid or incomplete sequence: consume a single byte like GNU mcel_scan.
+    if let Ok(s) = std::str::from_utf8(&bytes[..expected])
+        && let Some(ch) = s.chars().next()
+        && ch.len_utf8() == expected
+    {
+        return (Some(ch), expected);
+    }
+    // Invalid (overlong, surrogate, bad continuation): consume one byte.
     (None, 1)
 }
 
-fn push_case_converted_char(result: &mut Vec<u8>, ch: char, orig_bytes: &[u8], upper: bool) {
+fn push_case_converted_char(result: &mut Vec<u8>, ch: char, upper: bool) {
+    // ASCII fast path: single byte, no Unicode tables.
+    if ch.is_ascii() {
+        let b = ch as u8;
+        result.push(if upper {
+            b.to_ascii_uppercase()
+        } else {
+            b.to_ascii_lowercase()
+        });
+        return;
+    }
     if upper {
         for c in ch.to_uppercase() {
             let mut buf = [0u8; 4];
@@ -197,7 +222,8 @@ fn push_case_converted_char(result: &mut Vec<u8>, ch: char, orig_bytes: &[u8], u
         }
         if !wrote {
             // to_lowercase() can yield nothing for some chars; preserve original.
-            result.extend_from_slice(orig_bytes);
+            let mut buf = [0u8; 4];
+            result.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
         }
     }
 }
@@ -210,6 +236,7 @@ fn push_case_converted_char(result: &mut Vec<u8>, ch: char, orig_bytes: &[u8], u
 /// it carries over to the following text, matching GNU sed. A present
 /// character — even one without case (digit, punctuation, space) — consumes
 /// `single`. Invalid UTF-8 bytes are passed through and consume `single`.
+#[inline]
 fn append_with_case(
     result: &mut Vec<u8>,
     input: &[u8],
@@ -220,8 +247,40 @@ fn append_with_case(
     if input.is_empty() {
         return;
     }
+    // Fast path: no conversion active for this segment — plain memcpy.
+    // This covers literals before any \U/\u (and after \E) so mixed
+    // templates pay conversion cost only where needed.
+    if persistent == PersistentCase::None && *single == SingleCase::None {
+        result.extend_from_slice(input);
+        return;
+    }
     if character_mode == CharacterMode::Byte {
+        // Byte mode is ASCII-only. When no pending one-shot remains, the
+        // whole segment shares one conversion: hoist the branch out of
+        // the loop.
+        if *single == SingleCase::None {
+            match persistent {
+                PersistentCase::None => {
+                    result.extend_from_slice(input);
+                }
+                PersistentCase::Upper => {
+                    result.reserve(input.len());
+                    for &b in input {
+                        result.push(b.to_ascii_uppercase());
+                    }
+                }
+                PersistentCase::Lower => {
+                    result.reserve(input.len());
+                    for &b in input {
+                        result.push(b.to_ascii_lowercase());
+                    }
+                }
+            }
+            return;
+        }
         let mut first = true;
+        // Reserve once; output length equals input length in byte mode.
+        result.reserve(input.len());
         for &b in input {
             let use_single = if first {
                 first = false;
@@ -247,6 +306,53 @@ fn append_with_case(
         return;
     }
     // UTF-8 mode: Unicode-aware conversion with invalid-byte passthrough.
+    // Valid-UTF-8 bulk fast path: a single validation for the whole segment,
+    // then char iteration without per-char validation. Invalid inputs fall
+    // back to byte-wise decoding with passthrough.
+    if let Ok(s) = std::str::from_utf8(input) {
+        let mut chars = s.chars();
+        if let Some(first_ch) = chars.next() {
+            let use_single = std::mem::replace(single, SingleCase::None);
+            let first_target: Option<bool> = match use_single {
+                SingleCase::Upper => Some(true),
+                SingleCase::Lower => Some(false),
+                SingleCase::None => match persistent {
+                    PersistentCase::Upper => Some(true),
+                    PersistentCase::Lower => Some(false),
+                    PersistentCase::None => None,
+                },
+            };
+            // Reserve approximate capacity (may grow on expansions like ß->SS).
+            result.reserve(input.len() + 4);
+            if let Some(upper) = first_target {
+                push_case_converted_char(result, first_ch, upper);
+            } else {
+                let mut buf = [0u8; 4];
+                result.extend_from_slice(first_ch.encode_utf8(&mut buf).as_bytes());
+            }
+            match persistent {
+                PersistentCase::None => {
+                    // Only the first char could have been converted (via
+                    // pending \u/\l); the remainder is a plain copy.
+                    result.extend_from_slice(&input[first_ch.len_utf8()..]);
+                }
+                PersistentCase::Upper => {
+                    for ch in chars {
+                        push_case_converted_char(result, ch, true);
+                    }
+                }
+                PersistentCase::Lower => {
+                    for ch in chars {
+                        push_case_converted_char(result, ch, false);
+                    }
+                }
+            }
+        }
+        return;
+    }
+    // Fallback: input contains invalid UTF-8; decode char-by-char,
+    // passing invalid bytes through (consuming a pending one-shot).
+    result.reserve(input.len() + 4);
     let mut idx = 0;
     let mut first = true;
     while idx < input.len() {
@@ -268,9 +374,7 @@ fn append_with_case(
         };
         if let Some(ch) = ch_opt {
             match target_upper {
-                Some(upper) => {
-                    push_case_converted_char(result, ch, &input[idx..idx + char_len], upper)
-                }
+                Some(upper) => push_case_converted_char(result, ch, upper),
                 None => result.extend_from_slice(&input[idx..idx + char_len]),
             }
             idx += char_len;
@@ -293,10 +397,21 @@ impl ReplacementTemplate {
             })
             .max()
             .unwrap_or(0);
+        let has_case_conversion = parts.iter().any(|part| {
+            matches!(
+                part,
+                ReplacementPart::Upper
+                    | ReplacementPart::Lower
+                    | ReplacementPart::UpperFirst
+                    | ReplacementPart::LowerFirst
+                    | ReplacementPart::End
+            )
+        });
 
         Self {
             parts,
             max_group_number: max_group_number.try_into().unwrap(),
+            has_case_conversion,
         }
     }
 
@@ -323,6 +438,41 @@ impl ReplacementTemplate {
                     self.max_group_number
                 ),
             );
+        }
+
+        // Fast path: no \U \L \u \l \E in the template — plain memcpy.
+        // This is the common case (all pre-existing scripts) and must stay
+        // as cheap as before case conversion was implemented.
+        if !self.has_case_conversion {
+            // Single-literal fast path (e.g. s/Mozilla/Chromium/): no
+            // allocation-merging, just clone the replacement bytes.
+            if let [ReplacementPart::Literal(s)] = self.parts.as_slice() {
+                return Ok(s.clone());
+            }
+            for part in &self.parts {
+                match part {
+                    ReplacementPart::Literal(s) => result.extend_from_slice(s),
+                    ReplacementPart::WholeMatch => {
+                        result.extend_from_slice(
+                            caps.get(0)?.map(|m| m.as_bytes()).unwrap_or_default(),
+                        );
+                    }
+                    ReplacementPart::Group(n) => {
+                        let i: usize = (*n).try_into().unwrap();
+                        result.extend_from_slice(
+                            caps.get(i)?.map(|m| m.as_bytes()).unwrap_or_default(),
+                        );
+                    }
+                    ReplacementPart::Upper
+                    | ReplacementPart::Lower
+                    | ReplacementPart::UpperFirst
+                    | ReplacementPart::LowerFirst
+                    | ReplacementPart::End => {
+                        debug_assert!(false, "has_case_conversion out of sync");
+                    }
+                }
+            }
+            return Ok(result);
         }
 
         // GNU resets case conversion for every substituted occurrence; since
@@ -374,6 +524,31 @@ impl ReplacementTemplate {
 
     /// Apply the template to the given RE single match.
     pub fn apply_match(&self, m: &Match, character_mode: CharacterMode) -> Vec<u8> {
+        // Fast path: no case directives — plain memcpy (common case).
+        if !self.has_case_conversion {
+            if let [ReplacementPart::Literal(s)] = self.parts.as_slice() {
+                return s.clone();
+            }
+            let mut result = Vec::new();
+            for part in &self.parts {
+                match part {
+                    ReplacementPart::Literal(s) => result.extend_from_slice(s),
+                    ReplacementPart::WholeMatch => result.extend_from_slice(m.as_bytes()),
+                    ReplacementPart::Group(_) => {
+                        panic!("unexpected Regex group replacement")
+                    }
+                    ReplacementPart::Upper
+                    | ReplacementPart::Lower
+                    | ReplacementPart::UpperFirst
+                    | ReplacementPart::LowerFirst
+                    | ReplacementPart::End => {
+                        debug_assert!(false, "has_case_conversion out of sync");
+                    }
+                }
+            }
+            return result;
+        }
+
         let mut result = Vec::new();
 
         let mut persistent = PersistentCase::None;
