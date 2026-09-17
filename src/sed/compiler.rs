@@ -2596,6 +2596,51 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_replacement_case_lower_directive() {
+        // \L is a persistent lowercase directive, mirroring \U.
+        let (mut lines, mut chars) = make_providers(r"/\LABC\Edef/");
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 4);
+        assert!(matches!(&template.parts[0], ReplacementPart::Lower));
+        assert!(matches!(&template.parts[1], ReplacementPart::Literal(s) if s == b"ABC"));
+        assert!(matches!(&template.parts[2], ReplacementPart::End));
+        assert!(matches!(&template.parts[3], ReplacementPart::Literal(s) if s == b"def"));
+        assert!(template.has_case_conversion);
+    }
+
+    #[test]
+    fn test_compile_replacement_escaped_delimiters_win_over_all_case_escapes() {
+        // Each of L/l/U/u/E as delimiter: \<delim> is a literal, not a directive.
+        for delim in ['L', 'l', 'U', 'u', 'E'] {
+            let input = format!("{d}\\{d}{d}", d = delim);
+            let (mut lines, mut chars) = make_providers(&input);
+            let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+
+            assert_eq!(template.parts.len(), 1, "delimiter {delim}");
+            assert!(
+                matches!(&template.parts[0], ReplacementPart::Literal(s) if s == &vec![delim as u8]),
+                "delimiter {delim}"
+            );
+            assert!(
+                !template.has_case_conversion,
+                "escaped delimiter must not set has_case_conversion for {delim}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_compile_replacement_has_case_conversion_flag() {
+        let (mut lines, mut chars) = make_providers(r"/plain/");
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+        assert!(!template.has_case_conversion);
+
+        let (mut lines, mut chars) = make_providers(r"/\E/");
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+        assert!(template.has_case_conversion);
+    }
+
+    #[test]
     fn test_compile_replacement_eof_after_backslash() {
         let (mut lines, mut chars) = make_providers(r"/abc\");
         let err = compile_replacement_utf8(&mut lines, &mut chars).unwrap_err();
