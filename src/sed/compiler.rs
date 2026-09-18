@@ -18,6 +18,7 @@ use crate::sed::delimited_parser::{
 };
 use crate::sed::error_handling::{ScriptLocation, compilation_error, semantic_error};
 use crate::sed::fast_regex::Regex;
+use crate::sed::named_reader::NamedReader;
 use crate::sed::named_writer::NamedWriter;
 use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::{ScriptLineProvider, ScriptValue};
@@ -1122,6 +1123,29 @@ fn compile_read_file_command(
     Ok(CommandHandling::Continue)
 }
 
+// Handles R
+fn compile_read_line_command(
+    lines: &mut ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    cmd: &mut Command,
+    context: &mut ProcessingContext,
+) -> UResult<CommandHandling> {
+    if context.sandbox {
+        return compilation_error(lines, line, ERR_SANDBOX);
+    }
+    let path = read_file_path(lines, line)?;
+    // GNU sed shares a single cursor per file path among all `R` commands
+    // naming that file, so they read successive lines rather than each
+    // restarting from the top. Reuse a reader keyed by the (textual) path.
+    let reader = context
+        .named_readers
+        .entry(path.clone())
+        .or_insert_with(|| NamedReader::new(path))
+        .clone();
+    cmd.data = CommandData::NamedReader(reader);
+    Ok(CommandHandling::Continue)
+}
+
 // Handles w
 fn compile_write_file_command(
     lines: &mut ScriptLineProvider,
@@ -1635,6 +1659,10 @@ fn get_cmd_spec(
         'F' if !posix => Ok(CommandSpec {
             n_addr: 2,
             handler: compile_empty_command,
+        }),
+        'R' if !posix => Ok(CommandSpec {
+            n_addr: 2,
+            handler: compile_read_line_command,
         }),
         'r' => Ok(CommandSpec {
             n_addr: if posix { 1 } else { 2 },
@@ -3019,6 +3047,31 @@ mod tests {
         let err =
             compile_read_file_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
         assert!(err.to_string().contains(ERR_SANDBOX));
+    }
+
+    // compile_read_line_command (R)
+    #[test]
+    fn test_compile_read_line_command_rejected_under_sandbox() {
+        let (mut lines, mut chars) = make_providers("R input.txt");
+        let mut cmd = Command::default();
+        let mut context = ctx();
+        context.sandbox = true;
+
+        let err =
+            compile_read_line_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
+        assert!(err.to_string().contains(ERR_SANDBOX));
+    }
+
+    #[test]
+    fn test_compile_read_line_command_sets_named_reader() {
+        let (mut lines, mut chars) = make_providers("R input.txt");
+        let mut cmd = Command::default();
+        let mut context = ctx();
+
+        let handling =
+            compile_read_line_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        assert!(matches!(handling, CommandHandling::Continue));
+        assert!(matches!(cmd.data, CommandData::NamedReader(_)));
     }
 
     // compile_write_file_command

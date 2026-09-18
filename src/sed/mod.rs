@@ -15,6 +15,7 @@ pub mod error_handling;
 pub mod fast_io;
 pub mod fast_regex;
 pub mod in_place;
+pub mod named_reader;
 pub mod named_writer;
 pub mod processor;
 pub mod script_char_provider;
@@ -268,6 +269,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
         },
         parsed_block_nesting: 0,
         label_to_command_map: HashMap::new(),
+        named_readers: HashMap::new(),
         range_commands: Vec::new(),
         substitution_made: false,
         append_elements: Vec::new(),
