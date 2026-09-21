@@ -130,6 +130,10 @@ inherits = "release"
 opt-level = "z"
 strip = true
 
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 
