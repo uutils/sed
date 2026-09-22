@@ -106,6 +106,7 @@ cargo test
 * A `Q` command (optionally followed by an exit code) quits immediately.
 * The `q` command can be optionally followed by an exit code.
 * A `W` command writes to a file the pattern's first line.
+* An `R` command reads one line at a time from a file.
 * The `l` command can be optionally followed by the output width.
 * The `--follow-symlinks` option for in-place editing.
 * The `--sandbox` option that limits potentially destructive commands.

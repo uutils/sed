@@ -10,6 +10,7 @@
 
 use crate::sed::error_handling::{ScriptLocation, runtime_error};
 use crate::sed::fast_regex::{Captures, Match, Regex};
+use crate::sed::named_reader::NamedReader;
 use crate::sed::named_writer::NamedWriter;
 use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::ScriptLineProvider;
@@ -67,6 +68,9 @@ pub struct ProcessingContext {
     pub parsed_block_nesting: usize,
     /// Command associated with each label
     pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
+    /// Shared `R` readers keyed by file path, so that all `R` commands naming
+    /// the same file advance a single cursor, matching GNU sed.
+    pub named_readers: HashMap<PathBuf, Rc<RefCell<NamedReader>>>,
     /// Commands with a (latchable and resetable) address range
     pub range_commands: Vec<Rc<RefCell<Command>>>,
     /// True if a substitution was made as specified in the t command
@@ -368,6 +372,7 @@ pub enum CommandData {
     BranchTarget(Option<Rc<RefCell<Command>>>), // Commands for 'b', 't', 'T', '{'
     Label(Option<String>),                      // Label name for 'b', 't', 'T', ':'
     Path(PathBuf),                              // File path for 'r'
+    NamedReader(Rc<RefCell<NamedReader>>),      // Successive file lines for 'R'
     NamedWriter(Rc<RefCell<NamedWriter>>),      // File output for 'w'
     Number(usize),                              // Number for 'l', 'q', 'Q' (GNU)
     Substitution(Box<Substitution>),            // Substitute command 's'
