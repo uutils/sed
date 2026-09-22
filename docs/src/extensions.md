@@ -39,8 +39,9 @@ Below is a list of these extensions and incompatibilities.
   `--in-place=.bak`); BSD's `-i .bak` and `-i ''` are not supported.
 
 ## New extensions
-* Unicode characters can be specified in regular expression pattern, replacement
-  and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
+* Unicode characters can be specified in regular expression patterns and
+  transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences. In
+  substitution replacements, `\u` and `\U` are GNU case-conversion directives.
 * On a terminal, script errors also quote the script line and underline the
   character at fault (`UUTILS_DIAG=always` or `never` overrides this):
   ```
