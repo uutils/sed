@@ -160,6 +160,19 @@ enum SingleCase {
     Lower,
 }
 
+#[inline]
+fn take_case(single: &mut SingleCase, persistent: PersistentCase) -> Option<bool> {
+    match std::mem::replace(single, SingleCase::None) {
+        SingleCase::Upper => Some(true),
+        SingleCase::Lower => Some(false),
+        SingleCase::None => match persistent {
+            PersistentCase::Upper => Some(true),
+            PersistentCase::Lower => Some(false),
+            PersistentCase::None => None,
+        },
+    }
+}
+
 /// Decode a single UTF-8 character (or invalid byte) at the start of `bytes`.
 /// Returns the decoded char (None for invalid) and its byte length (1 for invalid).
 fn decode_one_utf8(bytes: &[u8]) -> (Option<char>, usize) {
@@ -228,14 +241,8 @@ fn push_case_converted_char(result: &mut Vec<u8>, ch: char, upper: bool) {
     }
 }
 
-/// Append `input` to `result` applying GNU `s///` case conversion.
-///
-/// `persistent` selects the active `\U`/`\L` conversion, `single` holds a
-/// pending `\u`/`\l` one-shot conversion for the next produced character.
-/// An empty `input` (e.g. an unmatched group) leaves `single` untouched so
-/// it carries over to the following text, matching GNU sed. A present
-/// character — even one without case (digit, punctuation, space) — consumes
-/// `single`. Invalid UTF-8 bytes are passed through and consume `single`.
+/// Append `input` with GNU replacement case conversion. Empty inputs preserve
+/// a pending `\u`/`\l`; any produced byte or character consumes it.
 #[inline]
 fn append_with_case(
     result: &mut Vec<u8>,
@@ -247,17 +254,13 @@ fn append_with_case(
     if input.is_empty() {
         return;
     }
-    // Fast path: no conversion active for this segment — plain memcpy.
-    // This covers literals before any \U/\u (and after \E) so mixed
-    // templates pay conversion cost only where needed.
+    // Copy segments outside a case-conversion range directly.
     if persistent == PersistentCase::None && *single == SingleCase::None {
         result.extend_from_slice(input);
         return;
     }
     if character_mode == CharacterMode::Byte {
-        // Byte mode is ASCII-only. When no pending one-shot remains, the
-        // whole segment shares one conversion: hoist the branch out of
-        // the loop.
+        // Byte mode is ASCII-only; hoist persistent conversion out of the loop.
         if *single == SingleCase::None {
             // persistent cannot be None here: that case returned early above.
             let upper = persistent == PersistentCase::Upper;
@@ -271,26 +274,9 @@ fn append_with_case(
             }
             return;
         }
-        let mut first = true;
-        // Reserve once; output length equals input length in byte mode.
         result.reserve(input.len());
         for &b in input {
-            let use_single = if first {
-                first = false;
-                std::mem::replace(single, SingleCase::None)
-            } else {
-                SingleCase::None
-            };
-            let upper = match use_single {
-                SingleCase::Upper => Some(true),
-                SingleCase::Lower => Some(false),
-                SingleCase::None => match persistent {
-                    PersistentCase::Upper => Some(true),
-                    PersistentCase::Lower => Some(false),
-                    PersistentCase::None => None,
-                },
-            };
-            match upper {
+            match take_case(single, persistent) {
                 Some(true) => result.push(b.to_ascii_uppercase()),
                 Some(false) => result.push(b.to_ascii_lowercase()),
                 None => result.push(b),
@@ -298,22 +284,11 @@ fn append_with_case(
         }
         return;
     }
-    // UTF-8 mode: Unicode-aware conversion with invalid-byte passthrough.
-    // Valid-UTF-8 bulk fast path: a single validation for the whole segment,
-    // then char iteration without per-char validation. Invalid inputs fall
-    // back to byte-wise decoding with passthrough.
+    // Validate once before the Unicode-aware fast path.
     if let Ok(s) = std::str::from_utf8(input) {
         let mut chars = s.chars();
         if let Some(first_ch) = chars.next() {
-            let use_single = std::mem::replace(single, SingleCase::None);
-            // At least one conversion is active here (both None returned
-            // early above), so there is always a target.
-            let upper = match use_single {
-                SingleCase::Upper => true,
-                SingleCase::Lower => false,
-                SingleCase::None => persistent == PersistentCase::Upper,
-            };
-            // Reserve approximate capacity (may grow on expansions like ß->SS).
+            let upper = take_case(single, persistent).expect("case conversion is active");
             result.reserve(input.len() + 4);
             push_case_converted_char(result, first_ch, upper);
             match persistent {
@@ -336,28 +311,12 @@ fn append_with_case(
         }
         return;
     }
-    // Fallback: input contains invalid UTF-8; decode char-by-char,
-    // passing invalid bytes through (consuming a pending one-shot).
+    // Preserve invalid UTF-8 bytes while consuming a pending one-shot.
     result.reserve(input.len() + 4);
     let mut idx = 0;
-    let mut first = true;
     while idx < input.len() {
         let (ch_opt, char_len) = decode_one_utf8(&input[idx..]);
-        let use_single = if first {
-            first = false;
-            std::mem::replace(single, SingleCase::None)
-        } else {
-            SingleCase::None
-        };
-        let target_upper: Option<bool> = match use_single {
-            SingleCase::Upper => Some(true),
-            SingleCase::Lower => Some(false),
-            SingleCase::None => match persistent {
-                PersistentCase::Upper => Some(true),
-                PersistentCase::Lower => Some(false),
-                PersistentCase::None => None,
-            },
-        };
+        let target_upper = take_case(single, persistent);
         if let Some(ch) = ch_opt {
             match target_upper {
                 Some(upper) => push_case_converted_char(result, ch, upper),

@@ -120,8 +120,9 @@ cargo test
 * In-place editing of file with the `-i` flag.
 
 ### New extensions
-* Unicode characters can be specified in regular expression pattern, replacement
-  and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
+* Unicode characters can be specified in regular expression patterns and
+  transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences. In
+  substitution replacements, `\u` and `\U` are GNU case-conversion directives.
 
 ### Incompatible extensions
 The `-U` or `--uutil-extensions` option enables useful extensions or bug fixes

@@ -777,39 +777,18 @@ pub fn compile_replacement(
                         // cased. Handled before parse_char_escape so that \u
                         // and \U are not mistaken for \uXXXX / \UXXXXXXXX
                         // Unicode escapes (GNU reserves them for conversion).
-                        'U' => {
+                        case @ ('U' | 'L' | 'u' | 'l' | 'E') => {
                             if !literal.is_empty() {
                                 parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
                             }
-                            parts.push(ReplacementPart::Upper);
-                            line.advance();
-                        }
-                        'L' => {
-                            if !literal.is_empty() {
-                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
-                            }
-                            parts.push(ReplacementPart::Lower);
-                            line.advance();
-                        }
-                        'u' => {
-                            if !literal.is_empty() {
-                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
-                            }
-                            parts.push(ReplacementPart::UpperFirst);
-                            line.advance();
-                        }
-                        'l' => {
-                            if !literal.is_empty() {
-                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
-                            }
-                            parts.push(ReplacementPart::LowerFirst);
-                            line.advance();
-                        }
-                        'E' => {
-                            if !literal.is_empty() {
-                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
-                            }
-                            parts.push(ReplacementPart::End);
+                            parts.push(match case {
+                                'U' => ReplacementPart::Upper,
+                                'L' => ReplacementPart::Lower,
+                                'u' => ReplacementPart::UpperFirst,
+                                'l' => ReplacementPart::LowerFirst,
+                                'E' => ReplacementPart::End,
+                                _ => unreachable!(),
+                            });
                             line.advance();
                         }
 
