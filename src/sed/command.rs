@@ -372,8 +372,19 @@ impl ReplacementTemplate {
         character_mode: CharacterMode,
     ) -> UResult<Vec<u8>> {
         let mut result = Vec::new();
+        self.apply_captures_to(command, caps, character_mode, &mut result)?;
+        Ok(result)
+    }
 
-        // Invalid group numbers may end here through (unkown at compile time)
+    /// Appends the rendered template directly into `result` to avoid intermediate buffer allocations.
+    pub fn apply_captures_to(
+        &self,
+        command: &Command,
+        caps: &Captures,
+        character_mode: CharacterMode,
+        result: &mut Vec<u8>,
+    ) -> UResult<()> {
+        // Invalid group numbers may end here through (unknown at compile time)
         // reused REs.
         if self.max_group_number > caps.len() - 1 {
             return runtime_error(
@@ -389,11 +400,6 @@ impl ReplacementTemplate {
         // This is the common case (all pre-existing scripts) and must stay
         // as cheap as before case conversion was implemented.
         if !self.has_case_conversion {
-            // Single-literal fast path (e.g. s/Mozilla/Chromium/): no
-            // allocation-merging, just clone the replacement bytes.
-            if let [ReplacementPart::Literal(s)] = self.parts.as_slice() {
-                return Ok(s.clone());
-            }
             for part in &self.parts {
                 match part {
                     ReplacementPart::Literal(s) => result.extend_from_slice(s),
@@ -408,16 +414,12 @@ impl ReplacementTemplate {
                             caps.get(i)?.map(|m| m.as_bytes()).unwrap_or_default(),
                         );
                     }
-                    ReplacementPart::Upper
-                    | ReplacementPart::Lower
-                    | ReplacementPart::UpperFirst
-                    | ReplacementPart::LowerFirst
-                    | ReplacementPart::End => {
+                    _ => {
                         debug_assert!(false, "has_case_conversion out of sync");
                     }
                 }
             }
-            return Ok(result);
+            return Ok(());
         }
 
         // GNU resets case conversion for every substituted occurrence; since
@@ -429,18 +431,18 @@ impl ReplacementTemplate {
         for part in &self.parts {
             match part {
                 ReplacementPart::Literal(s) => {
-                    append_with_case(&mut result, s, persistent, &mut single, character_mode);
+                    append_with_case(result, s, persistent, &mut single, character_mode);
                 }
 
                 ReplacementPart::WholeMatch => {
                     let bytes = caps.get(0)?.map(|m| m.as_bytes()).unwrap_or_default();
-                    append_with_case(&mut result, bytes, persistent, &mut single, character_mode);
+                    append_with_case(result, bytes, persistent, &mut single, character_mode);
                 }
 
                 ReplacementPart::Group(n) => {
                     let i: usize = (*n).try_into().unwrap();
                     let bytes = caps.get(i)?.map(|m| m.as_bytes()).unwrap_or_default();
-                    append_with_case(&mut result, bytes, persistent, &mut single, character_mode);
+                    append_with_case(result, bytes, persistent, &mut single, character_mode);
                 }
 
                 ReplacementPart::Upper => {
@@ -464,17 +466,20 @@ impl ReplacementTemplate {
             }
         }
 
-        Ok(result)
+        Ok(())
     }
 
     /// Apply the template to the given RE single match.
     pub fn apply_match(&self, m: &Match, character_mode: CharacterMode) -> Vec<u8> {
+        let mut result = Vec::new();
+        self.apply_match_to(m, character_mode, &mut result);
+        result
+    }
+
+    /// Appends the rendered template directly into `result` to avoid intermediate buffer allocations.
+    pub fn apply_match_to(&self, m: &Match, character_mode: CharacterMode, result: &mut Vec<u8>) {
         // Fast path: no case directives — plain memcpy (common case).
         if !self.has_case_conversion {
-            if let [ReplacementPart::Literal(s)] = self.parts.as_slice() {
-                return s.clone();
-            }
-            let mut result = Vec::new();
             for part in &self.parts {
                 match part {
                     ReplacementPart::Literal(s) => result.extend_from_slice(s),
@@ -482,19 +487,13 @@ impl ReplacementTemplate {
                     ReplacementPart::Group(_) => {
                         panic!("unexpected Regex group replacement")
                     }
-                    ReplacementPart::Upper
-                    | ReplacementPart::Lower
-                    | ReplacementPart::UpperFirst
-                    | ReplacementPart::LowerFirst
-                    | ReplacementPart::End => {
+                    _ => {
                         debug_assert!(false, "has_case_conversion out of sync");
                     }
                 }
             }
-            return result;
+            return;
         }
-
-        let mut result = Vec::new();
 
         let mut persistent = PersistentCase::None;
         let mut single = SingleCase::None;
@@ -502,12 +501,12 @@ impl ReplacementTemplate {
         for part in &self.parts {
             match part {
                 ReplacementPart::Literal(s) => {
-                    append_with_case(&mut result, s, persistent, &mut single, character_mode);
+                    append_with_case(result, s, persistent, &mut single, character_mode);
                 }
 
                 ReplacementPart::WholeMatch => {
                     append_with_case(
-                        &mut result,
+                        result,
                         m.as_bytes(),
                         persistent,
                         &mut single,
@@ -539,7 +538,6 @@ impl ReplacementTemplate {
                 }
             }
         }
-        result
     }
 }
 
