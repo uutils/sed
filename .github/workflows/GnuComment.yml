@@ -12,7 +12,6 @@ jobs:
     permissions:
       actions: read  #  to list workflow runs artifacts
       pull-requests: write  #  to comment on pr
-      issues: write  #  to update/delete existing bot comments
 
     runs-on: ubuntu-latest
     if: >
@@ -67,59 +66,15 @@ jobs:
             }
 
             var issue_number = Number(fs.readFileSync('./NR'));
-            var content = fs.readFileSync('./result.txt', 'utf8');
+            var content = fs.readFileSync('./result.txt');
 
-            if (content.trim().length <= 7) { // 7 because we have backquote + \n
-              console.log('Comment content too short, skipping');
-              return;
-            }
-
-            var body = 'GNU sed testsuite comparison:\n```\n' + content + '```';
-
-            // Avoid duplicate bot comments (e.g. one per push showing the same
-            // +1 utf8-ru improvement): update the existing comparison comment
-            // if present, otherwise create it. Clean up older duplicates.
-            var comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue_number,
-              per_page: 100,
-            });
-            var botComments = comments.filter((c) => {
-              return c.user && c.user.type === 'Bot'
-                && c.body && c.body.startsWith('GNU sed testsuite comparison:');
-            });
-
-            if (botComments.length > 0) {
-              var latest = botComments[botComments.length - 1];
-              if (latest.body === body) {
-                console.log('Existing comment is up to date, skipping update');
-              } else {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: latest.id,
-                  body: body,
-                });
-                console.log('Updated existing comment ' + latest.id);
-              }
-              for (var i = 0; i < botComments.length - 1; i++) {
-                try {
-                  await github.rest.issues.deleteComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    comment_id: botComments[i].id,
-                  });
-                  console.log('Deleted duplicate comment ' + botComments[i].id);
-                } catch (e) {
-                  console.log('Failed to delete duplicate comment ' + botComments[i].id + ': ' + e);
-                }
-              }
-            } else {
+            if (content.toString().trim().length > 7) { // 7 because we have backquote + \n
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issue_number,
-                body: body,
+                body: 'GNU sed testsuite comparison:\n```\n' + content + '```'
               });
+            } else {
+              console.log('Comment content too short, skipping');
             }
