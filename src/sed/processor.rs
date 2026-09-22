@@ -306,8 +306,8 @@ fn substitute(
                 Ok(Some(m)) => {
                     result.extend_from_slice(&text[last_end..m.start()]);
 
-                    sub.replacement
-                        .apply_match_to(&m, character_mode, &mut result);
+                    let replacement = sub.replacement.apply_match(&m, character_mode);
+                    result.extend_from_slice(&replacement);
                     replaced = true;
                     last_end = m.end();
                     Ok(())
@@ -324,12 +324,10 @@ fn substitute(
                     let m = caps.get(0)?.unwrap();
                     result.extend_from_slice(&text[last_end..m.start()]);
 
-                    sub.replacement.apply_captures_to(
-                        command,
-                        &caps,
-                        character_mode,
-                        &mut result,
-                    )?;
+                    let replacement =
+                        sub.replacement
+                            .apply_captures(command, &caps, character_mode)?;
+                    result.extend_from_slice(&replacement);
                     replaced = true;
                     last_end = m.end();
                     Ok(())
@@ -355,12 +353,10 @@ fn substitute(
                     result.extend_from_slice(&text[last_end..m.start()]);
 
                     if sub.occurrence == 0 || count == sub.occurrence {
-                        sub.replacement.apply_captures_to(
-                            command,
-                            &caps,
-                            character_mode,
-                            &mut result,
-                        )?;
+                        let replacement =
+                            sub.replacement
+                                .apply_captures(command, &caps, character_mode)?;
+                        result.extend_from_slice(&replacement);
                         replaced = true;
                     } else {
                         // Not the target match — leave the match unchanged.
