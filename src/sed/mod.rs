@@ -244,7 +244,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
         length: matches.get_one::<u32>("length").map_or(70, |v| *v as usize),
         quiet: matches.get_flag("quiet"),
         posix: matches.get_flag("posix"),
-        separate: matches.get_flag("separate"),
+        separate: matches.get_flag("separate") || matches.contains_id("in-place"),
         sandbox: matches.get_flag("sandbox"),
         unbuffered: matches.get_flag("unbuffered"),
         null_data: matches.get_flag("null-data"),
