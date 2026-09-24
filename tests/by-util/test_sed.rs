@@ -864,12 +864,23 @@ fn test_posix_disables_gnu_extensions_in_ere() {
 
 #[test]
 fn test_posix_keeps_posix_regex_constructs() {
-    // Groups, quantifiers, operators and character escapes are POSIX,
-    // so --posix must leave them alone
-    for script in [r"s/\(a\)a/X/", r"s/a\{2\}/X/", r"s/a\x61/X/"] {
+    // Groups and quantifiers are POSIX, so --posix must leave them alone.
+    for script in [r"s/\(a\)a/X/", r"s/a\{2\}/X/"] {
         new_ucmd!()
             .args(&["--posix", "-e", script])
             .pipe_in("aab\n")
+            .succeeds()
+            .stdout_is("Xb\n");
+    }
+}
+
+#[test]
+fn test_posix_keeps_gnu_character_escapes() {
+    // The character escapes are GNU extensions, but GNU sed keeps them under --posix.
+    for script in [r"s/\x61/X/", r"s/\o141/X/", r"s/\d097/X/"] {
+        new_ucmd!()
+            .args(&["--posix", "-e", script])
+            .pipe_in("ab\n")
             .succeeds()
             .stdout_is("Xb\n");
     }
