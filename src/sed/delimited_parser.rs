@@ -362,13 +362,15 @@ pub fn parse_regex(
     parse_regex_for_mode(lines, line, regex_mode, CharacterMode::Utf8, false)
 }
 
-/// Return true if a backslash followed by `c` is a GNU regular expression
-/// extension, which under --posix stands for the literal character `c`.
-fn is_gnu_regex_escape(c: char) -> bool {
-    matches!(
-        c,
-        '?' | '+' | '|' | 'w' | 'W' | 's' | 'S' | 'b' | 'B' | '<' | '>' | '`' | '\''
-    )
+/// Return true if a backslash followed by `c` is a GNU ERE
+/// that must be emitted as the literal character `c` under --posix.
+/// In Extended mode `? + |` are excluded, because `\?` is already a literal there.
+fn is_gnu_regex_escape(c: char, regex_mode: RegexMode) -> bool {
+    match c {
+        '?' | '+' | '|' => matches!(regex_mode, RegexMode::Basic),
+        'w' | 'W' | 's' | 'S' | 'b' | 'B' | '<' | '>' | '`' | '\'' => true,
+        _ => false,
+    }
 }
 
 /// Parse a regular expression according to the current character mode.
@@ -401,13 +403,7 @@ pub fn parse_regex_for_mode(
                     line.advance();
                     continue;
                 }
-                if posix && is_gnu_regex_escape(line.current()) {
-                    // ? + | must keep their backslash to remain literals.
-                    if matches!(regex_mode, RegexMode::Extended)
-                        && matches!(line.current(), '?' | '+' | '|')
-                    {
-                        result.push(b'\\');
-                    }
+                if posix && is_gnu_regex_escape(line.current(), regex_mode) {
                     result.push(line.current_byte());
                     line.advance();
                     continue;
