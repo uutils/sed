@@ -320,9 +320,10 @@ fn parse_character_class(
             if let Some(decoded) = parse_char_escape(line) {
                 push_script_char(&mut result, decoded, character_mode);
             } else {
-                result.push(b'\\');
-                result.push(line.current_byte());
-                line.advance();
+                // Outside the character escapes a \ is an ordinary member of the set,
+                // so the next character is left for the loop to handle.  This is what
+                // makes `[a\]bc]` end at the first `]`, as GNU sed does.
+                result.extend_from_slice(br"\\");
             }
         } else {
             result.push(line.current_byte());
@@ -1010,10 +1011,12 @@ mod tests {
 
     #[test]
     fn test_escaped_delimiter() {
+        // A backslash does not quote the `]`, so the class ends at it and
+        // holds `a` and a literal backslash, as GNU sed does.
         let mut line = char_provider_from("[a\\]bc]");
         let lines = test_lines();
         let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8).unwrap();
-        assert_eq!(result, br"[a\]bc]");
+        assert_eq!(result, br"[a\\]");
     }
 
     #[test]
@@ -1253,7 +1256,8 @@ mod tests {
     fn test_regex_with_escaped_bracket_in_character_class() {
         let (lines, mut line) = make_providers("/[a\\]z]/");
         let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, br"[a\]z]");
+        // The class ends at the `]`, leaving `z]` as literal characters.
+        assert_eq!(parsed, br"[a\\]z]");
         assert_eq!(line.current(), '/');
     }
 

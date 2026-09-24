@@ -579,6 +579,46 @@ fn subst_multiline_flag_matches_embedded_line_end() {
         .stdout_is("foX\nbaX\n");
 }
 
+////////////////////////////////////////////////////////////
+// Bracket expressions
+// A backslash is only special inside a bracket expression when it starts a
+// character escape. Elsewhere it is an ordinary member of the set and does
+// not quote the character that follows it.
+
+#[test]
+fn test_bracket_gnu_escapes_are_literal() {
+    // [\w] holds a backslash and a w, it is not the GNU word class.
+    new_ucmd!()
+        .args(&["-e", r"s/[\w]/X/g"])
+        .pipe_in("a\\w\n")
+        .succeeds()
+        .stdout_is("aXX\n");
+}
+
+#[test]
+fn test_bracket_ends_at_escaped_closing_bracket() {
+    // The class is [a\], so `bc]` are literal characters that follow it.
+    new_ucmd!()
+        .args(&["-e", r"s/[a\]bc]/X/g"])
+        .pipe_in("abc]z\na]z\n")
+        .succeeds()
+        .stdout_is("Xz\na]z\n");
+}
+
+#[test]
+fn test_bracket_keeps_escapes_and_ranges() {
+    new_ucmd!()
+        .args(&["-e", r"s/[\t]/X/g"])
+        .pipe_in("a\tb\n")
+        .succeeds()
+        .stdout_is("aXb\n");
+    new_ucmd!()
+        .args(&["-e", r"s/[a-zA-Z]/X/g"])
+        .pipe_in("a1Z\n")
+        .succeeds()
+        .stdout_is("X1X\n");
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
