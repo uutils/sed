@@ -940,9 +940,10 @@ fn process_file(
     }
 
     // Handle any N command remains.
+    // Take it even with -n, so that it does not carry over to the next file.
     if context.separate
-        && !context.quiet
         && let Some(action) = context.input_action.take()
+        && !context.quiet
     {
         let mut pending = action.prepend;
         pending.push(b'\n');

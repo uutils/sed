@@ -2263,6 +2263,140 @@ fn in_place_edit_symlink_replaced_with_backup() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+// -i implies -s: each file is edited as a separate stream.
+
+/// Create two input files in a fresh temporary directory.
+/// The returned directory must be kept alive for the paths to stay valid.
+fn two_inputs(
+    first: &str,
+    second: &str,
+) -> std::io::Result<(tempfile::TempDir, std::path::PathBuf, std::path::PathBuf)> {
+    let dir = tempfile::tempdir()?;
+    let path1 = dir.path().join("input1");
+    let path2 = dir.path().join("input2");
+    std::fs::write(&path1, first)?;
+    std::fs::write(&path2, second)?;
+    Ok((dir, path1, path2))
+}
+
+#[test]
+fn in_place_edit_separate() -> std::io::Result<()> {
+    let a = "a1\na2\na3\n";
+    let b = "b1\nb2\nb3\n";
+
+    // Arguments, the two inputs, and the two expected results.
+    let cases: &[(&[&str], &str, &str, &str, &str)] = &[
+        // $ is the last line of each file, and line numbers restart.
+        (&["-i", "-e", "$d"], a, b, "a1\na2\n", "b1\nb2\n"),
+        (&["-i", "-e", "1d"], a, b, "a2\na3\n", "b2\nb3\n"),
+        (
+            &["-i", "-e", "="],
+            a,
+            b,
+            "1\na1\n2\na2\n3\na3\n",
+            "1\nb1\n2\nb2\n3\nb3\n",
+        ),
+        // A range left open at the end of a file does not continue into the next.
+        (&["-i", "-e", "/a3/,/b2/d"], a, b, "a1\na2\n", b),
+        // N does not join the last line of one file with the first of the next.
+        (
+            &["-i", "-e", r"N;s/\n/+/"],
+            a,
+            b,
+            "a1+a2\na3\n",
+            "b1+b2\nb3\n",
+        ),
+        // Lines collected in the hold space stay in their own file.
+        (
+            &["-i", "-e", r"H;$!d;x;s/\n/,/g"],
+            a,
+            b,
+            ",a1,a2,a3\n",
+            ",b1,b2,b3\n",
+        ),
+        // Q on the last line of the first file: the second one is never opened.
+        (&["-i", "-e", "$Q"], a, b, "a1\na2\n", b),
+        // q still quits for good, leaving the second file alone.
+        (&["-i", "-e", "2q"], a, b, "a1\na2\n", b),
+        // With -n the pending N is dropped rather than carried into the next file.
+        (
+            &["-n", "-i", "-e", r"N;s/\n/+/;p"],
+            a,
+            b,
+            "a1+a2\n",
+            "b1+b2\n",
+        ),
+        (&["-n", "-i", "-e", "N;p"], "a1\n", b, "", "b1\nb2\n"),
+    ];
+
+    for (args, first, second, expected1, expected2) in cases {
+        let (_dir, path1, path2) = two_inputs(first, second)?;
+        let mut argv = args.to_vec();
+        argv.push(path1.to_str().unwrap());
+        argv.push(path2.to_str().unwrap());
+
+        new_ucmd!().args(&argv).succeeds();
+
+        assert_eq!(
+            std::fs::read_to_string(&path1)?,
+            *expected1,
+            "first file, {args:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path2)?,
+            *expected2,
+            "second file, {args:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn in_place_edit_separate_backup() -> std::io::Result<()> {
+    let (dir, path1, path2) = two_inputs("a1\na2\na3\n", "b1\nb2\nb3\n")?;
+
+    new_ucmd!()
+        .args(&[
+            "-i.bak",
+            "-e",
+            "$d",
+            path1.to_str().unwrap(),
+            path2.to_str().unwrap(),
+        ])
+        .succeeds();
+
+    assert_eq!(std::fs::read_to_string(&path1)?, "a1\na2\n");
+    assert_eq!(std::fs::read_to_string(&path2)?, "b1\nb2\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("input1.bak"))?,
+        "a1\na2\na3\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("input2.bak"))?,
+        "b1\nb2\nb3\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn join_lines_quiet_separate() -> std::io::Result<()> {
+    let (_dir, path1, path2) = two_inputs("a1\na2\na3\n", "b1\nb2\nb3\n")?;
+
+    // The same pending N, with -s instead of -i, writing to standard output.
+    new_ucmd!()
+        .args(&[
+            "-n",
+            "-s",
+            "-e",
+            r"N;s/\n/+/;p",
+            path1.to_str().unwrap(),
+            path2.to_str().unwrap(),
+        ])
+        .succeeds()
+        .stdout_is("a1+a2\nb1+b2\n");
+    Ok(())
+}
+
 ////////////////////////////////////////////////////////////
 // Large complex scripts
 
