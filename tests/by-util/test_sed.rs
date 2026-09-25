@@ -2472,3 +2472,34 @@ fn test_posix_reject_flags() {
         .code_is(1)
         .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
 }
+
+// A script that ends in the middle of an address or of an s/y delimiter must
+// produce a diagnostic, not abort.
+#[test]
+fn incomplete_script_reports_an_error() {
+    // Script, and a fragment of the expected message.
+    let cases: &[(&str, &str)] = &[
+        // The script ends right after an address separator.
+        ("2,", "command expected"),
+        ("$,", "command expected"),
+        ("/a/,", "command expected"),
+        ("1~", "command expected"),
+        // A command follows the separator, where a second address is expected.
+        ("2,d", "expected context address"),
+        ("/a/,p", "expected context address"),
+        ("1~p", "expected context address"),
+        // The script ends where the s or y delimiter should be.
+        ("s", "unterminated `s' command"),
+        ("1s", "unterminated `s' command"),
+        ("y", "unterminated `y' command"),
+        ("{y", "unterminated `y' command"),
+    ];
+
+    for (script, message) in cases {
+        new_ucmd!()
+            .args(&["-e", script])
+            .fails()
+            .code_is(1)
+            .stderr_contains(*message);
+    }
+}

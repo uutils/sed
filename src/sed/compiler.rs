@@ -358,7 +358,7 @@ fn compile_address_range(
         let is_step_match = line.current() == '~'; // E.g. 0~2: Pick even-numbered lines
         line.advance();
         line.eat_spaces();
-        let is_step_end = if line.current() == '~' {
+        let is_step_end = if !line.eol() && line.current() == '~' {
             // E.g. /foo/,~10: Start at foo, include all lines until multiple of 10 is reached.
             line.advance();
             line.eat_spaces();
@@ -495,7 +495,7 @@ fn compile_address(
             let number = parse_number(lines, line, true)?.unwrap();
             Ok(Address::Line(number))
         }
-        _ => panic!("invalid context address"),
+        _ => compilation_error(lines, line, "expected context address"),
     }
 }
 
@@ -833,6 +833,10 @@ fn compile_subst_command(
 ) -> UResult<CommandHandling> {
     line.advance(); // move past 's'
 
+    if line.eol() {
+        return compilation_error(lines, line, "unterminated `s' command");
+    }
+
     let delimiter = line.current();
     if delimiter == '\0' || delimiter == '\\' {
         return compilation_error(
@@ -898,6 +902,10 @@ fn compile_trans_command(
     context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     line.advance(); // move past 'y'
+
+    if line.eol() {
+        return compilation_error(lines, line, "unterminated `y' command");
+    }
 
     let delimiter = line.current();
     if delimiter == '\0' || delimiter == '\\' {
