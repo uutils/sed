@@ -118,6 +118,11 @@ pub enum ReplacementPart {
     Literal(Vec<u8>), // Normal text
     WholeMatch,       // &
     Group(u32),       // \1 to \9
+    Upper,            // \U: uppercase until \L or \E (GNU extension)
+    Lower,            // \L: lowercase until \U or \E (GNU extension)
+    UpperFirst,       // \u: uppercase next character (GNU extension)
+    LowerFirst,       // \l: lowercase next character (GNU extension)
+    End,              // \E: end \U/\L conversion (GNU extension)
 }
 
 // The maximum value allowed in regex quantifier
@@ -135,12 +140,157 @@ pub enum RegexMode {
 pub struct ReplacementTemplate {
     pub parts: Vec<ReplacementPart>,
     pub max_group_number: usize, // Highest used group number (e.g. 8 for \8)
+    pub has_case_conversion: bool, // True if any \U \L \u \l \E present
 }
 
 impl Default for ReplacementTemplate {
     /// Create an empty template.
     fn default() -> Self {
         ReplacementTemplate::new(Vec::new())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaseConversion {
+    Upper,
+    Lower,
+}
+
+#[inline]
+fn take_case(
+    single: &mut Option<CaseConversion>,
+    persistent: Option<CaseConversion>,
+) -> Option<CaseConversion> {
+    single.take().or(persistent)
+}
+
+fn push_case_converted_char(result: &mut Vec<u8>, ch: char, case: CaseConversion) {
+    if ch.is_ascii() {
+        let b = ch as u8;
+        result.push(match case {
+            CaseConversion::Upper => b.to_ascii_uppercase(),
+            CaseConversion::Lower => b.to_ascii_lowercase(),
+        });
+        return;
+    }
+    match case {
+        CaseConversion::Upper => {
+            for c in ch.to_uppercase() {
+                let mut buf = [0u8; 4];
+                result.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+        CaseConversion::Lower => {
+            for c in ch.to_lowercase() {
+                let mut buf = [0u8; 4];
+                result.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+    }
+}
+
+fn push_char(result: &mut Vec<u8>, ch: char, case: Option<CaseConversion>) {
+    if let Some(c) = case {
+        push_case_converted_char(result, ch, c);
+    } else {
+        let mut buf = [0u8; 4];
+        result.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+    }
+}
+
+/// Append `input` with GNU replacement case conversion. Empty inputs preserve
+/// a pending `\u`/`\l`; any produced byte or character consumes it.
+#[inline]
+fn append_with_case(
+    result: &mut Vec<u8>,
+    input: &[u8],
+    persistent: Option<CaseConversion>,
+    single: &mut Option<CaseConversion>,
+    character_mode: CharacterMode,
+) {
+    if input.is_empty() {
+        return;
+    }
+    // Copy segments outside a case-conversion range directly.
+    if persistent.is_none() && single.is_none() {
+        result.extend_from_slice(input);
+        return;
+    }
+    if character_mode == CharacterMode::Byte {
+        // Byte mode is ASCII-only; hoist persistent conversion out of the loop.
+        if single.is_none() {
+            let case = persistent.unwrap();
+            result.reserve(input.len());
+            for &b in input {
+                result.push(match case {
+                    CaseConversion::Upper => b.to_ascii_uppercase(),
+                    CaseConversion::Lower => b.to_ascii_lowercase(),
+                });
+            }
+            return;
+        }
+        result.reserve(input.len());
+        for &b in input {
+            match take_case(single, persistent) {
+                Some(CaseConversion::Upper) => result.push(b.to_ascii_uppercase()),
+                Some(CaseConversion::Lower) => result.push(b.to_ascii_lowercase()),
+                None => result.push(b),
+            }
+        }
+        return;
+    }
+    // Valid UTF-8 fast path.
+    if let Ok(s) = std::str::from_utf8(input) {
+        let mut chars = s.chars();
+        if let Some(first_ch) = chars.next() {
+            let case = take_case(single, persistent);
+            result.reserve(input.len() + 4);
+            push_char(result, first_ch, case);
+            match persistent {
+                None => {
+                    result.extend_from_slice(&input[first_ch.len_utf8()..]);
+                }
+                Some(case) => {
+                    for ch in chars {
+                        push_case_converted_char(result, ch, case);
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    // Input contains invalid UTF-8: use str::from_utf8 error to process valid
+    // UTF-8 slices and pass invalid byte sequences through.
+    result.reserve(input.len() + 4);
+    let mut rest = input;
+    while !rest.is_empty() {
+        match std::str::from_utf8(rest) {
+            Ok(s) => {
+                for ch in s.chars() {
+                    let case = take_case(single, persistent);
+                    push_char(result, ch, case);
+                }
+                break;
+            }
+            Err(err) => {
+                let valid_len = err.valid_up_to();
+                if valid_len > 0
+                    && let Ok(s) = std::str::from_utf8(&rest[..valid_len])
+                {
+                    for ch in s.chars() {
+                        let case = take_case(single, persistent);
+                        push_char(result, ch, case);
+                    }
+                }
+                let invalid_len = err.error_len().unwrap_or(rest.len() - valid_len);
+                for &b in &rest[valid_len..valid_len + invalid_len] {
+                    let _ = take_case(single, persistent);
+                    result.push(b);
+                }
+                rest = &rest[valid_len + invalid_len..];
+            }
+        }
     }
 }
 
@@ -155,23 +305,104 @@ impl ReplacementTemplate {
             })
             .max()
             .unwrap_or(0);
+        let has_case_conversion = parts.iter().any(|part| {
+            matches!(
+                part,
+                ReplacementPart::Upper
+                    | ReplacementPart::Lower
+                    | ReplacementPart::UpperFirst
+                    | ReplacementPart::LowerFirst
+                    | ReplacementPart::End
+            )
+        });
 
         Self {
             parts,
             max_group_number: max_group_number.try_into().unwrap(),
+            has_case_conversion,
         }
+    }
+
+    fn render_parts<'a, F>(
+        &self,
+        character_mode: CharacterMode,
+        mut get_match_bytes: F,
+    ) -> UResult<Vec<u8>>
+    where
+        F: FnMut(&ReplacementPart) -> UResult<Option<&'a [u8]>>,
+    {
+        let mut result = Vec::new();
+        if !self.has_case_conversion {
+            for part in &self.parts {
+                match part {
+                    ReplacementPart::Literal(s) => result.extend_from_slice(s),
+                    ReplacementPart::WholeMatch | ReplacementPart::Group(_) => {
+                        if let Some(bytes) = get_match_bytes(part)? {
+                            result.extend_from_slice(bytes);
+                        }
+                    }
+                    _ => {
+                        panic!("has_case_conversion out of sync");
+                    }
+                }
+            }
+            return Ok(result);
+        }
+
+        let mut persistent = None;
+        let mut single = None;
+
+        for part in &self.parts {
+            match part {
+                ReplacementPart::Literal(s) => {
+                    append_with_case(&mut result, s, persistent, &mut single, character_mode);
+                }
+                ReplacementPart::WholeMatch | ReplacementPart::Group(_) => {
+                    if let Some(bytes) = get_match_bytes(part)? {
+                        append_with_case(
+                            &mut result,
+                            bytes,
+                            persistent,
+                            &mut single,
+                            character_mode,
+                        );
+                    }
+                }
+                ReplacementPart::Upper => {
+                    persistent = Some(CaseConversion::Upper);
+                    single = None;
+                }
+                ReplacementPart::Lower => {
+                    persistent = Some(CaseConversion::Lower);
+                    single = None;
+                }
+                ReplacementPart::End => {
+                    persistent = None;
+                    single = None;
+                }
+                ReplacementPart::UpperFirst => {
+                    single = Some(CaseConversion::Upper);
+                }
+                ReplacementPart::LowerFirst => {
+                    single = Some(CaseConversion::Lower);
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     /// Apply the template to the given RE captures.
     /// Example:
     /// let result = regex.replace_all(input, |caps: &Captures| {
-    ///    template.apply_captures(&command, caps) });
+    ///    template.apply_captures(&command, caps, character_mode) });
     /// Returns an error if a backreference in the template was not matched by the RE.
-    pub fn apply_captures(&self, command: &Command, caps: &Captures) -> UResult<Vec<u8>> {
-        let mut result = Vec::new();
-
-        // Invalid group numbers may end here through (unkown at compile time)
-        // reused REs.
+    pub fn apply_captures(
+        &self,
+        command: &Command,
+        caps: &Captures<'_>,
+        character_mode: CharacterMode,
+    ) -> UResult<Vec<u8>> {
         if self.max_group_number > caps.len() - 1 {
             return runtime_error(
                 &command.location,
@@ -182,42 +413,28 @@ impl ReplacementTemplate {
             );
         }
 
-        for part in &self.parts {
-            match part {
-                ReplacementPart::Literal(s) => result.extend_from_slice(s),
-
-                ReplacementPart::WholeMatch => {
-                    result
-                        .extend_from_slice(caps.get(0)?.map(|m| m.as_bytes()).unwrap_or_default());
-                }
-
-                ReplacementPart::Group(n) => {
-                    let i: usize = (*n).try_into().unwrap();
-                    result
-                        .extend_from_slice(caps.get(i)?.map(|m| m.as_bytes()).unwrap_or_default());
-                }
+        self.render_parts(character_mode, |part| match part {
+            ReplacementPart::WholeMatch => {
+                Ok(Some(caps.get(0)?.map(|m| m.as_bytes()).unwrap_or_default()))
             }
-        }
-
-        Ok(result)
+            ReplacementPart::Group(n) => {
+                let i: usize = (*n).try_into().unwrap();
+                Ok(Some(caps.get(i)?.map(|m| m.as_bytes()).unwrap_or_default()))
+            }
+            _ => Ok(None),
+        })
     }
 
     /// Apply the template to the given RE single match.
-    pub fn apply_match(&self, m: &Match) -> Vec<u8> {
-        let mut result = Vec::new();
-
-        for part in &self.parts {
-            match part {
-                ReplacementPart::Literal(s) => result.extend_from_slice(s),
-
-                ReplacementPart::WholeMatch => result.extend_from_slice(m.as_bytes()),
-
-                ReplacementPart::Group(_) => {
-                    panic!("unexpected Regex group replacement")
-                }
+    pub fn apply_match(&self, m: &Match<'_>, character_mode: CharacterMode) -> Vec<u8> {
+        self.render_parts(character_mode, |part| match part {
+            ReplacementPart::WholeMatch => Ok(Some(m.as_bytes())),
+            ReplacementPart::Group(_) => {
+                panic!("unexpected Regex group replacement")
             }
-        }
-        result
+            _ => Ok(None),
+        })
+        .expect("infallible")
     }
 }
 
@@ -418,7 +635,9 @@ mod tests {
         let caps = caps_for("foo", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"");
     }
 
@@ -430,7 +649,9 @@ mod tests {
         let caps = caps_for("abc", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"hello");
     }
 
@@ -445,7 +666,9 @@ mod tests {
         let caps = caps_for(r"foo\d+", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"got: foo42");
     }
 
@@ -458,7 +681,7 @@ mod tests {
         ]);
         let m = Match::from_bytes(1, 3, b"\xE9x");
 
-        assert_eq!(template.apply_match(&m), b"<\xE9x>");
+        assert_eq!(template.apply_match(&m, CharacterMode::Utf8), b"<\xE9x>");
     }
 
     #[test]
@@ -472,7 +695,9 @@ mod tests {
         let caps = caps_for(r"foo(\d+)", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"number: 42");
     }
 
@@ -489,7 +714,9 @@ mod tests {
         let caps = caps_for(r"(\w+):(\d+)", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps).unwrap();
+        let result = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
         assert_eq!(result, b"key: x, value: 123");
     }
 
@@ -506,7 +733,7 @@ mod tests {
         let caps = caps_for(r"(\w+):(\d+)", input);
         let cmd = Command::default();
 
-        let result = template.apply_captures(&cmd, &caps);
+        let result = template.apply_captures(&cmd, &caps, CharacterMode::Utf8);
         assert!(result.is_err());
 
         let msg = result.unwrap_err().to_string();
@@ -534,6 +761,494 @@ mod tests {
             ReplacementPart::Literal(b"groups".to_vec()),
         ]);
         assert_eq!(template.max_group_number, 0);
+    }
+
+    #[test]
+    fn test_max_group_number_ignores_case_directives() {
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Upper,
+            ReplacementPart::Literal(b"a".to_vec()),
+            ReplacementPart::LowerFirst,
+            ReplacementPart::Group(2),
+            ReplacementPart::End,
+        ]);
+        assert_eq!(template.max_group_number, 2);
+    }
+
+    fn apply_literal(parts: Vec<ReplacementPart>, mode: CharacterMode) -> Vec<u8> {
+        let template = ReplacementTemplate::new(parts);
+        let input = &mut IOChunk::new_from_str("x");
+        let caps = caps_for("x", input);
+        let cmd = Command::default();
+        template.apply_captures(&cmd, &caps, mode).unwrap()
+    }
+
+    #[test]
+    fn test_case_upper_and_lower_persistent() {
+        // \Uabc -> ABC, \LABC -> abc
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Upper,
+                ReplacementPart::Literal(b"abc".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"ABC");
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Lower,
+                ReplacementPart::Literal(b"ABC".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"abc");
+    }
+
+    #[test]
+    fn test_case_single_shot() {
+        // \uabc -> Abc, \lABC -> aBC; non-letters consume the directive.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::UpperFirst,
+                ReplacementPart::Literal(b"abc".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"Abc");
+        let out = apply_literal(
+            vec![
+                ReplacementPart::LowerFirst,
+                ReplacementPart::Literal(b"ABC".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"aBC");
+        let out = apply_literal(
+            vec![
+                ReplacementPart::UpperFirst,
+                ReplacementPart::Literal(b"123abc".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"123abc");
+    }
+
+    #[test]
+    fn test_case_end_and_switch() {
+        // \Uabc\Edef -> ABCdef, \Uabc\Ldef -> ABCdef, \L\uABC -> Abc
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Upper,
+                ReplacementPart::Literal(b"abc".to_vec()),
+                ReplacementPart::End,
+                ReplacementPart::Literal(b"def".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"ABCdef");
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Lower,
+                ReplacementPart::UpperFirst,
+                ReplacementPart::Literal(b"ABC".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"Abc");
+        let out = apply_literal(
+            vec![
+                ReplacementPart::UpperFirst,
+                ReplacementPart::End,
+                ReplacementPart::Literal(b"abc".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"abc");
+    }
+
+    #[test]
+    fn test_case_applies_to_whole_match() {
+        let template =
+            ReplacementTemplate::new(vec![ReplacementPart::Upper, ReplacementPart::WholeMatch]);
+        let input = &mut IOChunk::new_from_str("aBc DeF");
+        let caps = caps_for(".*", input);
+        let cmd = Command::default();
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"ABC DEF");
+    }
+
+    #[test]
+    fn test_case_byte_mode_is_ascii_only() {
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Upper,
+                ReplacementPart::Literal(b"abc".to_vec()),
+            ],
+            CharacterMode::Byte,
+        );
+        assert_eq!(out, b"ABC");
+        // Invalid UTF-8 bytes pass through while consuming a pending \u.
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::UpperFirst,
+            ReplacementPart::Literal(b"\xFFabc".to_vec()),
+        ]);
+        let input = &mut IOChunk::new_from_str("x");
+        let caps = caps_for("x", input);
+        let cmd = Command::default();
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"\xFFabc");
+    }
+
+    #[test]
+    fn test_case_byte_mode_lower_and_single_shot() {
+        // \L in byte mode lowercases ASCII.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Lower,
+                ReplacementPart::Literal(b"ABC".to_vec()),
+            ],
+            CharacterMode::Byte,
+        );
+        assert_eq!(out, b"abc");
+        // \u in byte mode uppercases only the first byte; \l lowercases it.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::UpperFirst,
+                ReplacementPart::Literal(b"abc".to_vec()),
+            ],
+            CharacterMode::Byte,
+        );
+        assert_eq!(out, b"Abc");
+        let out = apply_literal(
+            vec![
+                ReplacementPart::LowerFirst,
+                ReplacementPart::Literal(b"ABC".to_vec()),
+            ],
+            CharacterMode::Byte,
+        );
+        assert_eq!(out, b"aBC");
+        // \U + \l: persistent upper with one-shot lower for the next byte.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Upper,
+                ReplacementPart::LowerFirst,
+                ReplacementPart::Literal(b"ABC".to_vec()),
+            ],
+            CharacterMode::Byte,
+        );
+        assert_eq!(out, b"aBC");
+        // \L + \u: persistent lower with one-shot upper.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Lower,
+                ReplacementPart::UpperFirst,
+                ReplacementPart::Literal(b"abc".to_vec()),
+            ],
+            CharacterMode::Byte,
+        );
+        assert_eq!(out, b"Abc");
+    }
+
+    #[test]
+    fn test_case_single_shot_last_wins_and_switch() {
+        // \u\l: last one-shot wins (lower).
+        let out = apply_literal(
+            vec![
+                ReplacementPart::UpperFirst,
+                ReplacementPart::LowerFirst,
+                ReplacementPart::Literal(b"ABC".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"aBC");
+        // \l\u: last one-shot wins (upper).
+        let out = apply_literal(
+            vec![
+                ReplacementPart::LowerFirst,
+                ReplacementPart::UpperFirst,
+                ReplacementPart::Literal(b"abc".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"Abc");
+        // \U then \L switches persistent conversion.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Upper,
+                ReplacementPart::Literal(b"ab".to_vec()),
+                ReplacementPart::Lower,
+                ReplacementPart::Literal(b"CD".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"ABcd");
+        // \U\l: next char lower, rest upper. \L\u: next char upper, rest lower.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Upper,
+                ReplacementPart::LowerFirst,
+                ReplacementPart::Literal(b"abc".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"aBC");
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Lower,
+                ReplacementPart::UpperFirst,
+                ReplacementPart::Literal(b"ABC".to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        // Lower+UpperFirst on "ABC" is already covered as Abc, but assert again
+        // here for the switch-combination matrix.
+        assert_eq!(out, b"Abc");
+    }
+
+    #[test]
+    fn test_fast_path_unmatched_group_copies_empty() {
+        // An unmatched group yields no bytes (not an error) on the
+        // no-conversion fast path: s/(a)?b/X\1/ on "b" gives "X".
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Literal(b"X".to_vec()),
+            ReplacementPart::Group(1),
+        ]);
+        let input = &mut IOChunk::new_from_str("b");
+        let caps = caps_for("(a)?b", input);
+        let cmd = Command::default();
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"X");
+    }
+
+    #[test]
+    fn test_apply_match_single_literal_fast_path() {
+        // apply_match with a single literal clones it directly.
+        let template = ReplacementTemplate::new(vec![ReplacementPart::Literal(b"hi".to_vec())]);
+        let m = Match::from_bytes(0, 3, b"abc");
+        assert_eq!(template.apply_match(&m, CharacterMode::Utf8), b"hi");
+    }
+
+    #[test]
+    #[should_panic(expected = "unexpected Regex group replacement")]
+    fn test_apply_match_group_panics() {
+        // apply_match is only called when the replacement references no
+        // groups (see processor), so a Group part here is a bug. Pin it.
+        let template = ReplacementTemplate::new(vec![ReplacementPart::Group(1)]);
+        let m = Match::from_bytes(0, 3, b"abc");
+        let _ = template.apply_match(&m, CharacterMode::Utf8);
+    }
+
+    #[test]
+    #[should_panic(expected = "has_case_conversion out of sync")]
+    fn test_fast_path_flag_mismatch_panics() {
+        // The fast paths are only taken when has_case_conversion is false;
+        // reaching a case directive there means the flag is out of sync.
+        let mut template = ReplacementTemplate::new(vec![ReplacementPart::Upper]);
+        template.has_case_conversion = false;
+        let input = &mut IOChunk::new_from_str("x");
+        let caps = caps_for("x", input);
+        let cmd = Command::default();
+        let _ = template.apply_captures(&cmd, &caps, CharacterMode::Utf8);
+    }
+
+    #[test]
+    #[should_panic(expected = "has_case_conversion out of sync")]
+    fn test_apply_match_flag_mismatch_panics() {
+        // Same invariant for the apply_match fast path.
+        let mut template = ReplacementTemplate::new(vec![ReplacementPart::Lower]);
+        template.has_case_conversion = false;
+        let m = Match::from_bytes(0, 1, b"x");
+        let _ = template.apply_match(&m, CharacterMode::Utf8);
+    }
+
+    #[test]
+    fn test_case_lower_first_invalid_byte() {
+        // Invalid UTF-8 bytes pass through while consuming a pending \l,
+        // mirroring the UpperFirst case: \l\xFFabc gives \xFFabc.
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::LowerFirst,
+            ReplacementPart::Literal(b"\xFFABC".to_vec()),
+        ]);
+        let input = &mut IOChunk::new_from_str("x");
+        let caps = caps_for("x", input);
+        let cmd = Command::default();
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"\xFFABC");
+    }
+
+    #[test]
+    fn test_case_unicode_expansion() {
+        // ß (U+00DF) uppercases to "SS" in UTF-8 mode.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Upper,
+                ReplacementPart::Literal("ß".as_bytes().to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"SS");
+        // \u on ß also expands.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::UpperFirst,
+                ReplacementPart::Literal("ßabc".as_bytes().to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"SSabc");
+        // Cyrillic small DE -> capital DE (utf8-ru behavior).
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Upper,
+                ReplacementPart::Literal("\u{434}".as_bytes().to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, "\u{414}".as_bytes());
+    }
+
+    #[test]
+    fn test_case_empty_group_leaves_single_pending() {
+        // GNU: s/(b?)-/\u\1x/g on "-" gives "X": empty \1 leaves \u pending
+        // for the following literal within the same occurrence.
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::UpperFirst,
+            ReplacementPart::Group(1),
+            ReplacementPart::Literal(b"x".to_vec()),
+        ]);
+        let input = &mut IOChunk::new_from_str("-");
+        let caps = caps_for("(b?)-", input);
+        let cmd = Command::default();
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"X");
+        // Same, but with persistent \U: empty group does not break conversion.
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Upper,
+            ReplacementPart::Group(1),
+            ReplacementPart::Literal(b"x".to_vec()),
+        ]);
+        let input = &mut IOChunk::new_from_str("-");
+        let caps = caps_for("(b?)-", input);
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"X");
+    }
+
+    #[test]
+    fn test_case_applies_to_groups() {
+        // \U\1-\2 uppercases backreferences (GNU: s/(a)(b)/\U\1-\2/ -> A-B).
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Upper,
+            ReplacementPart::Group(1),
+            ReplacementPart::Literal(b"-".to_vec()),
+            ReplacementPart::Group(2),
+        ]);
+        let input = &mut IOChunk::new_from_str("ab");
+        let caps = caps_for("(a)(b)", input);
+        let cmd = Command::default();
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"A-B");
+    }
+
+    #[test]
+    fn test_case_apply_match_slow_path() {
+        // apply_match (occurrence 1, no groups) must also honor conversion.
+        // Covers the ReplacementTemplate::apply_match case-conversion path.
+        let template =
+            ReplacementTemplate::new(vec![ReplacementPart::Upper, ReplacementPart::WholeMatch]);
+        let m = Match::from_bytes(0, 3, b"abc");
+        assert_eq!(template.apply_match(&m, CharacterMode::Utf8), b"ABC");
+
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Upper,
+            ReplacementPart::LowerFirst,
+            ReplacementPart::WholeMatch,
+        ]);
+        let m = Match::from_bytes(0, 3, b"ABC");
+        assert_eq!(template.apply_match(&m, CharacterMode::Utf8), b"aBC");
+
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::UpperFirst,
+            ReplacementPart::End,
+            ReplacementPart::WholeMatch,
+        ]);
+        let m = Match::from_bytes(0, 3, b"abc");
+        assert_eq!(template.apply_match(&m, CharacterMode::Utf8), b"abc");
+    }
+
+    #[test]
+    fn test_case_utf8_multibyte_and_invalid_sequences() {
+        // Valid 2-, 3-, and 4-byte UTF-8 characters with \U
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Upper,
+            ReplacementPart::Literal("é € 😀".as_bytes().to_vec()),
+        ]);
+        let input = &mut IOChunk::new_from_str("x");
+        let caps = caps_for("x", input);
+        let cmd = Command::default();
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, "É € 😀".as_bytes());
+
+        // Incomplete / invalid sequences are preserved without panic
+        let invalid_samples: [&[u8]; 5] = [
+            b"\x80abc",
+            b"\xC0\xAF",
+            b"\xF5\x80\x80\x80",
+            b"\xE2\x82",
+            b"\xE2\x28\xA1",
+        ];
+        for sample in invalid_samples {
+            let template = ReplacementTemplate::new(vec![
+                ReplacementPart::Upper,
+                ReplacementPart::Literal(sample.to_vec()),
+            ]);
+            let out = template
+                .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+                .unwrap();
+            assert!(!out.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_case_invalid_fallback_with_persistent() {
+        // Invalid bytes pass through under persistent conversion; valid ASCII
+        // tail still converts.
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Upper,
+            ReplacementPart::Literal(b"\xFFabc".to_vec()),
+        ]);
+        let input = &mut IOChunk::new_from_str("x");
+        let caps = caps_for("x", input);
+        let cmd = Command::default();
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"\xFFABC");
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Lower,
+            ReplacementPart::Literal(b"\xFFABC".to_vec()),
+        ]);
+        let input = &mut IOChunk::new_from_str("x");
+        let caps = caps_for("x", input);
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"\xFFabc");
     }
 
     // Transliteration

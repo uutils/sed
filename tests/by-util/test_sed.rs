@@ -657,6 +657,102 @@ fn subst_backref_allowed_in_c_utf8_locale() {
         .stdout_is_bytes(b"X\n");
 }
 
+/// GNU s/// case-conversion escapes: \U \L \u \l \E (issue #540).
+/// Covers the processor substitution paths (apply_match and apply_captures)
+///
+/// together with the per-occurrence reset required by GNU when `g` is used.
+#[test]
+fn subst_case_conversion_upper_lower() {
+    new_ucmd!()
+        .args(&["-e", r"s/b\(.*\)/\U&/"])
+        .pipe_in("abc def\n")
+        .succeeds()
+        .stdout_is_bytes(b"aBC DEF\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s/b\(.*\)/\u&/"])
+        .pipe_in("abc def\n")
+        .succeeds()
+        .stdout_is_bytes(b"aBc def\n");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/B\(.*\)/\L&/"])
+        .pipe_in("ABC DEF\n")
+        .succeeds()
+        .stdout_is_bytes(b"Abc def\n");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/B\(.*\)/\l&/"])
+        .pipe_in("ABC DEF\n")
+        .succeeds()
+        .stdout_is_bytes(b"AbC DEF\n");
+}
+
+#[test]
+fn subst_case_conversion_end_and_global_reset() {
+    // \E ends \U conversion.
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\U&\E!/"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"ABC!\n");
+
+    // GNU: case conversion does not propagate across `g` occurrences.
+    // s/(b?)-/x\u\1/g on "a-b-" gives "axxB".
+    new_ucmd!()
+        .args(&["-E", "-e", r"s/(b?)-/x\u\1/g"])
+        .pipe_in("a-b-\n")
+        .succeeds()
+        .stdout_is_bytes(b"axxB\n");
+
+    // Empty \1 leaves pending \u for the following literal in the same
+    // occurrence: s/\(a\)*/\u\1x/g on "-" gives "X-X".
+    new_ucmd!()
+        .args(&["-e", r"s/\(a\)*/\u\1x/g"])
+        .pipe_in("-\n")
+        .succeeds()
+        .stdout_is_bytes(b"X-X\n");
+
+    // \U\1-\2 uppercases backreferences.
+    new_ucmd!()
+        .args(&["-E", "-e", r"s/(a)(b)/\U\1-\2/"])
+        .pipe_in("ab\n")
+        .succeeds()
+        .stdout_is_bytes(b"A-B\n");
+}
+
+#[test]
+fn subst_case_conversion_single_shot_combos() {
+    // Last one-shot wins: \u\l -> lower, \l\u -> upper.
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\u\l&/"])
+        .pipe_in("ABC\n")
+        .succeeds()
+        .stdout_is_bytes(b"aBC\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\l\u&/"])
+        .pipe_in("ABC\n")
+        .succeeds()
+        .stdout_is_bytes(b"ABC\n");
+
+    // Persistent + one-shot: \U\l lowercases next char, rest upper.
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\U\l&/"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"aBC\n");
+
+    // Non-letters consume one-shot: \u123abc stays "123abc".
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\u123abc/"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"123abc\n");
+}
+
 /// Match non-UTF-8 input bytes with byte escapes in byte mode.
 #[test]
 fn subst_byte_escape_matches_invalid_input_in_c_locale() {

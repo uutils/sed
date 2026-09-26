@@ -291,6 +291,7 @@ fn substitute(
     let mut result = Vec::new();
     let mut replaced = false;
     let text = pattern.as_bytes();
+    let character_mode = context.character_mode;
 
     let regex = re_or_saved_re(sub.regex.as_ref(), context, &command.location)?;
 
@@ -305,7 +306,7 @@ fn substitute(
                 Ok(Some(m)) => {
                     result.extend_from_slice(&text[last_end..m.start()]);
 
-                    let replacement = sub.replacement.apply_match(&m);
+                    let replacement = sub.replacement.apply_match(&m, character_mode);
                     result.extend_from_slice(&replacement);
                     replaced = true;
                     last_end = m.end();
@@ -323,7 +324,9 @@ fn substitute(
                     let m = caps.get(0)?.unwrap();
                     result.extend_from_slice(&text[last_end..m.start()]);
 
-                    let replacement = sub.replacement.apply_captures(command, &caps)?;
+                    let replacement =
+                        sub.replacement
+                            .apply_captures(command, &caps, character_mode)?;
                     result.extend_from_slice(&replacement);
                     replaced = true;
                     last_end = m.end();
@@ -350,7 +353,9 @@ fn substitute(
                     result.extend_from_slice(&text[last_end..m.start()]);
 
                     if sub.occurrence == 0 || count == sub.occurrence {
-                        let replacement = sub.replacement.apply_captures(command, &caps)?;
+                        let replacement =
+                            sub.replacement
+                                .apply_captures(command, &caps, character_mode)?;
                         result.extend_from_slice(&replacement);
                         replaced = true;
                     } else {
