@@ -1127,7 +1127,6 @@ dependencies = [
  "rustix",
  "sha2",
  "tempfile",
- "terminal_size",
  "textwrap",
  "uucore",
  "uutests",
