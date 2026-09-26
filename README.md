@@ -88,73 +88,8 @@ cargo test
 ```
 
 ## Extensions and incompatibilities
-### Supported GNU extensions
-* Command-line arguments can be specified in long (`--`) form.
-* Spaces can precede a regular expression modifier.
-* `I` can be used in as a synonym for the `i` (case insensitive) substitution
-  flag.
-* `M` and `m` substitution flags allow multi-line matching.
-* In addition to `\n`, other escape sequences (octal, hex, C) are supported
-  in the strings of the `y` command.
-  Under POSIX these yield undefined behavior.
-* The `a`, `c`, and `i` commands do not require an initial backslash,
-  allow text to appear on the same line, and support escape sequences
-  in the specified text.
-* The `a`, `i`, `=`, `l`, `q` and `r` commands support address range as an extension to POSIX.
-* The substitution command replacement group `\0` is a synonym for &.
-* An `F` command outputs the name of the file currently being processed.
-* A `Q` command (optionally followed by an exit code) quits immediately.
-* The `q` command can be optionally followed by an exit code.
-* A `W` command writes to a file the pattern's first line.
-* An `R` command reads one line at a time from a file.
-* The `l` command can be optionally followed by the output width.
-* The `--follow-symlinks` option for in-place editing.
-* The `--sandbox` option that limits potentially destructive commands.
-* Address 0 can be used to specify an address range that is already
-  active on line 1 and can finish with the specified regular expression.
-* Address steps can be specified in the form of start~step and start,~step
-  ranges.
-* Address 0 can be used in the `r` command to prepend a file.
-
-### Supported BSD and GNU extensions
-* The second address in a range can be specified as a relative address with +N.
-* In-place editing of file with the `-i` flag.
-
-### New extensions
-* Unicode characters can be specified in regular expression pattern, replacement
-  and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
-
-### Incompatible extensions
-The `-U` or `--uutil-extensions` option enables useful extensions or bug fixes
-that aren't compatible with GNU sed or POSIX.
-
-* The `l` command lists Unicode characters using the `\uXXXX` and `\UXXXXXXXX`
-  escapes rather than as octal UTF-8 byte sequences.
-
-### Incompatibilities
-* Similarly to GNU _sed_, input is processed as raw bytes or as valid UTF-8
-  (this includes 7-bit ASCII) based on the locale as specified by the
-  `LC_ALL`, `LC_CTYPE`, and `LANG` environment variables,
-  with the default being byte processing.
-  However, in contrast with GNU _sed_, other locales (e.g. ISO-8859-1)
-  are not supported. If the input is in another code page or encoding
-  and requires locale-specific processing (e.g. ignore/map case,
-  character classes), consider converting it through UTF-8 to ensure
-  the correct handling of locale-specific regular expressions.
-  This _sed_ program can also handle arbitrary byte sequences
-  if no part of the input requires treating it as a Rust String.
-* Back-references aren't supported when input is processed as bytes
-  (`LC_ALL=C`).
-* The command will report an error and fail if duplicate labels are found
-  in the script.
-  This matches the BSD behavior. The GNU version accepts duplicate labels.
-* The last line (`$`) address is interpreted as the last non-empty line of
-  the last file.  If files specified in subsequent arguments until the last
-  one are empty, then the last line condition will never be triggered.
-  This behavior is consistent with the
-  [original implementation](https://github.com/dspinellis/unix-history-repo/blob/Research-V7/usr/src/cmd/sed/sed1.c#L665).
-* Labels are parsed for alphanumeric characters. The BSD version parses them
-  until the end of the line, preventing ; to be used as a separator.
+The GNU, BSD and new extensions _sed_ supports, and where it differs from GNU
+_sed_, are listed in [docs/src/extensions.md](docs/src/extensions.md).
 
 ## GNU test suite compatibility
 
