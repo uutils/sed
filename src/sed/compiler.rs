@@ -469,7 +469,13 @@ fn compile_address(
             } else {
                 RegexMode::Basic
             };
-            let re = parse_regex_for_mode(lines, line, regex_mode, context.character_mode)?;
+            let re = parse_regex_for_mode(
+                lines,
+                line,
+                regex_mode,
+                context.character_mode,
+                context.posix,
+            )?;
             // Skip over delimiter
             line.advance();
 
@@ -848,7 +854,13 @@ fn compile_subst_command(
     } else {
         RegexMode::Basic
     };
-    let pattern = parse_regex_for_mode(lines, line, regex_mode, context.character_mode)?;
+    let pattern = parse_regex_for_mode(
+        lines,
+        line,
+        regex_mode,
+        context.character_mode,
+        context.posix,
+    )?;
     let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line, context.character_mode)?;
