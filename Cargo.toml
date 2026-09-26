@@ -1,11 +1,12 @@
 # sed (uutils)
 # * see the repository LICENSE, README, and CONTRIBUTING files for more information
 
-# spell-checker:ignore (libs) mangen sed
+# spell-checker:ignore (libs) mangen sed binstall chrono codspeed libc memchr memmap rlimit rustix textwrap uucore uutests xattr
+# spell-checker:ignore (misc) clippy codegen msvc startswith uninlined uutils
 
 [package]
 name = "sed"
-version = "0.2.0"
+version = "0.3.0"
 license = "MIT"
 description = "sed ~ implemented as universal (cross-platform) utils, written in Rust"
 default-run = "sed"
