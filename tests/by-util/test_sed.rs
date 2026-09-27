@@ -2487,7 +2487,39 @@ fn test_incomplete_test_command_posix() {
         .args(&["--posix", "i\\"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: :0:3: error: incomplete command\n");
+        .stderr_is("sed: <script argument 1>:1:3: error: incomplete command\n");
+}
+
+#[test]
+fn test_error_at_end_of_script_keeps_its_position() {
+    // The script is exhausted when the error is found: report its last line,
+    // as GNU sed does ("-e expression #1").
+    new_ucmd!()
+        .args(&["s/a/b\\"])
+        .fails()
+        .code_is(1)
+        .stderr_is(
+            "sed: <script argument 1>:1:7: error: unterminated substitute replacement (unexpected EOF)\n",
+        );
+}
+
+#[test]
+fn test_error_at_end_of_script_file_keeps_its_position() {
+    // The replacement on the last line of a script file runs past its end:
+    // report that file and line.
+    let mut script = NamedTempFile::new().expect("create temporary sed script");
+    script
+        .write_all(b"p\n$!d\ns/one/two\\")
+        .expect("write temporary sed script");
+    let script_path = script.path().to_str().expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .args(&["-f", script_path])
+        .fails()
+        .code_is(1)
+        .stderr_is(format!(
+            "sed: {script_path}:3:11: error: unterminated substitute replacement (unexpected EOF)\n"
+        ));
 }
 
 #[test]
