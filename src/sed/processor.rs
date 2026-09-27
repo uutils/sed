@@ -129,7 +129,7 @@ fn applies(
                     Address::Line(n) if linenum >= *n => {
                         context.last_address = true;
                     }
-                    Address::RelLine(n) if *n == 0 => {
+                    Address::RelLine(0) | Address::StepMatch(0) | Address::StepEnd(0) => {
                         context.last_address = true;
                     }
                     _ => {
