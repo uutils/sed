@@ -2487,7 +2487,20 @@ fn test_incomplete_test_command_posix() {
         .args(&["--posix", "i\\"])
         .fails()
         .code_is(1)
-        .stderr_is("sed: :0:3: error: incomplete command\n");
+        .stderr_is("sed: <script argument 1>:1:3: error: incomplete command\n");
+}
+
+#[test]
+fn test_error_at_end_of_script_keeps_its_position() {
+    // The script is exhausted when the error is found: report its last line,
+    // as GNU sed does ("-e expression #1").
+    new_ucmd!()
+        .args(&["s/a/b\\"])
+        .fails()
+        .code_is(1)
+        .stderr_is(
+            "sed: <script argument 1>:1:7: error: unterminated substitute replacement (unexpected EOF)\n",
+        );
 }
 
 #[test]
