@@ -2546,6 +2546,74 @@ fn test_step_end_non_posix() {
         .stderr_is("sed: <script argument 1>:1:4: error: ~step is invalid in POSIX mode\n");
 }
 
+#[test]
+fn test_step_without_number_is_zero() {
+    // `N~` and `N,~` select line N alone, like a step of 0.
+    for script in ["3~=", "3,~=", "3,~0="] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("q\nr\ns\nt\n")
+            .succeeds()
+            .stdout_is("3\n");
+    }
+}
+
+#[test]
+fn test_step_match_zero_closes_range() {
+    // `3~0` selects line 3 alone, so `c` prints its text there.
+    new_ucmd!()
+        .args(&["3~0c\\X"])
+        .pipe_in("1\n2\n3\n4\n5\n")
+        .succeeds()
+        .stdout_is("1\n2\nX\n4\n5\n");
+}
+
+#[test]
+fn test_step_non_numeric() {
+    for (script, column) in [("1~/x/p", 6), ("1,~/x/p", 7)] {
+        new_ucmd!()
+            .args(&[script])
+            .fails()
+            .code_is(1)
+            .stderr_is(format!(
+                "sed: <script argument 1>:1:{column}: error: ~step can only be specified through numeric values\n"
+            ));
+    }
+}
+
+#[test]
+fn test_step_without_number_at_end_of_line() {
+    new_ucmd!()
+        .args(&["7~"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:3: error: command expected\n");
+}
+
+#[test]
+fn test_addr0_step_zero() {
+    for script in ["0~0p", "0~p"] {
+        new_ucmd!()
+            .args(&[script])
+            .fails()
+            .code_is(1)
+            .stderr_contains("address 0 can only be used with ~step");
+    }
+}
+
+#[test]
+fn test_comma_without_second_address() {
+    for (script, column) in [("5,", 3), ("5,=", 3), ("5, x", 4)] {
+        new_ucmd!()
+            .args(&[script])
+            .fails()
+            .code_is(1)
+            .stderr_is(format!(
+                "sed: <script argument 1>:1:{column}: error: unexpected `,'\n"
+            ));
+    }
+}
+
 // The following test diverse ways in which regexes are matched.
 // Search for 'regex\.' to find them in the code.
 #[test]

@@ -359,7 +359,7 @@ fn compile_address_range(
         let is_step_match = line.current() == '~'; // E.g. 0~2: Pick even-numbered lines
         line.advance();
         line.eat_spaces();
-        let is_step_end = if line.current() == '~' {
+        let is_step_end = if !line.eol() && line.current() == '~' {
             // E.g. /foo/,~10: Start at foo, include all lines until multiple of 10 is reached.
             line.advance();
             line.eat_spaces();
@@ -373,39 +373,46 @@ fn compile_address_range(
             return compilation_error(lines, line, "~step is invalid in POSIX mode");
         }
 
-        // Look for second address.
-        if !line.eol() {
-            let addr2 = compile_address(lines, line, context)?;
-            // Set step_n to the number specified in the (required numeric) address.
-            let step_n = if is_step_match || is_step_end {
-                match addr2 {
-                    Address::Line(n) => n,
-                    _ => {
-                        return compilation_error(
-                            lines,
-                            line,
-                            "~step can only be specified through numeric values",
-                        );
-                    }
-                }
-            } else {
-                0 // dummy, not used
-            };
-
-            if is_line0 && !matches!(addr2, Address::Re(_)) && !is_step_match {
-                return compilation_error(lines, line, ERR_ADDRESS_0_USAGE);
-            }
-
-            // If needed, transform Address::Line into Address::Step*.
-            cmd.addr2 = if is_step_match {
-                Some(Address::StepMatch(step_n))
-            } else if is_step_end {
-                Some(Address::StepEnd(step_n))
-            } else {
-                Some(addr2)
-            };
-            n_addr += 1;
+        // Look for second address; a missing ~step counts as 0.
+        let has_addr2 = !line.eol() && (is_address_char(line.current()) || line.current() == '+');
+        if !(has_addr2 || is_step_match || is_step_end) {
+            return compilation_error(lines, line, "unexpected `,'");
         }
+        let addr2 = if has_addr2 {
+            compile_address(lines, line, context)?
+        } else {
+            Address::Line(0)
+        };
+        // Set step_n to the number specified in the (required numeric) address.
+        let step_n = if is_step_match || is_step_end {
+            match addr2 {
+                Address::Line(n) => n,
+                _ => {
+                    return compilation_error(
+                        lines,
+                        line,
+                        "~step can only be specified through numeric values",
+                    );
+                }
+            }
+        } else {
+            0 // dummy, not used
+        };
+
+        // Address 0 needs a regex end or a positive ~step (0~0 selects no line).
+        if is_line0 && !matches!(addr2, Address::Re(_)) && !(is_step_match && step_n > 0) {
+            return compilation_error(lines, line, ERR_ADDRESS_0_USAGE);
+        }
+
+        // If needed, transform Address::Line into Address::Step*.
+        cmd.addr2 = if is_step_match {
+            Some(Address::StepMatch(step_n))
+        } else if is_step_end {
+            Some(Address::StepEnd(step_n))
+        } else {
+            Some(addr2)
+        };
+        n_addr += 1;
     }
 
     // Zero-address read command check
@@ -496,7 +503,7 @@ fn compile_address(
             let number = parse_number(lines, line, true)?.unwrap();
             Ok(Address::Line(number))
         }
-        _ => panic!("invalid context address"),
+        _ => compilation_error(lines, line, "expected context address"),
     }
 }
 
