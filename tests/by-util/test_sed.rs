@@ -2482,6 +2482,41 @@ fn test_undefined_label() {
 }
 
 #[test]
+fn test_unmatched_brace_points_at_the_open_block() {
+    // As in GNU sed, the location is that of the command that opened the
+    // block left open.
+    new_ucmd!()
+        .args(&["-e", "p", "-e", "{", "-e", "p"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 2>:1:1: error: unmatched `{'\n");
+}
+
+#[test]
+fn test_unmatched_brace_points_at_the_innermost_block() {
+    // It is reported before an undefined label, as GNU sed does.
+    new_ucmd!()
+        .args(&["-e", "p;1{", "-e", "2{", "-e", "b nowhere"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 2>:1:1: error: unmatched `{'\n");
+}
+
+#[test]
+fn test_unmatched_brace_points_at_the_address_of_the_block() {
+    // The second block of the first expression opens with its address.
+    for (script, column) in [("1{;2{", 4), ("$!{;/re/{", 5)] {
+        new_ucmd!()
+            .args(&["-e", script, "-e", "p"])
+            .fails()
+            .code_is(1)
+            .stderr_is(format!(
+                "sed: <script argument 1>:1:{column}: error: unmatched `{{'\n"
+            ));
+    }
+}
+
+#[test]
 fn test_incomplete_test_command_posix() {
     new_ucmd!()
         .args(&["--posix", "i\\"])
