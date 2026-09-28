@@ -3012,3 +3012,134 @@ fn test_posix_reject_flags() {
         .code_is(1)
         .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
 }
+
+#[test]
+fn test_null_data_line_number() {
+    new_ucmd!()
+        .args(&["-z", "="])
+        .pipe_in("hello\0world\0")
+        .succeeds()
+        .stdout_is("1\0hello\x002\0world\0");
+}
+
+#[test]
+fn test_null_data_newline_is_data() {
+    new_ucmd!()
+        .args(&["-z", "s/^/</"])
+        .pipe_in("a\0b\nc\0d")
+        .succeeds()
+        .stdout_is("<a\0<b\nc\0<d");
+}
+
+#[test]
+fn test_null_data_file_input() -> std::io::Result<()> {
+    let mut input = NamedTempFile::new()?;
+    input.write_all(b"a\0b\nc\0d")?;
+
+    new_ucmd!()
+        .args(&["-z", "s/^/</"])
+        .arg(input.path())
+        .succeeds()
+        .stdout_is("<a\0<b\nc\0<d");
+    Ok(())
+}
+
+#[test]
+fn test_null_data_separates_joined_lines() {
+    for (script, input, expected) in [
+        ("$!N;l", "a\0b\nc\0", "a\\000b\\nc$\0a\0b\nc\0"),
+        ("G", "a\0", "a\0\0"),
+        ("H;$!d;x", "a\0b\0", "\0a\0b\0"),
+        ("$!N;P;D", "a\0b\0c\0", "a\0b\0c\0"),
+        ("$!N;P;d", "a\0b\0", "a\0"),
+    ] {
+        new_ucmd!()
+            .args(&["-z", script])
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_null_data_text_commands() {
+    for (script, expected) in [
+        // GNU sed terminates `i` and `c` text with \0, but `a` text with \n.
+        ("i I", "I\0a\0I\0b\0"),
+        ("a A", "a\0A\nb\0A\n"),
+        ("c C", "C\0C\0"),
+        ("F", "-\0a\0-\0b\0"),
+    ] {
+        new_ucmd!()
+            .args(&["-z", script])
+            .pipe_in("a\0b\0")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_null_data_read_and_write_files() -> std::io::Result<()> {
+    let mut lines = NamedTempFile::new()?;
+    lines.write_all(b"R1\0R2\0")?;
+    let output = NamedTempFile::new()?;
+
+    new_ucmd!()
+        .args(&[
+            "-z",
+            "-e",
+            &format!("R {}", lines.path().display()),
+            "-e",
+            &format!("$!N;W {}", output.path().display()),
+        ])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .stdout_is("R1\0a\0b\0");
+
+    assert_eq!(fs::read(output.path())?, b"a\0");
+    Ok(())
+}
+
+#[test]
+fn test_null_data_write_files() -> std::io::Result<()> {
+    let w_output = NamedTempFile::new()?;
+    let s_output = NamedTempFile::new()?;
+
+    new_ucmd!()
+        .args(&[
+            "-z",
+            "-n",
+            "-e",
+            &format!("1w {}", w_output.path().display()),
+            "-e",
+            &format!("s/b/B/w {}", s_output.path().display()),
+        ])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .no_stdout();
+
+    assert_eq!(fs::read(w_output.path())?, b"a\0");
+    assert_eq!(fs::read(s_output.path())?, b"B\0");
+    Ok(())
+}
+
+// GNU sed outputs the command's output unchanged.
+#[cfg(unix)]
+#[test]
+fn test_null_data_e_command() {
+    new_ucmd!()
+        .args(&["-z", "e echo hi"])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .stdout_is("hi\na\0hi\nb\0");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_null_data_e_command() {
+    new_ucmd!()
+        .args(&["-z", "e echo hi"])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .stdout_is("hi\r\na\0hi\r\nb\0");
+}

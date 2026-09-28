@@ -79,6 +79,13 @@ pub struct ProcessingContext {
     pub append_elements: Vec<AppendElement>,
 }
 
+impl ProcessingContext {
+    /// Return the byte that separates lines: \0 with -z, otherwise \n.
+    pub fn line_separator(&self) -> u8 {
+        if self.null_data { b'\0' } else { b'\n' }
+    }
+}
+
 #[derive(Clone, Debug)]
 /// Elements that shall be appended at the end of each command processing cycle
 pub enum AppendElement {

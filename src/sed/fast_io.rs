@@ -58,6 +58,7 @@ pub struct MmapLineCursor<'a> {
     fast_copy: FastCopy, // Data for fast file copy I/O
     data: &'a [u8],      // Mmapped data
     pos: usize,          // Position within the data
+    separator: u8,       // Input record separator
 }
 
 #[cfg(unix)]
@@ -75,6 +76,7 @@ impl<'a> MmapLineCursor<'a> {
             _file: file,
             data,
             pos: 0,
+            separator: b'\n',
         }
     }
 
@@ -86,19 +88,19 @@ impl<'a> MmapLineCursor<'a> {
 
         let start = self.pos;
 
-        let mut end = if let Some(pos) = memchr(b'\n', &self.data[start..]) {
+        let mut end = if let Some(pos) = memchr(self.separator, &self.data[start..]) {
             pos + start
         } else {
             self.data.len()
         };
 
         if end < self.data.len() {
-            end += 1; // include \n in full span
+            end += 1; // include the separator in full span
         }
 
         self.pos = end;
         let full_span = &self.data[start..end];
-        let content = if full_span.ends_with(b"\n") {
+        let content = if full_span.last() == Some(&self.separator) {
             &full_span[..full_span.len() - 1]
         } else {
             full_span
@@ -117,6 +119,7 @@ impl<'a> MmapLineCursor<'a> {
 pub struct ReadLineCursor {
     reader: Box<dyn BufRead>,
     buffer: Vec<u8>,
+    separator: u8, // Input record separator
 }
 
 impl ReadLineCursor {
@@ -126,19 +129,20 @@ impl ReadLineCursor {
         Self {
             reader: Box::new(buf),
             buffer: Vec::new(),
+            separator: b'\n',
         }
     }
 
-    /// If a line is available, return it and its \n termination.
+    /// If a line is available, return it and its separator termination.
     fn get_line(&mut self) -> io::Result<Option<(Vec<u8>, bool)>> {
         self.buffer.clear();
-        // read_line *includes* the '\n' if present
-        let bytes_read = self.reader.read_until(b'\n', &mut self.buffer)?;
+        // read_until *includes* the separator if present
+        let bytes_read = self.reader.read_until(self.separator, &mut self.buffer)?;
         if bytes_read == 0 {
             return Ok(None);
         }
-        // O(1) check whether it ended in '\n'
-        let has_newline = self.buffer.ends_with(b"\n");
+        // O(1) check whether it ended in the separator
+        let has_newline = self.buffer.last() == Some(&self.separator);
         // strip it if you don’t want to expose it to the caller
         if has_newline {
             self.buffer.pop();
@@ -200,13 +204,9 @@ impl<'a> IOChunk<'a> {
         match &self.content {
             IOChunkContent::Owned { has_newline, .. } => *has_newline,
             #[cfg(unix)]
-            IOChunkContent::MmapInput { full_span, .. } => {
-                if let Some(&last) = full_span.last() {
-                    last == b'\n'
-                } else {
-                    false
-                }
-            }
+            IOChunkContent::MmapInput {
+                full_span, content, ..
+            } => full_span.len() > content.len(),
         }
     }
 
@@ -503,6 +503,19 @@ impl<'a> LineReader<'a> {
         line_reader_read_input(file)
     }
 
+    /// Set the byte that separates input records (lines).
+    pub fn set_separator(&mut self, separator: u8) {
+        match self {
+            #[cfg(unix)]
+            LineReader::MmapInput { cursor, .. } => cursor.separator = separator,
+
+            LineReader::ReadInput(cursor) => cursor.separator = separator,
+
+            #[cfg(not(unix))]
+            LineReader::_Phantom(_) => unreachable!("_Phantom should never be constructed"),
+        }
+    }
+
     /// Return the next line, if available.
     pub fn get_line(&mut self) -> io::Result<Option<IOChunk<'a>>> {
         match self {
@@ -595,6 +608,7 @@ pub struct OutputBuffer {
     // True when the last write didn't end with \n; the \n is deferred so
     // that commands like `p` don't emit a spurious newline under -n.
     pending_newline: bool,
+    terminator: u8, // Output record terminator (\n, or \0 with -z)
     #[cfg(test)]
     low_level_flushes: usize, // Number of system call flushes
 }
@@ -628,6 +642,7 @@ impl OutputBuffer {
         Self {
             out: BufWriter::new(w),
             pending_newline: false,
+            terminator: b'\n',
             #[cfg(test)]
             low_level_flushes: 0,
         }
@@ -647,9 +662,30 @@ impl OutputBuffer {
             max_pending_write,
             mmap_chunk: None,
             pending_newline: false,
+            terminator: b'\n',
             #[cfg(test)]
             low_level_flushes: 0,
         }
+    }
+
+    /// Set the byte written to terminate output records.
+    // A trailing \n in text passed to write_str and write_bytes is
+    // output as this terminator.
+    pub fn set_terminator(&mut self, terminator: u8) {
+        self.terminator = terminator;
+    }
+
+    /// Schedule the specified bytes for output exactly as given.
+    pub fn write_raw(&mut self, bytes: &[u8]) -> io::Result<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        self.write_chunk(&IOChunk::from_content(IOChunkContent::new_owned(
+            bytes.to_vec(),
+            false,
+        )))?;
+        self.pending_newline = false;
+        Ok(())
     }
 
     /// Schedule the specified String or &str for eventual output
@@ -727,7 +763,7 @@ impl OutputBuffer {
 
         if self.pending_newline {
             self.flush_mmap(WriteRange::Complete)?;
-            self.out.write_all(b"\n")?;
+            self.out.write_all(&[self.terminator])?;
             self.pending_newline = false;
         }
 
@@ -787,7 +823,7 @@ impl OutputBuffer {
                 self.flush_mmap(WriteRange::Complete)?;
                 self.out.write_all(content)?;
                 if *has_newline {
-                    self.out.write_all(b"\n")?;
+                    self.out.write_all(&[self.terminator])?;
                 }
                 self.pending_newline = !has_newline;
             }
@@ -842,7 +878,7 @@ impl OutputBuffer {
     pub fn flush_pending_newline(&mut self) -> io::Result<()> {
         if self.pending_newline {
             self.flush_mmap(WriteRange::Complete)?;
-            self.out.write_all(b"\n")?;
+            self.out.write_all(&[self.terminator])?;
             self.pending_newline = false;
         }
         Ok(())
@@ -864,7 +900,7 @@ impl OutputBuffer {
         }
 
         if self.pending_newline {
-            self.out.write_all(b"\n")?;
+            self.out.write_all(&[self.terminator])?;
             self.pending_newline = false;
         }
 
@@ -876,7 +912,7 @@ impl OutputBuffer {
             } => {
                 self.out.write_all(content)?;
                 if *has_newline {
-                    self.out.write_all(b"\n")?;
+                    self.out.write_all(&[self.terminator])?;
                 }
                 self.pending_newline = !has_newline;
                 Ok(())
@@ -887,7 +923,7 @@ impl OutputBuffer {
     /// Write a deferred newline if the last output didn't end with one.
     pub fn flush_pending_newline(&mut self) -> io::Result<()> {
         if self.pending_newline {
-            self.out.write_all(b"\n")?;
+            self.out.write_all(&[self.terminator])?;
             self.pending_newline = false;
         }
         Ok(())
@@ -1535,6 +1571,48 @@ mod tests {
         Ok(())
     }
 
+    /// Read "a\0b\nc\0d" with a NUL separator and return its lines.
+    fn read_nul_separated(reader: &mut LineReader) -> io::Result<Vec<(Vec<u8>, bool)>> {
+        reader.set_separator(b'\0');
+        let mut lines = Vec::new();
+        while let Some(line) = reader.get_line()? {
+            lines.push((line.as_bytes().to_vec(), line.is_newline_terminated()));
+        }
+        Ok(lines)
+    }
+
+    const NUL_SEPARATED: &[u8] = b"a\0b\nc\0d";
+
+    fn nul_separated_lines() -> Vec<(Vec<u8>, bool)> {
+        vec![
+            (b"a".to_vec(), true),
+            (b"b\nc".to_vec(), true),
+            (b"d".to_vec(), false),
+        ]
+    }
+
+    #[test]
+    fn test_stream_read_nul_separator() -> io::Result<()> {
+        let mut tmp = NamedTempFile::new()?;
+        tmp.write_all(NUL_SEPARATED)?;
+        let mut reader = LineReader::open_stream(&tmp.path().to_path_buf())?;
+
+        assert_eq!(read_nul_separated(&mut reader)?, nul_separated_lines());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_mmap_read_nul_separator() -> io::Result<()> {
+        let mut tmp = NamedTempFile::new()?;
+        tmp.write_all(NUL_SEPARATED)?;
+        let mut reader = LineReader::open(&tmp.path().to_path_buf())?;
+        assert!(matches!(reader, LineReader::MmapInput { .. }));
+
+        assert_eq!(read_nul_separated(&mut reader)?, nul_separated_lines());
+        Ok(())
+    }
+
     // is_newline_terminated, is_empty
     #[test]
     fn test_owned_newline_terminated_non_empty() {
@@ -1572,6 +1650,15 @@ mod tests {
         let full_span = b"line";
         let chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
         assert!(!chunk.is_newline_terminated());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_mmap_nul_terminated() {
+        let content = b"line";
+        let full_span = b"line\0";
+        let chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
+        assert!(chunk.is_newline_terminated());
     }
 
     #[cfg(unix)]
@@ -1977,6 +2064,7 @@ mod tests {
             #[cfg(unix)]
             mmap_chunk: None,
             pending_newline: false,
+            terminator: b'\n',
             low_level_flushes: 0,
         };
         (buf, file)
@@ -1993,7 +2081,8 @@ mod tests {
                     block_size: 1,
                 },
                 base: bytes.as_ptr(),
-                content: bytes,
+                // As returned by get_line: without the line's newline.
+                content: bytes.strip_suffix(b"\n").unwrap_or(bytes),
                 full_span: bytes,
             },
         }
@@ -2150,5 +2239,38 @@ mod tests {
         let mut out = String::new();
         file.read_to_string(&mut out).unwrap();
         assert_eq!(out, "baz\n");
+    }
+
+    // A set terminator replaces the \n that ends each output line
+    #[test]
+    fn nul_terminator_ends_lines() {
+        let (mut buf, mut file) = new_for_test();
+        buf.set_terminator(b'\0');
+        buf.write_str("a\n").unwrap();
+        buf.write_bytes(b"b").unwrap();
+        buf.write_chunk(&make_owned_chunk("c", false)).unwrap();
+        buf.flush_pending_newline().unwrap();
+        buf.out.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = String::new();
+        file.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "a\0b\0c\0");
+    }
+
+    // write_raw outputs its bytes unchanged and completes the line
+    #[test]
+    fn write_raw_outputs_bytes_unchanged() {
+        let (mut buf, mut file) = new_for_test();
+        buf.set_terminator(b'\0');
+        buf.write_str("a").unwrap();
+        buf.write_raw(b"").unwrap();
+        buf.write_raw(b"b\n").unwrap();
+        assert!(!buf.pending_newline);
+        buf.write_str("c\n").unwrap();
+        buf.out.flush().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = String::new();
+        file.read_to_string(&mut out).unwrap();
+        assert_eq!(out, "a\0b\nc\0");
     }
 }
