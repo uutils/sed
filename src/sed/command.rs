@@ -334,6 +334,7 @@ pub struct Command {
     pub addr2: Option<Address>,             // End address
     pub non_select: bool,                   // True if '!'
     pub start_line: Option<usize>,          // Start line number (or None if unlatched)
+    pub range_started: bool,                // True once the range has been entered
     pub data: CommandData,                  // Command-specific data
     pub next: Option<Rc<RefCell<Command>>>, // Pointer to next command
     pub location: ScriptLocation,           // Command's definition location
@@ -347,6 +348,7 @@ impl Default for Command {
             addr2: None,
             non_select: false,
             start_line: None,
+            range_started: false,
             data: CommandData::None,
             next: None,
             location: ScriptLocation::default(),

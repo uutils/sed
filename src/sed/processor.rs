@@ -124,7 +124,19 @@ fn applies(
             }
         } else if let Some(addr1) = &command.addr1 {
             // See if latch must start.
-            if match_address(addr1, reader, pattern, context, &command.location)? {
+            let starts = match addr1 {
+                // A numeric first address may already have been passed
+                // when the command is first evaluated (e.g. inside a block,
+                // or after n, N, d or a branch skipped it).  The range then
+                // starts on the current line, unless a numeric second
+                // address has also been passed.  This happens only once.
+                Address::Line(n) if linenum > *n => {
+                    !command.range_started && !matches!(addr2, Address::Line(m) if *m < linenum)
+                }
+                _ => match_address(addr1, reader, pattern, context, &command.location)?,
+            };
+            if starts {
+                command.range_started = true;
                 match addr2 {
                     Address::Line(n) if linenum >= *n => {
                         context.last_address = true;
@@ -961,13 +973,10 @@ fn reset_latched_address_ranges(range_commands: &mut [Rc<RefCell<Command>>]) {
     for cmd_rc in range_commands.iter() {
         let mut cmd = cmd_rc.borrow_mut();
 
-        cmd.start_line =
-            // Check for address-spec line 0 pre-latch extension.
-            if let Some(addr1) = &cmd.addr1 && matches!(addr1, Address::Line(0)) {
-                Some(0)
-            } else {
-                None
-            };
+        // Check for address-spec line 0 pre-latch extension.
+        let pre_latched = matches!(cmd.addr1, Some(Address::Line(0)));
+        cmd.start_line = if pre_latched { Some(0) } else { None };
+        cmd.range_started = pre_latched;
     }
 }
 

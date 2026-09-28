@@ -2761,6 +2761,55 @@ fn test_step_match_zero_closes_range() {
 }
 
 #[test]
+fn test_range_numeric_start_already_passed() {
+    // The inner range is first evaluated on line 3, after its start line.
+    for (script, expected) in [
+        ("3,6{ 1,4p }", "3\n4\n"),
+        ("3,6{ 3,4p }", "3\n4\n"),
+        ("3,6{ 1,3p }", "3\n"),
+        ("3,6{ 1,2p }", ""),
+        ("3,6{ 1,~4p }", "3\n4\n"),
+        ("3,6{ 1,+1p }", "3\n4\n"),
+        ("3,6{ 1,/5/p }", "3\n4\n5\n"),
+        ("3,6{ 1,$p }", "3\n4\n5\n6\n"),
+        ("3,6{ 1,2!p }", "3\n4\n5\n6\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("1\n2\n3\n4\n5\n6\n7\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_range_numeric_start_passed_starts_once() {
+    // Once the range has ended, it does not start again.
+    for (script, expected) in [
+        ("/[2468]/{ 1,/[48]/p }", "2\n4\n"),
+        ("/[3579]/{ 2,/./p }", "3\n5\n"),
+        ("1,/3/p", "1\n2\n3\n"),
+        ("0,/2/p", "1\n2\n"),
+        ("/[3-9]/{ 0,/5/p }", "3\n4\n5\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_range_numeric_start_skipped_by_d() {
+    new_ucmd!()
+        .args(&["-e", "1,3d", "-e", "2,5s/$/!/"])
+        .pipe_in("a\nb\nc\nd\ne\nf\n")
+        .succeeds()
+        .stdout_is("d!\ne!\nf\n");
+}
+
+#[test]
 fn test_step_non_numeric() {
     for (script, column) in [("1~/x/p", 6), ("1,~/x/p", 7)] {
         new_ucmd!()
