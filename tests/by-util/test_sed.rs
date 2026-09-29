@@ -2324,7 +2324,11 @@ fn in_place_edit_backup() -> std::io::Result<()> {
 
 #[test]
 fn in_place_edit_backup_forms() -> std::io::Result<()> {
-    for arg in ["-i.bak", "--in-place=.bak", "-ni.bak"] {
+    for (arg, expected) in [
+        ("-i.bak", "hello, universe\nhello, universe\n"),
+        ("--in-place=.bak", "hello, universe\nhello, universe\n"),
+        ("-ni.bak", "hello, universe\n"),
+    ] {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("input");
         std::fs::write(&path, "hello, world\n")?;
@@ -2333,11 +2337,6 @@ fn in_place_edit_backup_forms() -> std::io::Result<()> {
             .args(&[arg, "s/world/universe/p", path.to_str().unwrap()])
             .succeeds();
 
-        let expected = if arg == "-ni.bak" {
-            "hello, universe\n"
-        } else {
-            "hello, universe\nhello, universe\n"
-        };
         assert_eq!(std::fs::read_to_string(&path)?, expected, "{arg}");
         assert_eq!(
             std::fs::read_to_string(dir.path().join("input.bak"))?,
@@ -2345,6 +2344,26 @@ fn in_place_edit_backup_forms() -> std::io::Result<()> {
             "{arg}"
         );
     }
+    Ok(())
+}
+
+// As in GNU sed, the value of `-f` is not taken as `-i`.
+#[test]
+fn script_file_named_like_in_place_option() -> std::io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    std::fs::write(dir.path().join("-ifoo.sed"), "s/world/universe/\n")?;
+    std::fs::write(dir.path().join("input"), "hello, world\n")?;
+
+    new_ucmd!()
+        .current_dir(dir.path())
+        .args(&["-f", "-ifoo.sed", "input"])
+        .succeeds()
+        .stdout_is("hello, universe\n");
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("input"))?,
+        "hello, world\n"
+    );
     Ok(())
 }
 
