@@ -28,6 +28,7 @@ use crate::sed::script_line_provider::ScriptValue;
 use clap::{Arg, ArgMatches, Command, arg};
 use std::collections::HashMap;
 use std::env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use uucore::error::{UResult, USimpleError, UUsageError};
 use uucore::format_usage;
@@ -38,7 +39,7 @@ const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (uutils)");
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let matches = uu_app().try_get_matches_from(args)?;
+    let matches = parse_args(args)?;
 
     // Don't use arg_required_else_help when declaring command
     // as it exits with code 2 and we use it to check
@@ -54,6 +55,66 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let executable = compile(scripts, &mut context)?;
     process_all_files(executable, files, &mut context)?;
     Ok(())
+}
+
+fn parse_args(args: impl IntoIterator<Item = OsString>) -> clap::error::Result<ArgMatches> {
+    let mut cmd = uu_app();
+    cmd.build();
+    let args = gnu_in_place_args(&cmd, args);
+    cmd.try_get_matches_from(args)
+}
+
+/// Rewrite GNU's `-iSUFFIX`, which clap cannot parse, as `--in-place=SUFFIX`,
+/// splitting it from flags clustered before it: `-ni.bak` becomes
+/// `-n --in-place=.bak`.
+fn gnu_in_place_args(cmd: &Command, args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
+    let mut args = args.into_iter();
+    // The program name.
+    let mut out: Vec<OsString> = args.next().into_iter().collect();
+    for arg in args.by_ref() {
+        if arg == "--" {
+            out.push(arg);
+            break;
+        }
+        // Pass non-UTF-8 arguments to clap unchanged.
+        let Some((flags, suffix)) = arg.to_str().and_then(|s| {
+            let pos = in_place_option_position(cmd, s)?;
+            Some((&s[..pos], &s[pos + 1..]))
+        }) else {
+            out.push(arg);
+            continue;
+        };
+        if flags != "-" {
+            out.push(flags.into());
+        }
+        out.push(format!("--in-place={suffix}").into());
+    }
+    out.extend(args);
+    out
+}
+
+/// Return the position of the `i` in a cluster like `-ni.bak`, if a suffix
+/// follows it.
+fn in_place_option_position(cmd: &Command, arg: &str) -> Option<usize> {
+    let cluster = arg
+        .as_bytes()
+        .strip_prefix(b"-")
+        .filter(|c| !c.starts_with(b"-"))?;
+    for (pos, &byte) in cluster.iter().enumerate() {
+        // All short options are ASCII. Leave unknown options for clap to report.
+        let c = char::from(byte);
+        let opt = cmd.get_arguments().find(|a| {
+            a.get_short() == Some(c) || a.get_all_short_aliases().is_some_and(|s| s.contains(&c))
+        })?;
+        if opt.get_id() == "in-place" {
+            return (pos + 1 < cluster.len()).then_some(pos + 1);
+        }
+        if opt.get_action().takes_values() {
+            // The rest of the cluster is this option's value.
+            return None;
+        }
+    }
+    None
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -101,11 +162,14 @@ pub fn uu_app() -> Command {
                 .help("Follow symlinks when processing in place.")
                 .action(clap::ArgAction::SetTrue),
             // Access with .get_one::<String>("in-place")
+            // The SUFFIX must be attached, as in GNU sed.
             Arg::new("in-place")
                 .short('i')
                 .long("in-place")
                 .help("Edit files in place, making a backup if SUFFIX is supplied.")
+                .value_name("SUFFIX")
                 .num_args(0..=1)
+                .require_equals(true)
                 .default_missing_value(""),
             // Access with .get_one::<u32>("line-length")
             arg!(-l --length <NUM> "Specify the 'l' command line-wrap length.")
@@ -445,13 +509,124 @@ mod tests {
         assert!(ctx.regex_extended);
     }
 
-    #[test]
-    fn test_in_place_with_suffix() {
-        let matches = test_matches(&["-i", ".bak"]);
-        let ctx = build_context(&matches).unwrap();
+    // In-place argument rewriting
+    fn in_place_args(args: &[&str]) -> Vec<String> {
+        let mut cmd = uu_app();
+        cmd.build();
+        gnu_in_place_args(&cmd, ["sed"].iter().chain(args).map(OsString::from))
+            .into_iter()
+            .skip(1)
+            .map(|arg| arg.into_string().unwrap())
+            .collect()
+    }
 
-        assert!(ctx.in_place);
-        assert_eq!(ctx.in_place_suffix, Some(".bak".to_string()));
+    fn in_place_matches(args: &[&str]) -> ArgMatches {
+        parse_args(["sed"].iter().chain(args).map(OsString::from)).unwrap()
+    }
+
+    #[test]
+    fn test_in_place_args_rewrite_attached_suffix() {
+        let cases: &[(&[&str], &[&str])] = &[
+            (&["-i.bak"], &["--in-place=.bak"]),
+            // Everything after the `i` is the suffix, as in GNU sed.
+            (&["-iE"], &["--in-place=E"]),
+            (&["-i=.bak"], &["--in-place==.bak"]),
+            // Flags clustered before `-i` are kept.
+            (&["-ni.bak"], &["-n", "--in-place=.bak"]),
+            (&["-Esi.bak"], &["-Es", "--in-place=.bak"]),
+            (&["-ri.bak"], &["-r", "--in-place=.bak"]),
+            (
+                &["-i.bak", "--", "-i.keep"],
+                &["--in-place=.bak", "--", "-i.keep"],
+            ),
+        ];
+        for (args, expected) in cases {
+            assert_eq!(in_place_args(args), *expected, "args: {args:?}");
+        }
+    }
+
+    #[test]
+    fn test_in_place_args_leave_other_arguments_alone() {
+        let cases: &[&[&str]] = &[
+            &["-i", "s/a/b/", "file"],
+            &["-Ei", "s/a/b/", "file"],
+            &["-En", "s/a/b/", "file"],
+            &["--in-place=.bak", "s/a/b/", "file"],
+            &["--in=.bak", "s/a/b/", "file"],
+            // Values attached to other options.
+            &["-fi.sed", "file"],
+            &["-nfi.sed", "file"],
+            &["-ei", "file"],
+            // Unknown options are left for clap to report.
+            &["-xi.bak"],
+            &["--", "-i.bak"],
+        ];
+        for args in cases {
+            assert_eq!(in_place_args(args), *args, "args: {args:?}");
+        }
+    }
+
+    #[test]
+    fn test_in_place_suffix_forms() {
+        let cases: &[(&[&str], Option<&str>)] = &[
+            (&["-i"], None),
+            (&["--in-place"], None),
+            (&["-i.bak"], Some(".bak")),
+            (&["--in-place=.bak"], Some(".bak")),
+            (&["-i=.bak"], Some("=.bak")),
+            (&["-iE"], Some("E")),
+        ];
+        for (args, suffix) in cases {
+            let args: Vec<&str> = args.iter().copied().chain(["s/a/b/", "file"]).collect();
+            let matches = in_place_matches(&args);
+            let ctx = build_context(&matches).unwrap();
+            let (scripts, files) = get_scripts_files(&matches).unwrap();
+
+            assert!(ctx.in_place, "args: {args:?}");
+            assert_eq!(ctx.in_place_suffix.as_deref(), *suffix, "args: {args:?}");
+            assert!(!ctx.regex_extended, "args: {args:?}");
+            assert_eq!(
+                scripts,
+                vec![ScriptValue::StringVal("s/a/b/".to_string())],
+                "args: {args:?}"
+            );
+            assert_eq!(files, vec![PathBuf::from("file")], "args: {args:?}");
+        }
+    }
+
+    #[test]
+    fn test_in_place_clustered_with_flags() {
+        for (arg, suffix) in [("-nEi", None), ("-nEi.bak", Some(".bak"))] {
+            let matches = in_place_matches(&[arg, "s/a/b/p", "file"]);
+            let ctx = build_context(&matches).unwrap();
+            let (scripts, files) = get_scripts_files(&matches).unwrap();
+
+            assert!(ctx.quiet, "{arg}");
+            assert!(ctx.regex_extended, "{arg}");
+            assert!(ctx.in_place, "{arg}");
+            assert_eq!(ctx.in_place_suffix.as_deref(), suffix, "{arg}");
+            assert_eq!(
+                scripts,
+                vec![ScriptValue::StringVal("s/a/b/p".to_string())],
+                "{arg}"
+            );
+            assert_eq!(files, vec![PathBuf::from("file")], "{arg}");
+        }
+    }
+
+    #[test]
+    fn test_in_place_detached_argument_is_not_suffix() {
+        // BSD sed reads the argument after `-i` as the suffix; GNU sed does not.
+        for suffix in ["", ".bak"] {
+            let matches = in_place_matches(&["-i", suffix, "-e", "s/a/b/", "file"]);
+            let ctx = build_context(&matches).unwrap();
+            let (scripts, files) = get_scripts_files(&matches).unwrap();
+
+            assert!(ctx.in_place);
+            assert_eq!(ctx.in_place_suffix, None);
+            assert_eq!(scripts, vec![ScriptValue::StringVal("s/a/b/".to_string())]);
+            assert_eq!(files, vec![PathBuf::from(suffix), PathBuf::from("file")]);
+        }
     }
 
     #[test]

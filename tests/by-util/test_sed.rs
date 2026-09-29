@@ -2255,6 +2255,47 @@ fn in_place_edit_replace() -> std::io::Result<()> {
     Ok(())
 }
 
+// `sed -i SCRIPT FILE`: the argument after `-i` is the script, not a suffix.
+#[test]
+fn in_place_edit_script_after_bare_i() -> std::io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
+
+    std::fs::write(&path, "hello, world\n")?;
+
+    new_ucmd!()
+        .args(&["-i", "s/world/universe/", path.to_str().unwrap()])
+        .succeeds();
+
+    let actual = std::fs::read_to_string(&path)?;
+    assert_eq!(actual, "hello, universe\n");
+    Ok(())
+}
+
+// As in GNU sed, BSD's detached suffix is a script or an input file.
+#[test]
+fn in_place_edit_detached_suffix_is_not_suffix() -> std::io::Result<()> {
+    let script = "s/world/universe/";
+    let cases: &[(&[&str], &str)] = &[
+        (&["-i", "", "-e", script], "''"),
+        (&["-i", ".bak", "-e", script], "'.bak'"),
+        // The empty argument is the script, and the script is an input file.
+        (&["-i", "", script], "'s/world/universe/'"),
+    ];
+    for (args, missing) in cases {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("input");
+        std::fs::write(&path, "hello, world\n")?;
+
+        new_ucmd!()
+            .args(args)
+            .arg(&path)
+            .fails()
+            .stderr_contains(format!("error opening input file {missing}"));
+    }
+    Ok(())
+}
+
 #[test]
 fn in_place_edit_backup() -> std::io::Result<()> {
     let dir = tempfile::tempdir()?;
@@ -2263,13 +2304,7 @@ fn in_place_edit_backup() -> std::io::Result<()> {
     std::fs::write(&path, b"hello, world\n")?;
 
     new_ucmd!()
-        .args(&[
-            "-i",
-            ".bak",
-            "-e",
-            "s/world/universe/",
-            path.to_str().unwrap(),
-        ])
+        .args(&["-i.bak", "-e", "s/world/universe/", path.to_str().unwrap()])
         .succeeds();
 
     // Read edited file
@@ -2284,6 +2319,32 @@ fn in_place_edit_backup() -> std::io::Result<()> {
     let backup = std::fs::read_to_string(&backup_path)?;
     assert_eq!(backup, "hello, world\n");
 
+    Ok(())
+}
+
+#[test]
+fn in_place_edit_backup_forms() -> std::io::Result<()> {
+    for arg in ["-i.bak", "--in-place=.bak", "-ni.bak"] {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("input");
+        std::fs::write(&path, "hello, world\n")?;
+
+        new_ucmd!()
+            .args(&[arg, "s/world/universe/p", path.to_str().unwrap()])
+            .succeeds();
+
+        let expected = if arg == "-ni.bak" {
+            "hello, universe\n"
+        } else {
+            "hello, universe\nhello, universe\n"
+        };
+        assert_eq!(std::fs::read_to_string(&path)?, expected, "{arg}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("input.bak"))?,
+            "hello, world\n",
+            "{arg}"
+        );
+    }
     Ok(())
 }
 
@@ -2360,8 +2421,7 @@ fn in_place_edit_follow_symlink_with_backup() -> Result<(), Box<dyn std::error::
     new_ucmd!()
         .args(&[
             "--follow-symlinks",
-            "-i",
-            ".bak",
+            "-i.bak",
             "-e",
             "s/world/universe/",
             link.path().to_str().unwrap(),
@@ -2396,8 +2456,7 @@ fn in_place_edit_symlink_replaced_with_backup() -> Result<(), Box<dyn std::error
 
     new_ucmd!()
         .args(&[
-            "-i",
-            ".bak",
+            "-i.bak",
             "-e",
             "s/world/universe/",
             link.path().to_str().unwrap(),

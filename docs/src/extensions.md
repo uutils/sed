@@ -35,6 +35,8 @@ Below is a list of these extensions and incompatibilities.
 ## Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.
 * In-place editing of file with the `-i` flag.
+  As in GNU _sed_, a backup suffix must be attached (`-i.bak`,
+  `--in-place=.bak`); BSD's `-i .bak` and `-i ''` are not supported.
 
 ## New extensions
 * Unicode characters can be specified in regular expression pattern, replacement
