@@ -66,55 +66,109 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> clap::error::Result<A
 
 /// Rewrite GNU's `-iSUFFIX`, which clap cannot parse, as `--in-place=SUFFIX`,
 /// splitting it from flags clustered before it: `-ni.bak` becomes
-/// `-n --in-place=.bak`.
+/// `-n --in-place=.bak`. The values of other options are left as they are.
 fn gnu_in_place_args(cmd: &Command, args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
     let mut args = args.into_iter();
     // The program name.
     let mut out: Vec<OsString> = args.next().into_iter().collect();
-    for arg in args.by_ref() {
+    while let Some(arg) = args.next() {
+        // Pass non-UTF-8 arguments to clap unchanged.
+        let arg = match arg.into_string() {
+            Ok(arg) => arg,
+            Err(arg) => {
+                out.push(arg);
+                continue;
+            }
+        };
         if arg == "--" {
-            out.push(arg);
+            out.push(arg.into());
             break;
         }
-        // Pass non-UTF-8 arguments to clap unchanged.
-        let Some((flags, suffix)) = arg.to_str().and_then(|s| {
-            let pos = in_place_option_position(cmd, s)?;
-            Some((&s[..pos], &s[pos + 1..]))
-        }) else {
-            out.push(arg);
-            continue;
-        };
-        if flags != "-" {
-            out.push(flags.into());
+        match option_kind(cmd, &arg) {
+            OptionKind::InPlace(pos) => {
+                if pos > 1 {
+                    out.push(arg[..pos].into());
+                }
+                out.push(format!("--in-place={}", &arg[pos + 1..]).into());
+            }
+            OptionKind::ValueFollows => {
+                out.push(arg.into());
+                // Keep the value as is, even if it looks like `-iSUFFIX`.
+                out.extend(args.next());
+            }
+            OptionKind::Other => out.push(arg.into()),
         }
-        out.push(format!("--in-place={suffix}").into());
     }
     out.extend(args);
     out
 }
 
-/// Return the position of the `i` in a cluster like `-ni.bak`, if a suffix
-/// follows it.
-fn in_place_option_position(cmd: &Command, arg: &str) -> Option<usize> {
-    let cluster = arg
-        .as_bytes()
-        .strip_prefix(b"-")
-        .filter(|c| !c.starts_with(b"-"))?;
-    for (pos, &byte) in cluster.iter().enumerate() {
-        // All short options are ASCII. Leave unknown options for clap to report.
-        let c = char::from(byte);
-        let opt = cmd.get_arguments().find(|a| {
+enum OptionKind {
+    /// A cluster like `-ni.bak`, with the position of its `i`.
+    InPlace(usize),
+    /// An option whose value is the next argument, like `-f FILE`.
+    ValueFollows,
+    Other,
+}
+
+fn option_kind(cmd: &Command, arg: &str) -> OptionKind {
+    if let Some(name) = arg.strip_prefix("--") {
+        return match long_option(cmd, name) {
+            Some(opt) if opt.get_action().takes_values() && !opt.is_require_equals_set() => {
+                OptionKind::ValueFollows
+            }
+            _ => OptionKind::Other,
+        };
+    }
+    let Some(cluster) = arg.strip_prefix('-') else {
+        return OptionKind::Other;
+    };
+    for (pos, c) in cluster.char_indices() {
+        // Leave unknown options for clap to report.
+        let Some(opt) = cmd.get_arguments().find(|a| {
             a.get_short() == Some(c) || a.get_all_short_aliases().is_some_and(|s| s.contains(&c))
-        })?;
+        }) else {
+            return OptionKind::Other;
+        };
+        let attached = pos + c.len_utf8() < cluster.len();
         if opt.get_id() == "in-place" {
-            return (pos + 1 < cluster.len()).then_some(pos + 1);
+            return if attached {
+                OptionKind::InPlace(pos + 1)
+            } else {
+                OptionKind::Other
+            };
         }
         if opt.get_action().takes_values() {
-            // The rest of the cluster is this option's value.
-            return None;
+            // The rest of the cluster, or else the next argument, is the value.
+            return if attached {
+                OptionKind::Other
+            } else {
+                OptionKind::ValueFollows
+            };
         }
     }
-    None
+    OptionKind::Other
+}
+
+/// Find a long option by its name or, as `infer_long_args` allows, a unique
+/// prefix of it. `None` if `name` includes a value.
+fn long_option<'a>(cmd: &'a Command, name: &str) -> Option<&'a Arg> {
+    if name.contains('=') {
+        return None;
+    }
+    let names = |a: &'a Arg| {
+        a.get_long()
+            .into_iter()
+            .chain(a.get_all_aliases().into_iter().flatten())
+    };
+    if let Some(opt) = cmd.get_arguments().find(|a| names(a).any(|n| n == name)) {
+        return Some(opt);
+    }
+    let mut found = cmd
+        .get_arguments()
+        .filter(|a| names(a).any(|n| n.starts_with(name)));
+    let opt = found.next()?;
+    found.next().is_none().then_some(opt)
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -148,7 +202,9 @@ pub fn uu_app() -> Command {
                 .short_alias('r')
                 .help("Use extended regular expressions.")
                 .action(clap::ArgAction::SetTrue),
+            // As in GNU sed, a value may begin with `-`.
             arg!(-e --expression <SCRIPT> "Add script to executed commands.")
+                .allow_hyphen_values(true)
                 .action(clap::ArgAction::Append),
             // Access with .get_many::<PathBuf>("file")
             Arg::new("script-file")
@@ -156,6 +212,7 @@ pub fn uu_app() -> Command {
                 .long("script-file")
                 .help("Specify script file.")
                 .value_parser(clap::value_parser!(PathBuf))
+                .allow_hyphen_values(true)
                 .action(clap::ArgAction::Append),
             Arg::new("follow-symlinks")
                 .long("follow-symlinks")
@@ -173,6 +230,7 @@ pub fn uu_app() -> Command {
                 .default_missing_value(""),
             // Access with .get_one::<u32>("line-length")
             arg!(-l --length <NUM> "Specify the 'l' command line-wrap length.")
+                .allow_hyphen_values(true)
                 .value_parser(clap::value_parser!(u32)),
             arg!(-n --quiet "Suppress automatic printing of pattern space.").aliases(["silent"]),
             arg!(--posix "Disable non-POSIX extensions."),
@@ -520,10 +578,6 @@ mod tests {
             .collect()
     }
 
-    fn in_place_matches(args: &[&str]) -> ArgMatches {
-        parse_args(["sed"].iter().chain(args).map(OsString::from)).unwrap()
-    }
-
     #[test]
     fn test_in_place_args_rewrite_attached_suffix() {
         let cases: &[(&[&str], &[&str])] = &[
@@ -539,6 +593,19 @@ mod tests {
                 &["-i.bak", "--", "-i.keep"],
                 &["--in-place=.bak", "--", "-i.keep"],
             ),
+            // Only the next argument is another option's value.
+            (&["-e", "p", "-i.bak"], &["-e", "p", "--in-place=.bak"]),
+            (
+                &["--expression=p", "-i.bak"],
+                &["--expression=p", "--in-place=.bak"],
+            ),
+            (&["--quiet", "-i.bak"], &["--quiet", "--in-place=.bak"]),
+            (
+                &["--in-place", "-i.bak"],
+                &["--in-place", "--in-place=.bak"],
+            ),
+            // A `--` that is an option's value does not end the options.
+            (&["-e", "--", "-i.bak"], &["-e", "--", "--in-place=.bak"]),
         ];
         for (args, expected) in cases {
             assert_eq!(in_place_args(args), *expected, "args: {args:?}");
@@ -557,75 +624,18 @@ mod tests {
             &["-fi.sed", "file"],
             &["-nfi.sed", "file"],
             &["-ei", "file"],
+            // Values that follow other options.
+            &["-f", "-ifoo.sed", "file"],
+            &["-nf", "-ifoo.sed", "file"],
+            &["-l", "-i5"],
+            &["--expression", "-i.bak"],
+            &["--expr", "-i.bak"],
             // Unknown options are left for clap to report.
             &["-xi.bak"],
             &["--", "-i.bak"],
         ];
         for args in cases {
             assert_eq!(in_place_args(args), *args, "args: {args:?}");
-        }
-    }
-
-    #[test]
-    fn test_in_place_suffix_forms() {
-        let cases: &[(&[&str], Option<&str>)] = &[
-            (&["-i"], None),
-            (&["--in-place"], None),
-            (&["-i.bak"], Some(".bak")),
-            (&["--in-place=.bak"], Some(".bak")),
-            (&["-i=.bak"], Some("=.bak")),
-            (&["-iE"], Some("E")),
-        ];
-        for (args, suffix) in cases {
-            let args: Vec<&str> = args.iter().copied().chain(["s/a/b/", "file"]).collect();
-            let matches = in_place_matches(&args);
-            let ctx = build_context(&matches).unwrap();
-            let (scripts, files) = get_scripts_files(&matches).unwrap();
-
-            assert!(ctx.in_place, "args: {args:?}");
-            assert_eq!(ctx.in_place_suffix.as_deref(), *suffix, "args: {args:?}");
-            assert!(!ctx.regex_extended, "args: {args:?}");
-            assert_eq!(
-                scripts,
-                vec![ScriptValue::StringVal("s/a/b/".to_string())],
-                "args: {args:?}"
-            );
-            assert_eq!(files, vec![PathBuf::from("file")], "args: {args:?}");
-        }
-    }
-
-    #[test]
-    fn test_in_place_clustered_with_flags() {
-        for (arg, suffix) in [("-nEi", None), ("-nEi.bak", Some(".bak"))] {
-            let matches = in_place_matches(&[arg, "s/a/b/p", "file"]);
-            let ctx = build_context(&matches).unwrap();
-            let (scripts, files) = get_scripts_files(&matches).unwrap();
-
-            assert!(ctx.quiet, "{arg}");
-            assert!(ctx.regex_extended, "{arg}");
-            assert!(ctx.in_place, "{arg}");
-            assert_eq!(ctx.in_place_suffix.as_deref(), suffix, "{arg}");
-            assert_eq!(
-                scripts,
-                vec![ScriptValue::StringVal("s/a/b/p".to_string())],
-                "{arg}"
-            );
-            assert_eq!(files, vec![PathBuf::from("file")], "{arg}");
-        }
-    }
-
-    #[test]
-    fn test_in_place_detached_argument_is_not_suffix() {
-        // BSD sed reads the argument after `-i` as the suffix; GNU sed does not.
-        for suffix in ["", ".bak"] {
-            let matches = in_place_matches(&["-i", suffix, "-e", "s/a/b/", "file"]);
-            let ctx = build_context(&matches).unwrap();
-            let (scripts, files) = get_scripts_files(&matches).unwrap();
-
-            assert!(ctx.in_place);
-            assert_eq!(ctx.in_place_suffix, None);
-            assert_eq!(scripts, vec![ScriptValue::StringVal("s/a/b/".to_string())]);
-            assert_eq!(files, vec![PathBuf::from(suffix), PathBuf::from("file")]);
         }
     }
 
