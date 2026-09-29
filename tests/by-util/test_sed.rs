@@ -2967,6 +2967,25 @@ fn test_range_numeric_start_passed_starts_once() {
 }
 
 #[test]
+fn test_range_numeric_start_passed_separate_files() -> std::io::Result<()> {
+    // With -s the "started once" state is reset, so the range starts again in the second file.
+    let input = "1\n2\n3\n4\n5\n6\n7\n";
+    let (_dir, path1, path2) = two_inputs(input, input)?;
+
+    new_ucmd!()
+        .args(&[
+            "-n",
+            "-s",
+            "3,6{ 1,4p }",
+            path1.to_str().unwrap(),
+            path2.to_str().unwrap(),
+        ])
+        .succeeds()
+        .stdout_is("3\n4\n3\n4\n");
+    Ok(())
+}
+
+#[test]
 fn test_range_numeric_start_skipped_by_d() {
     new_ucmd!()
         .args(&["-e", "1,3d", "-e", "2,5s/$/!/"])
