@@ -125,11 +125,7 @@ fn applies(
         } else if let Some(addr1) = &command.addr1 {
             // See if latch must start.
             let starts = match addr1 {
-                // A numeric first address may already have been passed
-                // when the command is first evaluated (e.g. inside a block,
-                // or after n, N, d or a branch skipped it).  The range then
-                // starts on the current line, unless a numeric second
-                // address has also been passed.  This happens only once.
+                // Numeric start already passed (block, d, n, branch): start once here.
                 Address::Line(n) if linenum > *n => {
                     !command.range_started && !matches!(addr2, Address::Line(m) if *m < linenum)
                 }
