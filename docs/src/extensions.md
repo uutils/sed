@@ -37,11 +37,18 @@ Below is a list of these extensions and incompatibilities.
 * In-place editing of file with the `-i` flag.
   As in GNU _sed_, a backup suffix must be attached (`-i.bak`,
   `--in-place=.bak`); BSD's `-i .bak` and `-i ''` are not supported.
+* GNU `s///` replacement case-conversion escapes:
+  - `\U`: Turn replacement text to uppercase until `\L` or `\E`.
+  - `\L`: Turn replacement text to lowercase until `\U` or `\E`.
+  - `\u`: Turn the next character to uppercase (one-shot).
+  - `\l`: Turn the next character to lowercase (one-shot).
+  - `\E`: Terminate persistent conversion started by `\U` or `\L` and clear any pending one-shot conversion.
 
 ## New extensions
 * Unicode characters can be specified in regular expression patterns and
   transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences. In
-  substitution replacements, `\u` and `\U` are GNU case-conversion directives.
+  substitution replacements, `\u`, `\U`, `\l`, `\L`, and `\E` are GNU
+  case-conversion directives.
 * On a terminal, script errors also quote the script line and underline the
   character at fault (`UUTILS_DIAG=always` or `never` overrides this):
   ```

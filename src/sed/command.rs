@@ -140,7 +140,7 @@ pub enum RegexMode {
 pub struct ReplacementTemplate {
     pub parts: Vec<ReplacementPart>,
     pub max_group_number: usize, // Highest used group number (e.g. 8 for \8)
-    pub has_case_conversion: bool, // True if any \U \L \u \l \E present
+    has_case_conversion: bool,   // True if any \U \L \u \l \E present
 }
 
 impl Default for ReplacementTemplate {
@@ -323,6 +323,11 @@ impl ReplacementTemplate {
         }
     }
 
+    /// Whether this template contains any case conversion escapes (\U \L \u \l \E).
+    pub fn has_case_conversion(&self) -> bool {
+        self.has_case_conversion
+    }
+
     fn render_parts<'a, F>(
         &self,
         character_mode: CharacterMode,
@@ -341,9 +346,7 @@ impl ReplacementTemplate {
                             result.extend_from_slice(bytes);
                         }
                     }
-                    _ => {
-                        panic!("has_case_conversion out of sync");
-                    }
+                    _ => unreachable!(),
                 }
             }
             return Ok(result);
@@ -1041,29 +1044,6 @@ mod tests {
         // groups (see processor), so a Group part here is a bug. Pin it.
         let template = ReplacementTemplate::new(vec![ReplacementPart::Group(1)]);
         let m = Match::from_bytes(0, 3, b"abc");
-        let _ = template.apply_match(&m, CharacterMode::Utf8);
-    }
-
-    #[test]
-    #[should_panic(expected = "has_case_conversion out of sync")]
-    fn test_fast_path_flag_mismatch_panics() {
-        // The fast paths are only taken when has_case_conversion is false;
-        // reaching a case directive there means the flag is out of sync.
-        let mut template = ReplacementTemplate::new(vec![ReplacementPart::Upper]);
-        template.has_case_conversion = false;
-        let input = &mut IOChunk::new_from_str("x");
-        let caps = caps_for("x", input);
-        let cmd = Command::default();
-        let _ = template.apply_captures(&cmd, &caps, CharacterMode::Utf8);
-    }
-
-    #[test]
-    #[should_panic(expected = "has_case_conversion out of sync")]
-    fn test_apply_match_flag_mismatch_panics() {
-        // Same invariant for the apply_match fast path.
-        let mut template = ReplacementTemplate::new(vec![ReplacementPart::Lower]);
-        template.has_case_conversion = false;
-        let m = Match::from_bytes(0, 1, b"x");
         let _ = template.apply_match(&m, CharacterMode::Utf8);
     }
 
