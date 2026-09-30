@@ -753,6 +753,83 @@ fn subst_case_conversion_single_shot_combos() {
         .stdout_is_bytes(b"123abc\n");
 }
 
+#[test]
+fn subst_unrecognized_escape_in_replacement_drops_backslash() {
+    // GNU sed subst-replacement.sh: backslash followed by unrecognized letter
+    // uses the letter as-is and drops the backslash.
+    new_ucmd!()
+        .args(&["-E", "-e", r"s/(.)/\Q/"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is_bytes(b"Q\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s/a/\q/"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is_bytes(b"q\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s/a/\\q/"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is_bytes(b"\\q\n");
+}
+
+#[test]
+fn subst_case_conversion_disabled_under_posix() {
+    // GNU sed posix-mode-s.sh: case-conversion escapes \U \L \u \l \E
+    // are GNU extensions and are disabled under POSIX mode.
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\l&/"])
+        .pipe_in("A\n")
+        .succeeds()
+        .stdout_is_bytes(b"lA\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s/./\l&/"])
+        .pipe_in("A\n")
+        .succeeds()
+        .stdout_is_bytes(b"a\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\u&/"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is_bytes(b"ua\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\U&/"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"Uabc\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\L&/"])
+        .pipe_in("ABC\n")
+        .succeeds()
+        .stdout_is_bytes(b"LABC\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\E&/"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"Eabc\n");
+
+    // In POSIX mode, valid \uXXXX and \UXXXXXXXX forms are not decoded as Unicode escapes
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\u0041/"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"u0041\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\U00000041/"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"U00000041\n");
+}
+
 /// Match non-UTF-8 input bytes with byte escapes in byte mode.
 #[test]
 fn subst_byte_escape_matches_invalid_input_in_c_locale() {
