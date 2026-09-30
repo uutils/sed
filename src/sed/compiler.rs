@@ -732,6 +732,7 @@ pub fn compile_replacement(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     character_mode: CharacterMode,
+    posix: bool,
 ) -> UResult<ReplacementTemplate> {
     let mut parts = Vec::new();
     let mut literal = Vec::new();
@@ -793,7 +794,8 @@ pub fn compile_replacement(
                         // cased. Handled before parse_char_escape so that \u
                         // and \U are not mistaken for \uXXXX / \UXXXXXXXX
                         // Unicode escapes (GNU reserves them for conversion).
-                        case @ ('U' | 'L' | 'u' | 'l' | 'E') => {
+                        // Under POSIX mode, case conversions are disabled.
+                        case @ ('U' | 'L' | 'u' | 'l' | 'E') if !posix => {
                             if !literal.is_empty() {
                                 parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
                             }
@@ -805,6 +807,14 @@ pub fn compile_replacement(
                                 'E' => ReplacementPart::End,
                                 _ => unreachable!(),
                             });
+                            line.advance();
+                        }
+
+                        // Under POSIX mode, case conversions are disabled and \u / \U
+                        // are not treated as Unicode escapes in replacements; GNU sed emits
+                        // the escape letter plus following characters literally.
+                        'U' | 'L' | 'u' | 'l' | 'E' if posix => {
+                            literal.push(line.current_byte());
                             line.advance();
                         }
 
@@ -896,7 +906,7 @@ fn compile_subst_command(
     )?;
     let mut subst = Box::new(Substitution::default());
 
-    subst.replacement = compile_replacement(lines, line, context.character_mode)?;
+    subst.replacement = compile_replacement(lines, line, context.character_mode, context.posix)?;
     compile_subst_flags(lines, line, &mut subst, context.posix, context.sandbox)?;
 
     if pattern.is_empty() && (subst.ignore_case || subst.multiline) {
@@ -2454,7 +2464,7 @@ mod tests {
         lines: &mut ScriptLineProvider,
         line: &mut ScriptCharProvider,
     ) -> UResult<ReplacementTemplate> {
-        compile_replacement(lines, line, CharacterMode::Utf8)
+        compile_replacement(lines, line, CharacterMode::Utf8, false)
     }
 
     #[test]
@@ -2537,7 +2547,8 @@ mod tests {
     #[test]
     fn test_compile_replacement_escape_byte_mode() {
         let (mut lines, mut chars) = make_providers("/\\xE9/");
-        let template = compile_replacement(&mut lines, &mut chars, CharacterMode::Byte).unwrap();
+        let template =
+            compile_replacement(&mut lines, &mut chars, CharacterMode::Byte, false).unwrap();
 
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"\xE9"));
@@ -2546,7 +2557,8 @@ mod tests {
     #[test]
     fn test_compile_replacement_escape_utf8_mode() {
         let (mut lines, mut chars) = make_providers("/\\xE9/");
-        let template = compile_replacement(&mut lines, &mut chars, CharacterMode::Utf8).unwrap();
+        let template =
+            compile_replacement(&mut lines, &mut chars, CharacterMode::Utf8, false).unwrap();
 
         assert_eq!(template.parts.len(), 1);
         assert!(matches!(
@@ -2595,6 +2607,18 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_replacement_posix_disables_case_conversion() {
+        let (mut lines, mut chars) = make_providers(r"/\l&/");
+        let template =
+            compile_replacement(&mut lines, &mut chars, CharacterMode::Utf8, true).unwrap();
+
+        assert_eq!(template.parts.len(), 2);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"l"));
+        assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
+        assert!(!template.has_case_conversion());
+    }
+
+    #[test]
     fn test_compile_replacement_case_conversion_escapes() {
         let (mut lines, mut chars) = make_providers(r"/\Uabc\Edef/");
         let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
@@ -2640,7 +2664,7 @@ mod tests {
         assert!(matches!(&template.parts[1], ReplacementPart::Literal(s) if s == b"ABC"));
         assert!(matches!(&template.parts[2], ReplacementPart::End));
         assert!(matches!(&template.parts[3], ReplacementPart::Literal(s) if s == b"def"));
-        assert!(template.has_case_conversion);
+        assert!(template.has_case_conversion());
     }
 
     #[test]
@@ -2657,7 +2681,7 @@ mod tests {
                 "delimiter {delim}"
             );
             assert!(
-                !template.has_case_conversion,
+                !template.has_case_conversion(),
                 "escaped delimiter must not set has_case_conversion for {delim}"
             );
         }
@@ -2667,11 +2691,11 @@ mod tests {
     fn test_compile_replacement_has_case_conversion_flag() {
         let (mut lines, mut chars) = make_providers(r"/plain/");
         let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-        assert!(!template.has_case_conversion);
+        assert!(!template.has_case_conversion());
 
         let (mut lines, mut chars) = make_providers(r"/\E/");
         let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-        assert!(template.has_case_conversion);
+        assert!(template.has_case_conversion());
     }
 
     #[test]
