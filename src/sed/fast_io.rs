@@ -1005,7 +1005,9 @@ fn try_splice(
 }
 
 /// Splice all `len` bytes from `in_fd` at `in_off` to `out_fd`.
-/// Returns `None` if splice is not supported for these fds.
+/// Returns `None` only if splice is unsupported from the first attempt
+/// (no bytes transferred). A mid-transfer unsupported result returns
+/// `Some(bytes_already_spliced)` so the caller can write the remainder.
 #[cfg(target_os = "linux")]
 fn reliable_splice(
     in_fd: BorrowedFd<'_>,
@@ -1018,7 +1020,12 @@ fn reliable_splice(
         match try_splice(in_fd, Some(&mut in_off), out_fd, None, pending)? {
             Some(0) => break,
             Some(n) => pending -= n,
-            None => return Ok(None),
+            None => {
+                if pending == len {
+                    return Ok(None);
+                }
+                break;
+            }
         }
     }
     Ok(Some(len - pending))
@@ -2487,14 +2494,9 @@ mod tests {
             buf
         });
 
-        let written = reliable_copy_file_range(
-            data.as_ptr(),
-            infile.as_fd(),
-            0,
-            writer.as_fd(),
-            data.len(),
-        )
-        .expect("fallback copy should succeed");
+        let written =
+            reliable_copy_file_range(data.as_ptr(), infile.as_fd(), 0, writer.as_fd(), data.len())
+                .expect("fallback copy should succeed");
         assert_eq!(written, data.len());
 
         drop(writer);
