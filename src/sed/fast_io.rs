@@ -33,7 +33,10 @@ use std::os::fd::RawFd;
 use rustix::fd::BorrowedFd;
 #[cfg(target_os = "linux")]
 use rustix::fs::copy_file_range as rustix_copy_file_range;
-
+#[cfg(target_os = "linux")]
+use rustix::pipe::{SpliceFlags, fcntl_setpipe_size, pipe as rustix_pipe, splice};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsFd;
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
@@ -595,6 +598,9 @@ pub struct OutputBuffer {
     // True when the last write didn't end with \n; the \n is deferred so
     // that commands like `p` don't emit a spurious newline under -n.
     pending_newline: bool,
+    /// Whether we already attempted to enlarge a pipe output buffer.
+    #[cfg(target_os = "linux")]
+    pipe_enlarged: bool,
     #[cfg(test)]
     low_level_flushes: usize, // Number of system call flushes
 }
@@ -647,6 +653,8 @@ impl OutputBuffer {
             max_pending_write,
             mmap_chunk: None,
             pending_newline: false,
+            #[cfg(target_os = "linux")]
+            pipe_enlarged: false,
             #[cfg(test)]
             low_level_flushes: 0,
         }
@@ -827,6 +835,37 @@ impl OutputBuffer {
                         chunk.in_fast_copy.block_size.max(self.fast_copy.block_size),
                         cover,
                     )?
+                } else if chunk.in_fast_copy.is_regular {
+                    // File → non-regular (typically a pipe): try splice; fall back to write.
+                    // No need to pre-check for a FIFO — splice fails with EINVAL otherwise.
+                    #[cfg(target_os = "linux")]
+                    {
+                        if !self.pipe_enlarged {
+                            let _ =
+                                fcntl_setpipe_size(self.fast_copy.as_fd(), MAX_ROOTLESS_PIPE_SIZE);
+                            self.pipe_enlarged = true;
+                        }
+                        let in_off = unsafe { chunk.out_ptr.offset_from(chunk.base_ptr) } as u64;
+                        match reliable_splice(
+                            chunk.in_fast_copy.as_fd(),
+                            in_off,
+                            self.fast_copy.as_fd(),
+                            chunk.len,
+                        )? {
+                            Some(n) if n == chunk.len => n,
+                            Some(n) => {
+                                // SAFETY: out_ptr points into the mapped input; skip spliced bytes.
+                                let ptr = unsafe { chunk.out_ptr.add(n) };
+                                reliable_write(self.fast_copy.fd, ptr, chunk.len - n)?;
+                                chunk.len
+                            }
+                            None => reliable_write(self.fast_copy.fd, chunk.out_ptr, chunk.len)?,
+                        }
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        reliable_write(self.fast_copy.fd, chunk.out_ptr, chunk.len)?
+                    }
                 } else {
                     reliable_write(self.fast_copy.fd, chunk.out_ptr, chunk.len)?
                 }
@@ -905,7 +944,7 @@ impl OutputBuffer {
 #[cfg(unix)]
 fn reliable_write(fd: i32, ptr: *const u8, len: usize) -> std::io::Result<usize> {
     // A thin Write-compatible wrapper around a raw file descriptor
-    // This allows us to issue and utilize the write_all implementatin.
+    // This allows us to issue and utilize the write_all implementation.
     struct FdWriter(RawFd);
 
     impl Write for FdWriter {
@@ -929,6 +968,127 @@ fn reliable_write(fd: i32, ptr: *const u8, len: usize) -> std::io::Result<usize>
     Ok(len)
 }
 
+/// Best-effort rootless pipe capacity (1 MiB). Larger size is optional.
+#[cfg(target_os = "linux")]
+const MAX_ROOTLESS_PIPE_SIZE: usize = 1024 * 1024;
+
+/// Return true if `err` means splice/copy_file_range is unsupported for these fds.
+#[cfg(target_os = "linux")]
+fn is_unsupported_copy_err(err: &std::io::Error) -> bool {
+    matches!(
+        err.raw_os_error(),
+        Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP) | Some(libc::EINVAL) | Some(libc::EXDEV)
+    )
+}
+
+/// Try to splice data from input to output (at least one fd must be a pipe).
+/// Return the number of bytes transferred, or None if splice is not supported.
+#[cfg(target_os = "linux")]
+fn try_splice(
+    in_fd: BorrowedFd<'_>,
+    in_off: Option<&mut u64>,
+    out_fd: BorrowedFd<'_>,
+    out_off: Option<&mut u64>,
+    len: usize,
+) -> std::io::Result<Option<usize>> {
+    match splice(in_fd, in_off, out_fd, out_off, len, SpliceFlags::empty()) {
+        Ok(n) => Ok(Some(n)),
+        Err(err) => {
+            let err = std::io::Error::from(err);
+            if is_unsupported_copy_err(&err) {
+                Ok(None)
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+/// Splice all `len` bytes from `in_fd` at `in_off` to `out_fd`.
+/// Returns `None` if splice is not supported for these fds.
+#[cfg(target_os = "linux")]
+fn reliable_splice(
+    in_fd: BorrowedFd<'_>,
+    mut in_off: u64,
+    out_fd: BorrowedFd<'_>,
+    len: usize,
+) -> std::io::Result<Option<usize>> {
+    let mut pending = len;
+    while pending > 0 {
+        match try_splice(in_fd, Some(&mut in_off), out_fd, None, pending)? {
+            Some(0) => break,
+            Some(n) => pending -= n,
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(len - pending))
+}
+
+/// Copy via a middle pipe: splice(in → pipe) then splice(pipe → out).
+/// Works for regular-file→regular-file when copy_file_range is unavailable.
+/// Returns `None` if splice is not supported.
+#[cfg(target_os = "linux")]
+fn splice_via_middle_pipe(
+    in_fd: BorrowedFd<'_>,
+    mut in_off: u64,
+    out_fd: BorrowedFd<'_>,
+    len: usize,
+) -> std::io::Result<Option<usize>> {
+    let (pipe_rd, pipe_wr) = match rustix_pipe() {
+        Ok(p) => p,
+        Err(err) => {
+            let err = std::io::Error::from(err);
+            return if is_unsupported_copy_err(&err) {
+                Ok(None)
+            } else {
+                Err(err)
+            };
+        }
+    };
+    let _ = fcntl_setpipe_size(&pipe_wr, MAX_ROOTLESS_PIPE_SIZE);
+
+    let mut pending = len;
+    let mut copied = 0usize;
+    while pending > 0 {
+        let n = match try_splice(in_fd, Some(&mut in_off), pipe_wr.as_fd(), None, pending)? {
+            Some(0) => break,
+            Some(n) => n,
+            None => return Ok(if copied == 0 { None } else { Some(copied) }),
+        };
+
+        let mut in_pipe = n;
+        while in_pipe > 0 {
+            match try_splice(pipe_rd.as_fd(), None, out_fd, None, in_pipe)? {
+                Some(0) => return Ok(Some(copied)),
+                Some(m) => {
+                    in_pipe -= m;
+                    copied += m;
+                    pending -= m;
+                }
+                None => return Ok(if copied == 0 { None } else { Some(copied) }),
+            }
+        }
+    }
+    Ok(Some(copied))
+}
+
+/// Finish a transfer after a partial/zero-copy attempt: write any remaining bytes.
+#[cfg(target_os = "linux")]
+fn finish_with_write(
+    in_ptr: *const u8,
+    out_fd: BorrowedFd<'_>,
+    len: usize,
+    already: usize,
+) -> std::io::Result<usize> {
+    if already >= len {
+        return Ok(len);
+    }
+    // SAFETY: in_ptr covers the full requested range; skip bytes already transferred.
+    let ptr = unsafe { in_ptr.add(already) };
+    reliable_write(out_fd.as_raw_fd(), ptr, len - already)?;
+    Ok(len)
+}
+
 /// Copy efficiently len data from the input to the output file.
 /// Fall back to write(2) if the platform doesn't support copy_file_range(2).
 /// Return the number of bytes written.
@@ -947,21 +1107,21 @@ fn portable_copy_file_range(
         return Ok(0);
     }
 
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[cfg(target_os = "linux")]
     {
         aligned_copy_file_range(in_ptr, in_fd, in_off, out_fd, len, block_size, cover)
     }
-    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    #[cfg(not(target_os = "linux"))]
     {
         reliable_write(out_fd.as_raw_fd(), in_ptr, len)
     }
 }
 
 /// Copy efficiently len data from the input to the output file.
-/// Handle partial copies and fall back to write(2) if the
-/// file system or options don't support copy_file_range(2).
+/// Try `copy_file_range` → splice (via a middle pipe) → `write`.
+///
 /// Return the number of bytes written.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[cfg(target_os = "linux")]
 fn reliable_copy_file_range(
     in_ptr: *const u8,
     in_fd: BorrowedFd<'_>,
@@ -970,37 +1130,38 @@ fn reliable_copy_file_range(
     len: usize,
 ) -> std::io::Result<usize> {
     let mut pending = len;
+
     while pending > 0 {
         let mut in_off_u64 = in_off as u64;
-        let result: std::io::Result<usize> =
-            rustix_copy_file_range(in_fd, Some(&mut in_off_u64), out_fd, None, pending)
-                .map_err(std::io::Error::from);
-
-        match result {
+        match rustix_copy_file_range(in_fd, Some(&mut in_off_u64), out_fd, None, pending)
+            .map_err(std::io::Error::from)
+        {
             Ok(0) => break,
             Ok(ret) => {
                 pending -= ret;
                 in_off = in_off_u64 as libc::off_t;
             }
             Err(err) => {
-                return match err.raw_os_error() {
-                    Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP) | Some(libc::EXDEV) => {
-                        // Fallback to write(2).
-                        reliable_write(out_fd.as_raw_fd(), in_ptr, pending)
-                    }
-                    _ => Err(err),
-                };
+                if !is_unsupported_copy_err(&err) {
+                    return Err(err);
+                }
+                // Skip bytes already copied via copy_file_range.
+                let already = len - pending;
+                let spliced =
+                    splice_via_middle_pipe(in_fd, in_off as u64, out_fd, pending)?.unwrap_or(0);
+                return finish_with_write(in_ptr, out_fd, len, already + spliced);
             }
         }
     }
-    Ok(len)
+
+    Ok(len - pending)
 }
 
 /// Copy efficiently len data from the input to the output file.
 /// Try to call copy_file_range(2) on block-aligned data, so
 /// as to help the filesystem maintain cross-file extents.
 /// Return the number of bytes written.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[cfg(target_os = "linux")]
 fn aligned_copy_file_range(
     mut in_ptr: *const u8,
     in_fd: BorrowedFd<'_>,
@@ -1079,11 +1240,9 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::fs::File;
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    use std::io::{self, Write};
-    use std::io::{Seek, SeekFrom};
+    use std::io::{self, Read, Seek, SeekFrom, Write};
     #[cfg(target_os = "linux")]
-    use std::os::unix::io::AsFd;
+    use std::os::fd::AsFd;
     use tempfile::NamedTempFile;
     use tempfile::tempfile;
 
@@ -1748,6 +1907,14 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn fastcopy_pipe_is_non_regular() {
+        let (_reader, writer) = std::io::pipe().unwrap();
+        let fc = FastCopy::new(&writer);
+        assert!(!fc.is_regular, "pipe should not be a regular file");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn test_reliable_write_to_file() {
         // Create an anonymous temporary file.
         let mut file = tempfile().expect("failed to create tempfile");
@@ -1805,7 +1972,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[cfg(target_os = "linux")]
     fn test_aligned_copy_cover_includes_tail() {
         let mut infile = tempfile().unwrap();
         let mut outfile = tempfile().unwrap();
@@ -1841,7 +2008,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[cfg(target_os = "linux")]
     fn test_aligned_copy_blocks_skips_tail() {
         let mut infile = tempfile().unwrap();
         let mut outfile = tempfile().unwrap();
@@ -1977,6 +2144,8 @@ mod tests {
             #[cfg(unix)]
             mmap_chunk: None,
             pending_newline: false,
+            #[cfg(target_os = "linux")]
+            pipe_enlarged: false,
             low_level_flushes: 0,
         };
         (buf, file)
@@ -2150,5 +2319,210 @@ mod tests {
         let mut out = String::new();
         file.read_to_string(&mut out).unwrap();
         assert_eq!(out, "baz\n");
+    }
+
+    ///////////////////////////////
+    // Unit tests for pipe optimization functions
+    ///////////////////////////////
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_fcntl_setpipe_size_smoke() {
+        const DESIRED: usize = MAX_ROOTLESS_PIPE_SIZE;
+        let (_reader, writer) = io::pipe().unwrap();
+
+        // Best-effort; may fail depending on privileges / limits.
+        if let Ok(size) = fcntl_setpipe_size(&writer, DESIRED) {
+            assert!(
+                size >= DESIRED,
+                "pipe size should be at least requested (got {size}, wanted {DESIRED})"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_try_splice_to_pipe() {
+        use std::thread;
+
+        let mut infile = tempfile().unwrap();
+        let data = b"test splice data";
+        infile.write_all(data).unwrap();
+        infile.rewind().unwrap();
+
+        let (mut reader, writer) = io::pipe().unwrap();
+
+        let reader_thread = thread::spawn(move || {
+            let mut buf = Vec::new();
+            reader.read_to_end(&mut buf).unwrap();
+            buf
+        });
+
+        let mut in_off = 0u64;
+        let written = try_splice(
+            infile.as_fd(),
+            Some(&mut in_off),
+            writer.as_fd(),
+            None,
+            data.len(),
+        )
+        .expect("splice syscall error")
+        .expect("splice should be supported for file→pipe");
+        assert_eq!(written, data.len());
+        assert_eq!(in_off, data.len() as u64);
+
+        drop(writer);
+        let got = reader_thread.join().unwrap();
+        assert_eq!(got, data);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_reliable_splice_to_pipe() {
+        use std::thread;
+
+        let mut infile = tempfile().unwrap();
+        let data = b"reliable splice payload across a pipe";
+        infile.write_all(data).unwrap();
+        infile.rewind().unwrap();
+
+        let (mut reader, writer) = io::pipe().unwrap();
+        let reader_thread = thread::spawn(move || {
+            let mut buf = Vec::new();
+            reader.read_to_end(&mut buf).unwrap();
+            buf
+        });
+
+        let written = reliable_splice(infile.as_fd(), 0, writer.as_fd(), data.len())
+            .expect("reliable_splice failed")
+            .expect("splice should be supported for file→pipe");
+        assert_eq!(written, data.len());
+
+        drop(writer);
+        let got = reader_thread.join().unwrap();
+        assert_eq!(got, data);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_splice_via_middle_pipe_file_to_file() {
+        use std::thread;
+
+        let mut infile = tempfile().unwrap();
+        let data = b"middle-pipe splice between two regular files";
+        infile.write_all(data).unwrap();
+        infile.rewind().unwrap();
+
+        let mut outfile = tempfile().unwrap();
+        let written = splice_via_middle_pipe(infile.as_fd(), 0, outfile.as_fd(), data.len())
+            .expect("middle-pipe splice error")
+            .expect("middle-pipe splice should work for file→file");
+        assert_eq!(written, data.len());
+
+        outfile.rewind().unwrap();
+        let mut buf = Vec::new();
+        outfile.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, data);
+
+        // Also cover file→pipe via middle pipe (reader drains concurrently).
+        let mut infile2 = tempfile().unwrap();
+        infile2.write_all(data).unwrap();
+        infile2.rewind().unwrap();
+        let (mut reader, writer) = io::pipe().unwrap();
+        let reader_thread = thread::spawn(move || {
+            let mut buf = Vec::new();
+            reader.read_to_end(&mut buf).unwrap();
+            buf
+        });
+        let written2 = splice_via_middle_pipe(infile2.as_fd(), 0, writer.as_fd(), data.len())
+            .expect("middle-pipe to pipe error")
+            .expect("middle-pipe splice should work for file→pipe");
+        assert_eq!(written2, data.len());
+        drop(writer);
+        assert_eq!(reader_thread.join().unwrap(), data);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_reliable_copy_file_range_basic() {
+        let mut infile = tempfile().unwrap();
+        let data = b"test copy_file_range basic path";
+        infile.write_all(data).unwrap();
+        infile.rewind().unwrap();
+
+        let mut outfile = tempfile().unwrap();
+
+        let written = reliable_copy_file_range(
+            data.as_ptr(),
+            infile.as_fd(),
+            0,
+            outfile.as_fd(),
+            data.len(),
+        )
+        .expect("copy should succeed via copy_file_range");
+        assert_eq!(written, data.len());
+
+        outfile.rewind().unwrap();
+        let mut buf = Vec::new();
+        outfile.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, data);
+    }
+
+    /// copy_file_range to a pipe fails with EINVAL; the middle-pipe/write fallback
+    /// must still deliver the remaining bytes using the correct in_ptr offset.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_reliable_copy_file_range_fallback_to_pipe() {
+        use std::thread;
+
+        let mut infile = tempfile().unwrap();
+        let data = b"fallback after copy_file_range EINVAL to pipe";
+        infile.write_all(data).unwrap();
+        infile.rewind().unwrap();
+
+        let (mut reader, writer) = io::pipe().unwrap();
+        let reader_thread = thread::spawn(move || {
+            let mut buf = Vec::new();
+            reader.read_to_end(&mut buf).unwrap();
+            buf
+        });
+
+        let written = reliable_copy_file_range(
+            data.as_ptr(),
+            infile.as_fd(),
+            0,
+            writer.as_fd(),
+            data.len(),
+        )
+        .expect("fallback copy should succeed");
+        assert_eq!(written, data.len());
+
+        drop(writer);
+        assert_eq!(reader_thread.join().unwrap(), data);
+    }
+
+    /// After a partial transfer, write fallback must start at in_ptr + already.
+    #[cfg(unix)]
+    #[test]
+    fn test_finish_with_write_skips_already_copied_prefix() {
+        let data = b"0123456789ABCDEF";
+        let already = 8;
+        let mut outfile = tempfile().unwrap();
+        outfile.write_all(&data[..already]).unwrap();
+
+        #[cfg(target_os = "linux")]
+        {
+            finish_with_write(data.as_ptr(), outfile.as_fd(), data.len(), already).unwrap();
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let ptr = unsafe { data.as_ptr().add(already) };
+            reliable_write(outfile.as_raw_fd(), ptr, data.len() - already).unwrap();
+        }
+
+        outfile.rewind().unwrap();
+        let mut buf = Vec::new();
+        outfile.read_to_end(&mut buf).unwrap();
+        assert_eq!(&buf, data);
     }
 }
