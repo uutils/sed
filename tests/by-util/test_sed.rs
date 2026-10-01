@@ -1432,7 +1432,7 @@ fn test_uppercase_delete_prevents_automatic_printing() {
         .args(&["-e", "N", "-e", "D"])
         .pipe_in("line1\nline2\nline3")
         .succeeds()
-        .stdout_is("line3\n");
+        .stdout_is("line3");
 }
 
 ////////////////////////////////////////////////////////////
@@ -3142,4 +3142,87 @@ fn test_null_data_e_command() {
         .pipe_in("a\0b\0")
         .succeeds()
         .stdout_is("hi\r\na\0hi\r\nb\0");
+}
+
+#[test]
+fn test_null_data_file_emptied_records() -> std::io::Result<()> {
+    let mut input = NamedTempFile::new()?;
+    input.write_all(b"a\0b\0")?;
+
+    new_ucmd!()
+        .args(&["-z", "z"])
+        .arg(input.path())
+        .succeeds()
+        .stdout_is("\0\0");
+    Ok(())
+}
+
+// GNU sed strips a trailing \0, rather than \n, from the command's output.
+#[cfg(unix)]
+#[test]
+fn test_null_data_s_e_flag() {
+    new_ucmd!()
+        .args(&["-z", "s/.*/echo Y/e"])
+        .pipe_in("x")
+        .succeeds()
+        .stdout_is("Y\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_null_data_s_e_flag() {
+    new_ucmd!()
+        .args(&["-z", "s/.*/echo Y/e"])
+        .pipe_in("x")
+        .succeeds()
+        .stdout_is("Y\r\n");
+}
+
+#[test]
+fn test_unterminated_files_are_separated() -> std::io::Result<()> {
+    let mut a = NamedTempFile::new()?;
+    a.write_all(b"a")?;
+    let mut b = NamedTempFile::new()?;
+    b.write_all(b"b")?;
+
+    for (args, expected) in [
+        (&[""][..], "a\nb"),
+        (&["-z", ""][..], "a\0b"),
+        // Q outputs nothing more, not even the missing separator.
+        (&["2Q"][..], "a"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .arg(a.path())
+            .arg(b.path())
+            .succeeds()
+            .stdout_is(expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn test_quit_silently_outputs_nothing_more() {
+    for (script, input, expected) in [("p;Q", "x", "x"), ("a A\nQ", "x\n", "")] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_n_at_end_keeps_missing_separator() {
+    for (args, input, expected) in [
+        (&["N"][..], "x", "x"),
+        (&["-z", "N"][..], "x\ny\n", "x\ny\n"),
+        (&["-z", "N"][..], "x\0", "x\0"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
 }

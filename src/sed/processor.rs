@@ -257,20 +257,21 @@ fn shell_stdout(
 }
 
 /// Execute the pattern space as a shell command, replacing its contents
-/// with the command's standard output, minus one trailing newline.
+/// with the command's standard output, minus one trailing line separator.
 fn execute_pattern_as_shell_command(
     pattern: &mut IOChunk,
     command: &Command,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
     let mut shell_out = shell_stdout(pattern.as_bytes().to_vec(), command, context)?;
+    let separator = context.line_separator();
     #[cfg(windows)]
-    if shell_out.ends_with(b"\r\n") {
+    if separator == b'\n' && shell_out.ends_with(b"\r\n") {
         // On Windows a trailing \r\n is the line terminator. Strip both.
         shell_out.truncate(shell_out.len() - 2);
     }
-    // Unix (and some Windows tools) end with a single \n. Strip it, as GNU sed does.
-    if shell_out.ends_with(b"\n") {
+    // Strip a single trailing separator (\n, or \0 with -z), as GNU sed does.
+    if shell_out.last() == Some(&separator) {
         shell_out.pop();
     }
     pattern.set_to_bytes(shell_out, pattern.is_newline_terminated());
@@ -813,6 +814,7 @@ fn process_file(
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
                         prepend: pattern.as_bytes().to_vec(),
+                        prepend_terminated: pattern.is_newline_terminated(),
                     });
                     continue 'lines;
                 }
@@ -842,8 +844,9 @@ fn process_file(
                         i32::try_from(*extract_variant!(command, Number)).unwrap_or(i32::MAX),
                     );
                     context.stop_processing = true;
-                    context.quiet = true;
-                    break;
+                    // Like GNU sed, output nothing more: not the pattern
+                    // space, appended text, or a missing line separator.
+                    return Ok(());
                 }
                 'R' => {
                     // Queue the file's next line for output at end of cycle.
@@ -973,9 +976,7 @@ fn process_file(
         && let Some(action) = context.input_action.take()
         && !context.quiet
     {
-        let mut pending = action.prepend;
-        pending.push(b'\n');
-        output.write_bytes(&pending)?;
+        output.write_line(&action.prepend, action.prepend_terminated)?;
         if context.unbuffered {
             output.flush()?;
         }
@@ -1036,9 +1037,7 @@ pub fn process_all_files(
             && !context.quiet
             && let Some(action) = context.input_action.take()
         {
-            let mut pending = action.prepend;
-            pending.push(b'\n');
-            output.write_bytes(&pending)?;
+            output.write_line(&action.prepend, action.prepend_terminated)?;
         }
 
         in_place.end()?;

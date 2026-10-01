@@ -290,7 +290,7 @@ impl<'a> IOChunk<'a> {
             IOChunkContent::MmapInput {
                 content, full_span, ..
             } => {
-                let has_newline = full_span.last().copied() == Some(b'\n');
+                let has_newline = full_span.len() > content.len();
                 self.content = IOChunkContent::new_owned(content.to_vec(), has_newline);
                 self.utf8_verified.set(false);
                 Ok(())
@@ -703,14 +703,18 @@ impl OutputBuffer {
 
     /// Schedule the specified bytes for eventual output.
     pub fn write_bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
-        let (content, has_newline) = if bytes.ends_with(b"\n") {
-            (&bytes[..bytes.len() - 1], true)
-        } else {
-            (bytes, false)
-        };
+        match bytes.strip_suffix(b"\n") {
+            Some(content) => self.write_line(content, true),
+            None => self.write_line(bytes, false),
+        }
+    }
+
+    /// Schedule a line for output, followed by the terminator if
+    /// `terminated` is true.
+    pub fn write_line(&mut self, content: &[u8], terminated: bool) -> io::Result<()> {
         self.write_chunk(&IOChunk::from_content(IOChunkContent::new_owned(
             content.to_vec(),
-            has_newline,
+            terminated,
         )))
     }
 
