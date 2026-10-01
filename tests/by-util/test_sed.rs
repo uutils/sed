@@ -1880,7 +1880,7 @@ fn sandbox_rejects_subst_write_flag() -> std::io::Result<()> {
 
     let mut actual = String::new();
     temp.reopen()?.read_to_string(&mut actual)?;
-    assert!(actual.is_empty());
+    assert_eq!(actual, "");
 
     Ok(())
 }
@@ -1897,7 +1897,7 @@ fn sandbox_rejects_write_command() -> std::io::Result<()> {
 
     let mut actual = String::new();
     temp.reopen()?.read_to_string(&mut actual)?;
-    assert!(actual.is_empty());
+    assert_eq!(actual, "");
 
     Ok(())
 }
@@ -1914,7 +1914,7 @@ fn sandbox_rejects_first_line_write_command() -> std::io::Result<()> {
 
     let mut actual = String::new();
     temp.reopen()?.read_to_string(&mut actual)?;
-    assert!(actual.is_empty());
+    assert_eq!(actual, "");
 
     Ok(())
 }
