@@ -467,7 +467,7 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
     for elem in &context.append_elements {
         match elem {
             AppendElement::Text(text) => {
-                output.write_bytes(text.as_ref())?;
+                output.write_raw(text.as_ref())?;
             }
             AppendElement::Path(path) => {
                 output.copy_file(path)?;
@@ -567,9 +567,7 @@ fn list(
 ) -> UResult<()> {
     // Special case for an empty pattern space
     if line.is_empty() {
-        if line.is_newline_terminated() {
-            output.write_str("$\n")?;
-        }
+        output.write_str("$\n")?;
         return Ok(());
     }
 
@@ -737,7 +735,7 @@ fn process_file(
                     }
                     CommandData::Text(cmd_bytes) => {
                         let shell_out = shell_stdout(cmd_bytes.to_vec(), &command, context)?;
-                        output.write_bytes(&shell_out)?;
+                        output.write_raw(&shell_out)?;
                     }
                     _ => panic!("invalid 'e' command data"),
                 },

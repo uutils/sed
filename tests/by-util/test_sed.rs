@@ -3090,3 +3090,45 @@ fn test_posix_reject_flags() {
         .code_is(1)
         .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
 }
+
+/// `R` copies a line lacking a newline unchanged, as GNU sed does.
+#[test]
+fn read_one_line_without_newline_is_copied_unchanged() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    fs::write(temp.path(), "x")?;
+    new_ucmd!()
+        .arg(format!("R {}", temp.path().display()))
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\nxb\n");
+    Ok(())
+}
+
+/// The output of the `e` command is copied unchanged, as GNU sed does.
+#[cfg(unix)]
+#[test]
+fn execute_command_output_is_copied_unchanged() {
+    new_ucmd!()
+        .arg("1e printf hi")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("hia\nb\n");
+    // A line that lacks its newline is ended before the output, even when
+    // there is none.
+    new_ucmd!()
+        .args(&["-n", "p;e true"])
+        .pipe_in("a")
+        .succeeds()
+        .stdout_is("a\n");
+}
+
+/// `l` shows an empty pattern space as `$`, even when the line lacked a
+/// newline, as GNU sed does.
+#[test]
+fn list_empty_line_without_newline() {
+    new_ucmd!()
+        .args(&["-n", "s/a//;l"])
+        .pipe_in("a")
+        .succeeds()
+        .stdout_is("$\n");
+}
