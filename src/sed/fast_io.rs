@@ -678,13 +678,20 @@ impl OutputBuffer {
         )))
     }
 
-    /// Copy the specified file to the output.
-    pub fn copy_file(&mut self, path: &PathBuf) -> io::Result<()> {
-        // Flush mmap writes, if any.
+    /// Schedule the specified text for output unchanged, after any
+    /// deferred newline.
+    pub fn write_raw(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.flush_pending_newline()?;
         #[cfg(unix)]
-        {
-            self.flush_mmap(WriteRange::Complete)?;
-        }
+        self.flush_mmap(WriteRange::Complete)?;
+        self.out.write_all(bytes)
+    }
+
+    /// Copy the specified file to the output, after any deferred newline.
+    pub fn copy_file(&mut self, path: &PathBuf) -> io::Result<()> {
+        // As in GNU sed, write the deferred newline even when the file is
+        // empty or cannot be read.
+        self.write_raw(b"")?;
 
         let Ok(file) = File::open(path) else {
             // Per POSIX, if the file can't be read treat it as empty.
