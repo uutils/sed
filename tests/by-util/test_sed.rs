@@ -1377,6 +1377,40 @@ check_output!(pattern_re_reuse, ["-n", r"/_1/p;//p", LINES1]);
 check_output!(pattern_subst_re_reuse, ["-n", r"/_1/p;s//-N/p", LINES1]);
 
 #[test]
+fn test_next_continues_with_following_command() {
+    new_ucmd!()
+        .args(&["n;d"])
+        .pipe_in("1\n2\n3\n4\n")
+        .succeeds()
+        .stdout_is("1\n3\n");
+    new_ucmd!()
+        .args(&["-n", "-e", "a A", "-e", "n;p"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("A\nb\n");
+    // At the end of input, `n` ends processing.
+    new_ucmd!()
+        .args(&["n;q5"])
+        .pipe_in("1\n")
+        .succeeds()
+        .stdout_is("1\n");
+}
+
+#[test]
+fn test_next_reads_across_files_unless_separate() {
+    new_ucmd!()
+        .args(&["n;s/^/X/", "-", "input/two-lines.txt"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\nXline one\nline two\n");
+    new_ucmd!()
+        .args(&["-s", "n;s/^/X/", "-", "input/two-lines.txt"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\nline one\nXline two\n");
+}
+
+#[test]
 fn test_quit_exit_code() {
     new_ucmd!()
         .args(&["5q 42", LINES1])

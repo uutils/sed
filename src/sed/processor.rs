@@ -654,12 +654,13 @@ fn process_file(
         // Set the script command from which to start.
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
-                // Continue processing the `N` command.
-                let mut combined_lines = action.prepend;
-                combined_lines.push(b'\n');
-                combined_lines.extend_from_slice(pattern.as_bytes());
+                // Continue processing the `N` or `n` command.
+                if let Some(mut combined_lines) = action.prepend {
+                    combined_lines.push(b'\n');
+                    combined_lines.extend_from_slice(pattern.as_bytes());
 
-                pattern.set_to_bytes(combined_lines, pattern.is_newline_terminated());
+                    pattern.set_to_bytes(combined_lines, pattern.is_newline_terminated());
+                }
                 action.next_command
             } else {
                 // Start from the script top.
@@ -779,7 +780,17 @@ fn process_file(
                     list(output, &pattern, width, &command.location, context)?;
                 }
                 'n' => {
-                    break;
+                    // Print the pattern space and continue with the next
+                    // command once the next line is read, as `N` does.
+                    if !context.quiet {
+                        write_chunk(output, context, &pattern)?;
+                    }
+                    flush_appends(output, context)?;
+                    context.input_action = Some(InputAction {
+                        next_command: command.next.clone(),
+                        prepend: None,
+                    });
+                    continue 'lines;
                 }
                 'N' => {
                     flush_appends(output, context)?;
@@ -789,7 +800,7 @@ fn process_file(
                     // to perform when the next line is read.
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
-                        prepend: pattern.as_bytes().to_vec(),
+                        prepend: Some(pattern.as_bytes().to_vec()),
                     });
                     continue 'lines;
                 }
@@ -943,9 +954,9 @@ fn process_file(
     // Take it even with -n, so that it does not carry over to the next file.
     if context.separate
         && let Some(action) = context.input_action.take()
+        && let Some(mut pending) = action.prepend
         && !context.quiet
     {
-        let mut pending = action.prepend;
         pending.push(b'\n');
         output.write_bytes(&pending)?;
         if context.unbuffered {
@@ -1005,8 +1016,8 @@ pub fn process_all_files(
             && !context.separate
             && !context.quiet
             && let Some(action) = context.input_action.take()
+            && let Some(mut pending) = action.prepend
         {
-            let mut pending = action.prepend;
             pending.push(b'\n');
             output.write_bytes(&pending)?;
         }
