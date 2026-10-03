@@ -2578,6 +2578,14 @@ fn in_place_edit_separate() -> std::io::Result<()> {
             "a1+a2\na3\n",
             "b1+b2\nb3\n",
         ),
+        // n on the last line of a file does not read the first line of the next.
+        (
+            &["-i", "-e", "n;s/^/X/"],
+            a,
+            b,
+            "a1\nXa2\na3\n",
+            "b1\nXb2\nb3\n",
+        ),
         // Lines collected in the hold space stay in their own file.
         (
             &["-i", "-e", r"H;$!d;x;s/\n/,/g"],

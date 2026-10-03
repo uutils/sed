@@ -392,9 +392,17 @@ pub enum SpaceFlag {
 pub struct InputAction {
     /// Next command to execute (rather than commands from start)
     pub next_command: Option<Rc<RefCell<Command>>>,
-    /// Data to prepend to the read contents (`N`), or `None` to replace
-    /// the pattern space with them (`n`)
-    pub prepend: Option<Vec<u8>>,
+    /// How the read line becomes the pattern space
+    pub next_line: NextLine,
+}
+
+#[derive(Debug, Clone)]
+/// How a line read by `n` or `N` becomes the pattern space
+pub enum NextLine {
+    /// Replace the pattern space with the line (`n`)
+    Replace,
+    /// Append the line, after a newline, to these contents (`N`)
+    Append(Vec<u8>),
 }
 
 #[cfg(test)]
