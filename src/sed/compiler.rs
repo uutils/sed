@@ -753,6 +753,13 @@ pub fn compile_replacement(
                     }
 
                     match line.current() {
+                        // Literal delimiter always takes precedence over backreferences,
+                        // case-conversion directives, and other escape sequences.
+                        v if v == delimiter => {
+                            literal.push(line.current_byte());
+                            line.advance();
+                        }
+
                         // \0 - \9
                         c @ '0'..='9' => {
                             let ref_num = c.to_digit(10).unwrap();
@@ -770,12 +777,6 @@ pub fn compile_replacement(
 
                         // Literal \ and &
                         '\\' | '&' => {
-                            literal.push(line.current_byte());
-                            line.advance();
-                        }
-
-                        // Literal delimiter
-                        v if v == delimiter => {
                             literal.push(line.current_byte());
                             line.advance();
                         }
@@ -822,6 +823,14 @@ pub fn compile_replacement(
                     }
                 }
 
+                c if c == delimiter => {
+                    line.advance(); // skip closing delimiter
+                    if !literal.is_empty() {
+                        parts.push(ReplacementPart::Literal(literal));
+                    }
+                    return Ok(ReplacementTemplate::new(parts));
+                }
+
                 '&' => {
                     if !literal.is_empty() {
                         parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
@@ -836,14 +845,6 @@ pub fn compile_replacement(
                         line,
                         "unescaped newline inside substitute replacement",
                     );
-                }
-
-                c if c == delimiter => {
-                    line.advance(); // skip closing delimiter
-                    if !literal.is_empty() {
-                        parts.push(ReplacementPart::Literal(literal));
-                    }
-                    return Ok(ReplacementTemplate::new(parts));
                 }
 
                 _ => {
@@ -2647,8 +2648,9 @@ mod tests {
 
     #[test]
     fn test_compile_replacement_escaped_delimiters_win_over_all_case_escapes() {
-        // Each of L/l/U/u/E as delimiter: \<delim> is a literal, not a directive.
-        for delim in ['L', 'l', 'U', 'u', 'E'] {
+        // Escaped delimiters win over case directives (L/l/U/u/E), backreferences (0/1/9),
+        // and whole-match (&): \<delim> is a literal, not a directive, backreference, or whole match.
+        for delim in ['L', 'l', 'U', 'u', 'E', '0', '1', '9', '&'] {
             let input = format!("{d}\\{d}{d}", d = delim);
             let (mut lines, mut chars) = make_providers(&input);
             let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
