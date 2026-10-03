@@ -830,6 +830,72 @@ fn subst_case_conversion_disabled_under_posix() {
         .stdout_is_bytes(b"U00000041\n");
 }
 
+#[test]
+fn subst_escaped_delimiters_retain_precedence() {
+    // Escaped digit delimiters (\0..\9) must not be treated as backreferences or whole match
+    new_ucmd!()
+        .args(&["-e", r"s1a1\11"])
+        .pipe_in("a1c\n")
+        .succeeds()
+        .stdout_is_bytes(b"11c\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s0a0\00"])
+        .pipe_in("a0c\n")
+        .succeeds()
+        .stdout_is_bytes(b"00c\n");
+
+    // Escaped case escape delimiters (\U, \L, \u, \l, \E) must not trigger case conversion
+    new_ucmd!()
+        .args(&["-e", r"sUaU\UU"])
+        .pipe_in("aUc\n")
+        .succeeds()
+        .stdout_is_bytes(b"UUc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"suau\uu"])
+        .pipe_in("auc\n")
+        .succeeds()
+        .stdout_is_bytes(b"uuc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"sLaL\LL"])
+        .pipe_in("aLc\n")
+        .succeeds()
+        .stdout_is_bytes(b"LLc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"slal\ll"])
+        .pipe_in("alc\n")
+        .succeeds()
+        .stdout_is_bytes(b"llc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"sEaE\EE"])
+        .pipe_in("aEc\n")
+        .succeeds()
+        .stdout_is_bytes(b"EEc\n");
+
+    // Delimiter '&' must not be misparsed as WholeMatch and must properly terminate replacement
+    new_ucmd!()
+        .args(&["-e", r"s&a&\&&"])
+        .pipe_in("a&c\n")
+        .succeeds()
+        .stdout_is_bytes(b"&&c\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s&a&x&"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"xbc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s&a&&"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"bc\n");
+}
+
 /// Match non-UTF-8 input bytes with byte escapes in byte mode.
 #[test]
 fn subst_byte_escape_matches_invalid_input_in_c_locale() {
