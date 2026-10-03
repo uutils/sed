@@ -1432,7 +1432,7 @@ fn test_uppercase_delete_prevents_automatic_printing() {
         .args(&["-e", "N", "-e", "D"])
         .pipe_in("line1\nline2\nline3")
         .succeeds()
-        .stdout_is("line3\n");
+        .stdout_is("line3");
 }
 
 ////////////////////////////////////////////////////////////
@@ -3089,4 +3089,218 @@ fn test_posix_reject_flags() {
         .fails()
         .code_is(1)
         .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
+}
+
+#[test]
+fn test_null_data_line_number() {
+    new_ucmd!()
+        .args(&["-z", "="])
+        .pipe_in("hello\0world\0")
+        .succeeds()
+        .stdout_is("1\0hello\x002\0world\0");
+}
+
+#[test]
+fn test_null_data_newline_is_data() {
+    new_ucmd!()
+        .args(&["-z", "s/^/</"])
+        .pipe_in("a\0b\nc\0d")
+        .succeeds()
+        .stdout_is("<a\0<b\nc\0<d");
+}
+
+#[test]
+fn test_null_data_file_input() -> std::io::Result<()> {
+    let mut input = NamedTempFile::new()?;
+    input.write_all(b"a\0b\nc\0d")?;
+
+    new_ucmd!()
+        .args(&["-z", "s/^/</"])
+        .arg(input.path())
+        .succeeds()
+        .stdout_is("<a\0<b\nc\0<d");
+    Ok(())
+}
+
+#[test]
+fn test_null_data_separates_joined_lines() {
+    for (script, input, expected) in [
+        ("$!N;l", "a\0b\nc\0", "a\\000b\\nc$\0a\0b\nc\0"),
+        ("G", "a\0", "a\0\0"),
+        ("H;$!d;x", "a\0b\0", "\0a\0b\0"),
+        ("$!N;P;D", "a\0b\0c\0", "a\0b\0c\0"),
+        ("$!N;P;d", "a\0b\0", "a\0"),
+    ] {
+        new_ucmd!()
+            .args(&["-z", script])
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_null_data_text_commands() {
+    for (script, expected) in [
+        // GNU sed terminates `i` and `c` text with \0, but `a` text with \n.
+        ("i I", "I\0a\0I\0b\0"),
+        ("a A", "a\0A\nb\0A\n"),
+        ("c C", "C\0C\0"),
+        ("F", "-\0a\0-\0b\0"),
+    ] {
+        new_ucmd!()
+            .args(&["-z", script])
+            .pipe_in("a\0b\0")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_null_data_read_and_write_files() -> std::io::Result<()> {
+    let mut lines = NamedTempFile::new()?;
+    lines.write_all(b"R1\0R2\0")?;
+    let output = NamedTempFile::new()?;
+
+    new_ucmd!()
+        .args(&[
+            "-z",
+            "-e",
+            &format!("R {}", lines.path().display()),
+            "-e",
+            &format!("$!N;W {}", output.path().display()),
+        ])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .stdout_is("R1\0a\0b\0");
+
+    assert_eq!(fs::read(output.path())?, b"a\0");
+    Ok(())
+}
+
+#[test]
+fn test_null_data_write_files() -> std::io::Result<()> {
+    let w_output = NamedTempFile::new()?;
+    let s_output = NamedTempFile::new()?;
+
+    new_ucmd!()
+        .args(&[
+            "-z",
+            "-n",
+            "-e",
+            &format!("1w {}", w_output.path().display()),
+            "-e",
+            &format!("s/b/B/w {}", s_output.path().display()),
+        ])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .no_stdout();
+
+    assert_eq!(fs::read(w_output.path())?, b"a\0");
+    assert_eq!(fs::read(s_output.path())?, b"B\0");
+    Ok(())
+}
+
+// GNU sed outputs the command's output unchanged.
+#[cfg(unix)]
+#[test]
+fn test_null_data_e_command() {
+    new_ucmd!()
+        .args(&["-z", "e echo hi"])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .stdout_is("hi\na\0hi\nb\0");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_null_data_e_command() {
+    new_ucmd!()
+        .args(&["-z", "e echo hi"])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .stdout_is("hi\r\na\0hi\r\nb\0");
+}
+
+#[test]
+fn test_null_data_file_emptied_records() -> std::io::Result<()> {
+    let mut input = NamedTempFile::new()?;
+    input.write_all(b"a\0b\0")?;
+
+    new_ucmd!()
+        .args(&["-z", "z"])
+        .arg(input.path())
+        .succeeds()
+        .stdout_is("\0\0");
+    Ok(())
+}
+
+// GNU sed strips a trailing \0, rather than \n, from the command's output.
+#[cfg(unix)]
+#[test]
+fn test_null_data_s_e_flag() {
+    new_ucmd!()
+        .args(&["-z", "s/.*/echo Y/e"])
+        .pipe_in("x")
+        .succeeds()
+        .stdout_is("Y\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_null_data_s_e_flag() {
+    new_ucmd!()
+        .args(&["-z", "s/.*/echo Y/e"])
+        .pipe_in("x")
+        .succeeds()
+        .stdout_is("Y\r\n");
+}
+
+#[test]
+fn test_unterminated_files_are_separated() -> std::io::Result<()> {
+    let mut a = NamedTempFile::new()?;
+    a.write_all(b"a")?;
+    let mut b = NamedTempFile::new()?;
+    b.write_all(b"b")?;
+
+    for (args, expected) in [
+        (&[""][..], "a\nb"),
+        (&["-z", ""][..], "a\0b"),
+        // Q outputs nothing more, not even the missing separator.
+        (&["2Q"][..], "a"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .arg(a.path())
+            .arg(b.path())
+            .succeeds()
+            .stdout_is(expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn test_quit_silently_outputs_nothing_more() {
+    for (script, input, expected) in [("p;Q", "x", "x"), ("a A\nQ", "x\n", "")] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_n_at_end_keeps_missing_separator() {
+    for (args, input, expected) in [
+        (&["N"][..], "x", "x"),
+        (&["-z", "N"][..], "x\ny\n", "x\ny\n"),
+        (&["-z", "N"][..], "x\0", "x\0"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
 }

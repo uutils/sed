@@ -79,6 +79,13 @@ pub struct ProcessingContext {
     pub append_elements: Vec<AppendElement>,
 }
 
+impl ProcessingContext {
+    /// Return the byte that separates lines: \0 with -z, otherwise \n.
+    pub fn line_separator(&self) -> u8 {
+        if self.null_data { b'\0' } else { b'\n' }
+    }
+}
+
 #[derive(Clone, Debug)]
 /// Elements that shall be appended at the end of each command processing cycle
 pub enum AppendElement {
@@ -394,6 +401,8 @@ pub struct InputAction {
     pub next_command: Option<Rc<RefCell<Command>>>,
     /// Data to prepend to the read contents
     pub prepend: Vec<u8>,
+    /// True if the prepended line ended with a line separator
+    pub prepend_terminated: bool,
 }
 
 #[cfg(test)]

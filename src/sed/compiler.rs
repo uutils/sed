@@ -1143,10 +1143,11 @@ fn compile_read_line_command(
     let path = read_file_path(lines, line)?;
     // Reuse a reader keyed by path so all `R` commands on the same file share
     // one cursor (see `ProcessingContext::named_readers`).
+    let separator = context.line_separator();
     let reader = context
         .named_readers
         .entry(path.clone())
-        .or_insert_with(|| NamedReader::new(path))
+        .or_insert_with(|| NamedReader::new(path, separator))
         .clone();
     cmd.data = CommandData::NamedReader(reader);
     Ok(CommandHandling::Continue)
