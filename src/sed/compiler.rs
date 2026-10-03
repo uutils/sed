@@ -841,6 +841,10 @@ fn compile_subst_command(
 ) -> UResult<CommandHandling> {
     line.advance(); // move past 's'
 
+    if line.eol() {
+        return compilation_error(lines, line, "unterminated `s' command");
+    }
+
     let delimiter = line.current();
     if delimiter == '\0' || delimiter == '\\' {
         return compilation_error(
@@ -906,6 +910,10 @@ fn compile_trans_command(
     context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     line.advance(); // move past 'y'
+
+    if line.eol() {
+        return compilation_error(lines, line, "unterminated `y' command");
+    }
 
     let delimiter = line.current();
     if delimiter == '\0' || delimiter == '\\' {

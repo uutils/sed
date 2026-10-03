@@ -2926,6 +2926,25 @@ fn test_comma_without_second_address() {
     }
 }
 
+#[test]
+fn test_unterminated_s_or_y_command() {
+    for (script, column, command) in [
+        ("s", 2, 's'),
+        ("1s", 3, 's'),
+        ("p;s", 4, 's'),
+        ("y", 2, 'y'),
+        ("{y", 3, 'y'),
+    ] {
+        new_ucmd!()
+            .args(&[script])
+            .fails()
+            .code_is(1)
+            .stderr_is(format!(
+                "sed: <script argument 1>:1:{column}: error: unterminated `{command}' command\n"
+            ));
+    }
+}
+
 // The following test diverse ways in which regexes are matched.
 // Search for 'regex\.' to find them in the code.
 #[test]
