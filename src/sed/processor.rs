@@ -9,8 +9,8 @@
 // file that was distributed with this source code.
 
 use crate::sed::command::{
-    Address, AppendElement, CharacterMode, Command, CommandData, InputAction, ProcessingContext,
-    Transliteration,
+    Address, AppendElement, CharacterMode, Command, CommandData, InputAction, NextLine,
+    ProcessingContext, Transliteration,
 };
 use crate::sed::delimited_parser::os_string_from_bytes;
 use crate::sed::error_handling::{ScriptLocation, input_runtime_error};
@@ -655,7 +655,7 @@ fn process_file(
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
                 // Continue processing the `N` or `n` command.
-                if let Some(mut combined_lines) = action.prepend {
+                if let NextLine::Append(mut combined_lines) = action.next_line {
                     combined_lines.push(b'\n');
                     combined_lines.extend_from_slice(pattern.as_bytes());
 
@@ -788,7 +788,7 @@ fn process_file(
                     flush_appends(output, context)?;
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
-                        prepend: None,
+                        next_line: NextLine::Replace,
                     });
                     continue 'lines;
                 }
@@ -800,7 +800,7 @@ fn process_file(
                     // to perform when the next line is read.
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
-                        prepend: Some(pattern.as_bytes().to_vec()),
+                        next_line: NextLine::Append(pattern.as_bytes().to_vec()),
                     });
                     continue 'lines;
                 }
@@ -950,11 +950,11 @@ fn process_file(
         }
     }
 
-    // Handle any N command remains.
-    // Take it even with -n, so that it does not carry over to the next file.
+    // Handle any n or N command remains.
+    // Take them even with -n, so that they do not carry over to the next file.
     if context.separate
         && let Some(action) = context.input_action.take()
-        && let Some(mut pending) = action.prepend
+        && let NextLine::Append(mut pending) = action.next_line
         && !context.quiet
     {
         pending.push(b'\n');
@@ -1016,7 +1016,7 @@ pub fn process_all_files(
             && !context.separate
             && !context.quiet
             && let Some(action) = context.input_action.take()
-            && let Some(mut pending) = action.prepend
+            && let NextLine::Append(mut pending) = action.next_line
         {
             pending.push(b'\n');
             output.write_bytes(&pending)?;
