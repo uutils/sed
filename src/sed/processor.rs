@@ -464,10 +464,15 @@ fn transliterate(
 
 /// Output any data queued for output at the end of the cycle.
 fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> UResult<()> {
+    if !context.append_elements.is_empty() {
+        // As in GNU sed, end a line that lacks its newline before the queued
+        // output, even when an `r` file is empty or unreadable.
+        output.flush_pending_newline()?;
+    }
     for elem in &context.append_elements {
         match elem {
             AppendElement::Text(text) => {
-                output.write_bytes(text.as_ref())?;
+                output.write_raw(text.as_ref())?;
             }
             AppendElement::Path(path) => {
                 output.copy_file(path)?;
@@ -567,9 +572,7 @@ fn list(
 ) -> UResult<()> {
     // Special case for an empty pattern space
     if line.is_empty() {
-        if line.is_newline_terminated() {
-            output.write_str("$\n")?;
-        }
+        output.write_str("$\n")?;
         return Ok(());
     }
 
@@ -738,7 +741,7 @@ fn process_file(
                     }
                     CommandData::Text(cmd_bytes) => {
                         let shell_out = shell_stdout(cmd_bytes.to_vec(), &command, context)?;
-                        output.write_bytes(&shell_out)?;
+                        output.write_raw(&shell_out)?;
                     }
                     _ => panic!("invalid 'e' command data"),
                 },
@@ -830,6 +833,8 @@ fn process_file(
                     );
                     context.stop_processing = true;
                     context.quiet = true;
+                    // Like GNU sed, discard text queued by `a`, `r` and `R`.
+                    context.append_elements.clear();
                     break;
                 }
                 'R' => {

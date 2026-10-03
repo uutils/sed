@@ -3132,3 +3132,129 @@ fn test_posix_reject_flags() {
         .code_is(1)
         .stderr_is("sed: <script argument 1>:1:7: error: unknown option to 's'\n");
 }
+
+/// `r` first writes a newline that the line lacks, even when the file is
+/// missing, and then copies the file unchanged, as GNU sed does.
+#[test]
+fn read_file_after_line_without_newline() -> std::io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let (one, two, text) = (
+        dir.path().join("1"),
+        dir.path().join("2"),
+        dir.path().join("text"),
+    );
+    fs::write(&one, "a")?;
+    fs::write(&two, "b\n")?;
+    fs::write(&text, "X\nY")?;
+    new_ucmd!()
+        .arg(format!("1r {}", text.display()))
+        .arg(&one)
+        .arg(&two)
+        .succeeds()
+        .stdout_is("a\nX\nYb\n");
+
+    let missing = dir.path().join("missing");
+    new_ucmd!()
+        .arg(format!("r {}", missing.display()))
+        .pipe_in("x")
+        .succeeds()
+        .stdout_is("x\n");
+    // `n` reads the next line without starting a new cycle, so `r` is not
+    // applied to it.
+    new_ucmd!()
+        .args(&["-e", &format!("r {}", missing.display()), "-e", "n"])
+        .pipe_in("x\ny")
+        .succeeds()
+        .stdout_is("x\ny");
+
+    // Text queued by `R` that lacks a newline is not ended before `r`.
+    let unterminated = dir.path().join("unterminated");
+    fs::write(&unterminated, "R")?;
+    new_ucmd!()
+        .args(&["-e", &format!("R {}", unterminated.display())])
+        .args(&["-e", &format!("r {}", text.display())])
+        .pipe_in("x\ny\n")
+        .succeeds()
+        .stdout_is("x\nRX\nYy\nX\nY");
+    new_ucmd!()
+        .args(&["-n", "-e", &format!("R {}", unterminated.display())])
+        .args(&["-e", &format!("r {}", text.display())])
+        .pipe_in("x\ny\n")
+        .succeeds()
+        .stdout_is("RX\nYX\nY");
+    Ok(())
+}
+
+/// `Q` discards text queued by `a`, `r` and `R`, as GNU sed does.
+#[test]
+fn quit_silently_discards_appended_text() -> std::io::Result<()> {
+    new_ucmd!()
+        .args(&["-e", "a A", "-e", "Q"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("");
+
+    let dir = tempfile::tempdir()?;
+    let (one, two, text) = (
+        dir.path().join("1"),
+        dir.path().join("2"),
+        dir.path().join("text"),
+    );
+    fs::write(&one, "a")?;
+    fs::write(&two, "b\n")?;
+    fs::write(&text, "X\n")?;
+    new_ucmd!()
+        .args(&["-e", &format!("R {}", text.display()), "-e", "Q"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("");
+    new_ucmd!()
+        .args(&["-e", &format!("2r {}", text.display()), "-e", "2Q"])
+        .arg(&one)
+        .arg(&two)
+        .succeeds()
+        .stdout_is("a");
+    Ok(())
+}
+
+/// `R` copies a line lacking a newline unchanged, as GNU sed does.
+#[test]
+fn read_one_line_without_newline_is_copied_unchanged() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    fs::write(temp.path(), "x")?;
+    new_ucmd!()
+        .arg(format!("R {}", temp.path().display()))
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\nxb\n");
+    Ok(())
+}
+
+/// The output of the `e` command is copied unchanged, as GNU sed does.
+#[cfg(unix)]
+#[test]
+fn execute_command_output_is_copied_unchanged() {
+    new_ucmd!()
+        .arg("1e printf hi")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("hia\nb\n");
+    // A line that lacks its newline is ended before the output, even when
+    // there is none.
+    new_ucmd!()
+        .args(&["-n", "p;e true"])
+        .pipe_in("a")
+        .succeeds()
+        .stdout_is("a\n");
+}
+
+/// `l` shows an empty pattern space as `$`, even when the line lacked a
+/// newline, as GNU sed does.
+#[test]
+fn list_empty_line_without_newline() {
+    new_ucmd!()
+        .args(&["-n", "s/a//;l"])
+        .pipe_in("a")
+        .succeeds()
+        .stdout_is("$\n");
+}
