@@ -64,8 +64,8 @@ pub struct ProcessingContext {
     pub input_action: Option<InputAction>,
     /// Hold space
     pub hold: ByteSpace,
-    /// Nesting of { } at compile time
-    pub parsed_block_nesting: usize,
+    /// Location of each `{` still open at compile time, innermost last
+    pub open_blocks: Vec<ScriptLocation>,
     /// Command associated with each label
     pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
     /// Shared `R` readers keyed by file path, so that all `R` commands naming
