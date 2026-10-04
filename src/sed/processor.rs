@@ -567,9 +567,7 @@ fn list(
 ) -> UResult<()> {
     // Special case for an empty pattern space
     if line.is_empty() {
-        if line.is_newline_terminated() {
-            output.write_str("$\n")?;
-        }
+        output.write_str("$\n")?;
         return Ok(());
     }
 
