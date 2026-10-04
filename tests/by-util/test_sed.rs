@@ -2270,6 +2270,17 @@ fn list_invalid_utf8_byte_locale() {
         .stdout_is_bytes(b"\\351$\n");
 }
 
+/// `l` shows an empty pattern space as `$`, even when the line lacked a
+/// newline, as GNU sed does.
+#[test]
+fn list_empty_line_without_newline() {
+    new_ucmd!()
+        .args(&["-n", "s/a//;l"])
+        .pipe_in("a")
+        .succeeds()
+        .stdout_is("$\n");
+}
+
 ////////////////////////////////////////////////////////////
 // In-place editing
 #[test]
