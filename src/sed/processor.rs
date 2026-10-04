@@ -830,6 +830,8 @@ fn process_file(
                     );
                     context.stop_processing = true;
                     context.quiet = true;
+                    // Like GNU sed, discard text queued by `a`, `r` and `R`.
+                    context.append_elements.clear();
                     break;
                 }
                 'R' => {
