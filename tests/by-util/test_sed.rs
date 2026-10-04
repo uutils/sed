@@ -3076,6 +3076,38 @@ fn test_quit_no_newline() {
         .stdout_is("foo\n");
 }
 
+/// `Q` discards text queued by `a`, `r` and `R`, as GNU sed does.
+#[test]
+fn test_quit_silently_discards_appended_text() -> std::io::Result<()> {
+    new_ucmd!()
+        .args(&["-e", "a A", "-e", "Q"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("");
+
+    let dir = tempfile::tempdir()?;
+    let (one, two, text) = (
+        dir.path().join("1"),
+        dir.path().join("2"),
+        dir.path().join("text"),
+    );
+    fs::write(&one, "a")?;
+    fs::write(&two, "b\n")?;
+    fs::write(&text, "X\n")?;
+    new_ucmd!()
+        .args(&["-e", &format!("R {}", text.display()), "-e", "Q"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("");
+    new_ucmd!()
+        .args(&["-e", &format!("2r {}", text.display()), "-e", "2Q"])
+        .arg(&one)
+        .arg(&two)
+        .succeeds()
+        .stdout_is("a");
+    Ok(())
+}
+
 // P with single line no newline input
 #[test]
 fn test_print_first_line_no_newline() {
