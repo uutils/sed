@@ -54,6 +54,8 @@ pub struct ProcessingContext {
     pub last_file: bool,
     /// Stop processing further input.
     pub stop_processing: bool,
+    /// Stop without writing a missing final newline (`Q`).
+    pub quit_silently: bool,
     /// Whether sed operates on bytes or UTF-8 characters
     pub character_mode: CharacterMode,
     /// Previously compiled RE, saved for reuse when specifying an empty RE
