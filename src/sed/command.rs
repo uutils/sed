@@ -260,8 +260,9 @@ fn append_with_case(
         return;
     }
 
-    // Input contains invalid UTF-8: use str::from_utf8 error to process valid
-    // UTF-8 slices and pass invalid byte sequences through.
+    // Input contains invalid UTF-8: process valid UTF-8 slices with case
+    // conversion, emit invalid byte sequences as-is (consuming any pending
+    // one-shot conversion), and preserve persistent conversion for subsequent text.
     result.reserve(input.len() + 4);
     let mut rest = input;
     while !rest.is_empty() {
@@ -284,10 +285,12 @@ fn append_with_case(
                     }
                 }
                 let invalid_len = err.error_len().unwrap_or(rest.len() - valid_len);
-                for &b in &rest[valid_len..valid_len + invalid_len] {
-                    let _ = take_case(single, persistent);
-                    result.push(b);
+                single.take();
+                if persistent.is_none() {
+                    result.extend_from_slice(&rest[valid_len..]);
+                    break;
                 }
+                result.extend_from_slice(&rest[valid_len..valid_len + invalid_len]);
                 rest = &rest[valid_len + invalid_len..];
             }
         }
@@ -1102,6 +1105,15 @@ mod tests {
             CharacterMode::Utf8,
         );
         assert_eq!(out, "\u{414}".as_bytes());
+        // Cyrillic capital DE -> small DE with \L.
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Lower,
+                ReplacementPart::Literal("\u{414}".as_bytes().to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, "\u{434}".as_bytes());
     }
 
     #[test]
@@ -1209,7 +1221,7 @@ mod tests {
             let out = template
                 .apply_captures(&cmd, &caps, CharacterMode::Utf8)
                 .unwrap();
-            assert!(!out.is_empty());
+            assert_ne!(out, b"");
         }
     }
 
@@ -1228,16 +1240,57 @@ mod tests {
             .apply_captures(&cmd, &caps, CharacterMode::Utf8)
             .unwrap();
         assert_eq!(out, b"\xFFABC");
+
+        // Valid prefix converts, invalid sequence passes through, and subsequent
+        // text converts under persistent conversion.
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Upper,
+            ReplacementPart::Literal(b"abc\xFFdef".to_vec()),
+        ]);
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"ABC\xFFDEF");
+
+        // Persistent conversion also continues across subsequent replacement parts.
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::Upper,
+            ReplacementPart::Literal(b"abc\xFF".to_vec()),
+            ReplacementPart::Literal(b"def".to_vec()),
+        ]);
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"ABC\xFFDEF");
+
         let template = ReplacementTemplate::new(vec![
             ReplacementPart::Lower,
             ReplacementPart::Literal(b"\xFFABC".to_vec()),
         ]);
-        let input = &mut IOChunk::new_from_str("x");
-        let caps = caps_for("x", input);
         let out = template
             .apply_captures(&cmd, &caps, CharacterMode::Utf8)
             .unwrap();
         assert_eq!(out, b"\xFFabc");
+
+        // One-shot modifier is consumed by an invalid byte; subsequent text remains unconverted.
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::UpperFirst,
+            ReplacementPart::Literal(b"\xFFabc".to_vec()),
+        ]);
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"\xFFabc");
+
+        // One-shot modifier converts the first character; following invalid byte passes through.
+        let template = ReplacementTemplate::new(vec![
+            ReplacementPart::UpperFirst,
+            ReplacementPart::Literal(b"abc\xFFdef".to_vec()),
+        ]);
+        let out = template
+            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
+            .unwrap();
+        assert_eq!(out, b"Abc\xFFdef");
     }
 
     // Transliteration
