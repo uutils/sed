@@ -827,6 +827,7 @@ fn process_file(
                         i32::try_from(*extract_variant!(command, Number)).unwrap_or(i32::MAX),
                     );
                     context.stop_processing = true;
+                    context.quit_silently = true;
                     context.quiet = true;
                     // Like GNU sed, discard text queued by `a`, `r` and `R`.
                     context.append_elements.clear();
@@ -945,7 +946,9 @@ fn process_file(
         flush_appends(output, context)?;
 
         if context.stop_processing {
-            output.flush_pending_newline()?;
+            if !context.quit_silently {
+                output.flush_pending_newline()?;
+            }
             break;
         }
     }
