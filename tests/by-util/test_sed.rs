@@ -831,6 +831,81 @@ fn subst_case_conversion_disabled_under_posix() {
 }
 
 #[test]
+fn subst_case_conversion_invalid_utf8_preserves_persistent() {
+    // Literal invalid UTF-8 bytes in a script replacement pass through under
+    // persistent conversion (\U, \L), continuing to convert following text (matching GNU sed).
+    let mut script = NamedTempFile::new().expect("create temporary sed script");
+    script
+        .write_all(b"s/x/\\Uabc\xFFdef/\n")
+        .expect("write temporary sed script");
+    let script_path = script.path().to_str().expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", script_path])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"ABC\xFFDEF\n");
+
+    let mut script_lower = NamedTempFile::new().expect("create temporary sed script");
+    script_lower
+        .write_all(b"s/x/\\LABC\xFFDEF/\n")
+        .expect("write temporary sed script");
+    let script_path_lower = script_lower
+        .path()
+        .to_str()
+        .expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", script_path_lower])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"abc\xFFdef\n");
+
+    // One-shot modifier is consumed by the first invalid byte; subsequent text remains unconverted.
+    let mut script_oneshot = NamedTempFile::new().expect("create temporary sed script");
+    script_oneshot
+        .write_all(b"s/x/\\u\xFFabc/\n")
+        .expect("write temporary sed script");
+    let script_path_oneshot = script_oneshot
+        .path()
+        .to_str()
+        .expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", script_path_oneshot])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"\xFFabc\n");
+
+    // Persistent conversion in a literal continues for subsequent replacement
+    // parts across invalid bytes.
+    let mut script2 = NamedTempFile::new().expect("create temporary sed script");
+    script2
+        .write_all(b"s/x/\\Ua\xFF&def/\n")
+        .expect("write temporary sed script");
+    let script_path2 = script2.path().to_str().expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", script_path2])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"A\xFFXDEF\n");
+
+    // In byte mode (C/POSIX locale), all bytes 0..=255 are valid ASCII bytes,
+    // so persistent conversion converts ASCII characters throughout.
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-e", r"s/.*/\U&/"])
+        .pipe_in(b"abc\xFFdef\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"ABC\xFFDEF\n");
+}
+
+#[test]
 fn subst_escaped_delimiters_retain_precedence() {
     // Escaped digit delimiters (\0..\9) must not be treated as backreferences or whole match
     new_ucmd!()
