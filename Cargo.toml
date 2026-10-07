@@ -118,10 +118,9 @@ name = "sed_bench"
 harness = false
 
 [profile.release]
-lto = true
+lto = "fat"
 panic = "abort"
-# should be dropped to 1 for binary size without performance drop
-codegen-units = 7
+codegen-units = 1
 
 # A release-like profile that is as small as possible.
 [profile.release-small]
