@@ -619,6 +619,44 @@ fn test_bracket_keeps_escapes_and_ranges() {
         .stdout_is("X1X\n");
 }
 
+#[test]
+fn test_posix_disables_gnu_character_escapes_in_brackets() {
+    // Outside a bracket expression --posix keeps them, see
+    // test_posix_keeps_gnu_character_escapes.
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/[\t]/X/g"])
+        .pipe_in("a\tb\n")
+        .succeeds()
+        .stdout_is("a\tb\n");
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/[\t]/X/g"])
+        .pipe_in("a\\tb\n")
+        .succeeds()
+        .stdout_is("aXXb\n");
+}
+
+#[test]
+fn test_bracket_literal_open_bracket() {
+    // [\[] and [[] both hold a literal [, they do not open a nested class.
+    for script in [r"s/[\[]/X/g", r"s/[[]/X/g"] {
+        new_ucmd!()
+            .args(&["-e", script])
+            .pipe_in("a[b\n")
+            .succeeds()
+            .stdout_is("aXb\n");
+    }
+}
+
+#[test]
+fn test_bracket_backslash_b_is_not_backspace() {
+    // sed has no \b character escape, so [\b] holds a backslash and a b.
+    new_ucmd!()
+        .args(&["-e", r"s/[\b]/X/g"])
+        .pipe_in("a\\b\n")
+        .succeeds()
+        .stdout_is("aXX\n");
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);

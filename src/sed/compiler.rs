@@ -3583,7 +3583,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b">helll\x08o\nto\nall\x07\n");
+                assert_eq!(text.as_ref(), b">helllbo\nto\nall\x07\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
