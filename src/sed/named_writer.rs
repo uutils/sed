@@ -146,4 +146,31 @@ mod tests {
 
         assert_eq!(fs::read(path).unwrap(), b"a\xE9");
     }
+
+    #[test]
+    fn test_write_line_bytes_reports_deferred_newline_error() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        let mut writer = NamedWriter {
+            path: path.clone(),
+            // Unbuffered writes to a read-only handle fail immediately.
+            writer: BufWriter::with_capacity(0, File::open(&path).unwrap()),
+            location: ScriptLocation {
+                input_name: Rc::from("script.sed"),
+                line_number: 3,
+                column_number: 7,
+                ..ScriptLocation::default()
+            },
+            pending_newline: false,
+        };
+
+        writer.write_line_bytes(b"", false).unwrap();
+        // Only the deferred newline has bytes to write.
+        let error = writer.write_line_bytes(b"", false).unwrap_err();
+        assert_eq!(error.code(), 2);
+        let message = error.to_string();
+        assert!(message.starts_with("script.sed:3:7: error: "));
+        assert!(message.contains("writing to file"));
+        assert!(message.contains(path.to_str().unwrap()));
+    }
 }
