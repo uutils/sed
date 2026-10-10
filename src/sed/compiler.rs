@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use terminal_size::{Width, terminal_size};
-use uucore::error::{UResult, USimpleError};
+use uucore::error::UResult;
 
 const DEFAULT_OUTPUT_WIDTH: usize = 60;
 
@@ -77,6 +77,11 @@ pub fn compile(
     #[cfg(any())]
     dbg!(&result);
 
+    // Like GNU sed, point at the innermost `{` left open.
+    if let Some(location) = context.open_blocks.last() {
+        return semantic_error(location, "unmatched `{'");
+    }
+
     // Link branch commands to the target label commands.
     populate_label_map(result.clone(), context)?;
     populate_range_commands(result.clone(), context);
@@ -85,9 +90,6 @@ pub fn compile(
     // Link the ends of command blocks to their following commands.
     // This converts the tree into a graph, so it must be the last
     // conversion that traverses the structure as a tree.
-    if context.parsed_block_nesting > 0 {
-        return Err(USimpleError::new(1, "unmatched `{'"));
-    }
     patch_block_endings(result.clone());
 
     Ok(result)
@@ -872,6 +874,10 @@ fn compile_subst_command(
 ) -> UResult<CommandHandling> {
     line.advance(); // move past 's'
 
+    if line.eol() {
+        return compilation_error(lines, line, "unterminated `s' command");
+    }
+
     let delimiter = line.current();
     if delimiter == '\0' || delimiter == '\\' {
         return compilation_error(
@@ -937,6 +943,10 @@ fn compile_trans_command(
     context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     line.advance(); // move past 'y'
+
+    if line.eol() {
+        return compilation_error(lines, line, "unterminated `y' command");
+    }
 
     let delimiter = line.current();
     if delimiter == '\0' || delimiter == '\\' {
@@ -1105,10 +1115,9 @@ fn compile_end_group_command(
     cmd: &mut Command,
     context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
-    if context.parsed_block_nesting == 0 {
+    if context.open_blocks.pop().is_none() {
         return compilation_error(lines, line, "unexpected `}'");
     }
-    context.parsed_block_nesting -= 1;
     line.advance();
     line.eat_spaces();
     parse_command_ending(lines, line, cmd)?;
@@ -1207,7 +1216,7 @@ fn compile_block_command(
     context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     line.advance(); // move past '{'
-    context.parsed_block_nesting += 1;
+    context.open_blocks.push(cmd.location.clone());
     let block_body = compile_sequence(lines, line, context)?;
     cmd.data = CommandData::BranchTarget(block_body);
     Ok(CommandHandling::Continue)

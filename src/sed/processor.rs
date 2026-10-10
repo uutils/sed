@@ -124,7 +124,15 @@ fn applies(
             }
         } else if let Some(addr1) = &command.addr1 {
             // See if latch must start.
-            if match_address(addr1, reader, pattern, context, &command.location)? {
+            let starts = match addr1 {
+                // Numeric start already passed (block, d, n, branch): start once here.
+                Address::Line(n) if linenum > *n => {
+                    !command.range_started && !matches!(addr2, Address::Line(m) if *m < linenum)
+                }
+                _ => match_address(addr1, reader, pattern, context, &command.location)?,
+            };
+            if starts {
+                command.range_started = true;
                 match addr2 {
                     Address::Line(n) if linenum >= *n => {
                         context.last_address = true;
@@ -472,7 +480,7 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
     for elem in &context.append_elements {
         match elem {
             AppendElement::Text(text) => {
-                output.write_bytes(text.as_ref())?;
+                output.write_raw(text.as_ref())?;
             }
             AppendElement::Path(path) => {
                 output.copy_file(path)?;
@@ -741,7 +749,7 @@ fn process_file(
                     }
                     CommandData::Text(cmd_bytes) => {
                         let shell_out = shell_stdout(cmd_bytes.to_vec(), &command, context)?;
-                        output.write_bytes(&shell_out)?;
+                        output.write_raw(&shell_out)?;
                     }
                     _ => panic!("invalid 'e' command data"),
                 },
@@ -977,13 +985,10 @@ fn reset_latched_address_ranges(range_commands: &mut [Rc<RefCell<Command>>]) {
     for cmd_rc in range_commands.iter() {
         let mut cmd = cmd_rc.borrow_mut();
 
-        cmd.start_line =
-            // Check for address-spec line 0 pre-latch extension.
-            if let Some(addr1) = &cmd.addr1 && matches!(addr1, Address::Line(0)) {
-                Some(0)
-            } else {
-                None
-            };
+        // Check for address-spec line 0 pre-latch extension.
+        let pre_latched = matches!(cmd.addr1, Some(Address::Line(0)));
+        cmd.start_line = if pre_latched { Some(0) } else { None };
+        cmd.range_started = pre_latched;
     }
 }
 

@@ -64,8 +64,8 @@ pub struct ProcessingContext {
     pub input_action: Option<InputAction>,
     /// Hold space
     pub hold: ByteSpace,
-    /// Nesting of { } at compile time
-    pub parsed_block_nesting: usize,
+    /// Location of each `{` still open at compile time, innermost last
+    pub open_blocks: Vec<ScriptLocation>,
     /// Command associated with each label
     pub label_to_command_map: HashMap<String, Rc<RefCell<Command>>>,
     /// Shared `R` readers keyed by file path, so that all `R` commands naming
@@ -557,6 +557,7 @@ pub struct Command {
     pub addr2: Option<Address>,             // End address
     pub non_select: bool,                   // True if '!'
     pub start_line: Option<usize>,          // Start line number (or None if unlatched)
+    pub range_started: bool,                // True once the range has been entered
     pub data: CommandData,                  // Command-specific data
     pub next: Option<Rc<RefCell<Command>>>, // Pointer to next command
     pub location: ScriptLocation,           // Command's definition location
@@ -570,6 +571,7 @@ impl Default for Command {
             addr2: None,
             non_select: false,
             start_line: None,
+            range_started: false,
             data: CommandData::None,
             next: None,
             location: ScriptLocation::default(),
