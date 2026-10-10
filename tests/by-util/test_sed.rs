@@ -184,6 +184,27 @@ fn test_special_file() {
     }
 }
 
+/// End-to-end coverage for the Linux file→stdout(pipe) splice path:
+/// a large regular file is read and written to a pipe without substitutions.
+#[test]
+#[cfg(all(unix, target_os = "linux"))]
+fn test_large_file_piped_through_sed() {
+    let mut tmp = NamedTempFile::new().unwrap();
+    // Well above MIN_DIRECT_WRITE (4 KiB) so flush_mmap takes the zero-copy path.
+    let line = "abcdefghijklmnopqrstuvwxyz0123456789\n";
+    let mut expected = String::new();
+    for _ in 0..8_000 {
+        tmp.write_all(line.as_bytes()).unwrap();
+        expected.push_str(line);
+    }
+    tmp.flush().unwrap();
+
+    new_ucmd!()
+        .args(&["-e", "", tmp.path().to_str().unwrap()])
+        .succeeds()
+        .stdout_only(&expected);
+}
+
 /// Create a new test function to verify an execution for specified output.
 macro_rules! check_output {
     ($name:ident, $args:expr) => {
