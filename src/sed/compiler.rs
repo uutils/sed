@@ -824,6 +824,7 @@ pub fn compile_replacement(
                             if let Some(decoded) = parse_char_escape(line) {
                                 push_script_char(&mut literal, decoded, character_mode);
                             } else {
+                                literal.push(b'\\');
                                 literal.push(line.current_byte());
                                 line.advance();
                             }
