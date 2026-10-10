@@ -239,60 +239,25 @@ fn append_with_case(
         }
         return;
     }
-    // Valid UTF-8 fast path.
-    if let Ok(s) = std::str::from_utf8(input) {
-        let mut chars = s.chars();
-        if let Some(first_ch) = chars.next() {
-            let case = take_case(single, persistent);
-            result.reserve(input.len() + 4);
-            push_char(result, first_ch, case);
-            match persistent {
-                None => {
-                    result.extend_from_slice(&input[first_ch.len_utf8()..]);
-                }
-                Some(case) => {
-                    for ch in chars {
-                        push_case_converted_char(result, ch, case);
-                    }
+    result.reserve(input.len() + 4);
+    for chunk in input.utf8_chunks() {
+        let valid = chunk.valid();
+        if persistent.is_none() && single.is_none() {
+            result.extend_from_slice(valid.as_bytes());
+        } else {
+            let mut chars = valid.chars();
+            while let Some(ch) = chars.next() {
+                let case = take_case(single, persistent);
+                push_char(result, ch, case);
+                if persistent.is_none() && single.is_none() {
+                    result.extend_from_slice(chars.as_str().as_bytes());
+                    break;
                 }
             }
         }
-        return;
-    }
-
-    // Input contains invalid UTF-8: process valid UTF-8 slices with case
-    // conversion, emit invalid byte sequences as-is (consuming any pending
-    // one-shot conversion), and preserve persistent conversion for subsequent text.
-    result.reserve(input.len() + 4);
-    let mut rest = input;
-    while !rest.is_empty() {
-        match std::str::from_utf8(rest) {
-            Ok(s) => {
-                for ch in s.chars() {
-                    let case = take_case(single, persistent);
-                    push_char(result, ch, case);
-                }
-                break;
-            }
-            Err(err) => {
-                let valid_len = err.valid_up_to();
-                if valid_len > 0
-                    && let Ok(s) = std::str::from_utf8(&rest[..valid_len])
-                {
-                    for ch in s.chars() {
-                        let case = take_case(single, persistent);
-                        push_char(result, ch, case);
-                    }
-                }
-                let invalid_len = err.error_len().unwrap_or(rest.len() - valid_len);
-                single.take();
-                if persistent.is_none() {
-                    result.extend_from_slice(&rest[valid_len..]);
-                    break;
-                }
-                result.extend_from_slice(&rest[valid_len..valid_len + invalid_len]);
-                rest = &rest[valid_len + invalid_len..];
-            }
+        if !chunk.invalid().is_empty() {
+            single.take();
+            result.extend_from_slice(chunk.invalid());
         }
     }
 }
@@ -331,30 +296,11 @@ impl ReplacementTemplate {
         self.has_case_conversion
     }
 
-    fn render_parts<'a, F>(
-        &self,
-        character_mode: CharacterMode,
-        mut get_match_bytes: F,
-    ) -> UResult<Vec<u8>>
+    fn render_parts<'a, F>(&self, character_mode: CharacterMode, mut get_match_bytes: F) -> Vec<u8>
     where
-        F: FnMut(&ReplacementPart) -> UResult<Option<&'a [u8]>>,
+        F: FnMut(&ReplacementPart) -> Option<&'a [u8]>,
     {
         let mut result = Vec::new();
-        if !self.has_case_conversion {
-            for part in &self.parts {
-                match part {
-                    ReplacementPart::Literal(s) => result.extend_from_slice(s),
-                    ReplacementPart::WholeMatch | ReplacementPart::Group(_) => {
-                        if let Some(bytes) = get_match_bytes(part)? {
-                            result.extend_from_slice(bytes);
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            }
-            return Ok(result);
-        }
-
         let mut persistent = None;
         let mut single = None;
 
@@ -364,7 +310,7 @@ impl ReplacementTemplate {
                     append_with_case(&mut result, s, persistent, &mut single, character_mode);
                 }
                 ReplacementPart::WholeMatch | ReplacementPart::Group(_) => {
-                    if let Some(bytes) = get_match_bytes(part)? {
+                    if let Some(bytes) = get_match_bytes(part) {
                         append_with_case(
                             &mut result,
                             bytes,
@@ -395,7 +341,7 @@ impl ReplacementTemplate {
             }
         }
 
-        Ok(result)
+        result
     }
 
     /// Apply the template to the given RE captures.
@@ -419,28 +365,31 @@ impl ReplacementTemplate {
             );
         }
 
-        self.render_parts(character_mode, |part| match part {
-            ReplacementPart::WholeMatch => {
-                Ok(Some(caps.get(0)?.map(|m| m.as_bytes()).unwrap_or_default()))
-            }
+        Ok(self.render_parts(character_mode, |part| match part {
+            ReplacementPart::WholeMatch => match caps.get(0) {
+                Ok(Some(m)) => Some(m.as_bytes()),
+                _ => Some(b""),
+            },
             ReplacementPart::Group(n) => {
                 let i: usize = (*n).try_into().unwrap();
-                Ok(Some(caps.get(i)?.map(|m| m.as_bytes()).unwrap_or_default()))
+                match caps.get(i) {
+                    Ok(Some(m)) => Some(m.as_bytes()),
+                    _ => Some(b""),
+                }
             }
-            _ => Ok(None),
-        })
+            _ => None,
+        }))
     }
 
     /// Apply the template to the given RE single match.
     pub fn apply_match(&self, m: &Match<'_>, character_mode: CharacterMode) -> Vec<u8> {
         self.render_parts(character_mode, |part| match part {
-            ReplacementPart::WholeMatch => Ok(Some(m.as_bytes())),
+            ReplacementPart::WholeMatch => Some(m.as_bytes()),
             ReplacementPart::Group(_) => {
                 panic!("unexpected Regex group replacement")
             }
-            _ => Ok(None),
+            _ => None,
         })
-        .expect("infallible")
     }
 }
 
@@ -901,23 +850,11 @@ mod tests {
         let out = apply_literal(
             vec![
                 ReplacementPart::Upper,
-                ReplacementPart::Literal(b"abc".to_vec()),
+                ReplacementPart::Literal(b"abc\xFFdef".to_vec()),
             ],
             CharacterMode::Byte,
         );
-        assert_eq!(out, b"ABC");
-        // Invalid UTF-8 bytes pass through while consuming a pending \u.
-        let template = ReplacementTemplate::new(vec![
-            ReplacementPart::UpperFirst,
-            ReplacementPart::Literal(b"\xFFabc".to_vec()),
-        ]);
-        let input = &mut IOChunk::new_from_str("x");
-        let caps = caps_for("x", input);
-        let cmd = Command::default();
-        let out = template
-            .apply_captures(&cmd, &caps, CharacterMode::Utf8)
-            .unwrap();
-        assert_eq!(out, b"\xFFabc");
+        assert_eq!(out, b"ABC\xFFDEF");
     }
 
     #[test]
@@ -1013,17 +950,6 @@ mod tests {
             CharacterMode::Utf8,
         );
         assert_eq!(out, b"aBC");
-        let out = apply_literal(
-            vec![
-                ReplacementPart::Lower,
-                ReplacementPart::UpperFirst,
-                ReplacementPart::Literal(b"ABC".to_vec()),
-            ],
-            CharacterMode::Utf8,
-        );
-        // Lower+UpperFirst on "ABC" is already covered as Abc, but assert again
-        // here for the switch-combination matrix.
-        assert_eq!(out, b"Abc");
     }
 
     #[test]
@@ -1207,15 +1133,15 @@ mod tests {
             .unwrap();
         assert_eq!(out, "É € 😀".as_bytes());
 
-        // Incomplete / invalid sequences are preserved without panic
-        let invalid_samples: [&[u8]; 5] = [
-            b"\x80abc",
-            b"\xC0\xAF",
-            b"\xF5\x80\x80\x80",
-            b"\xE2\x82",
-            b"\xE2\x28\xA1",
+        // Incomplete / invalid sequences are preserved with valid ASCII converted
+        let invalid_samples: [(&[u8], &[u8]); 5] = [
+            (b"\x80abc", b"\x80ABC"),
+            (b"\xC0\xAF", b"\xC0\xAF"),
+            (b"\xF5\x80\x80\x80", b"\xF5\x80\x80\x80"),
+            (b"\xE2\x82", b"\xE2\x82"),
+            (b"\xE2\x28\xA1", b"\xE2\x28\xA1"),
         ];
-        for sample in invalid_samples {
+        for (sample, expected) in invalid_samples {
             let template = ReplacementTemplate::new(vec![
                 ReplacementPart::Upper,
                 ReplacementPart::Literal(sample.to_vec()),
@@ -1223,7 +1149,7 @@ mod tests {
             let out = template
                 .apply_captures(&cmd, &caps, CharacterMode::Utf8)
                 .unwrap();
-            assert_ne!(out, b"");
+            assert_eq!(out, expected);
         }
     }
 

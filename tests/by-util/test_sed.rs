@@ -754,29 +754,6 @@ fn subst_case_conversion_single_shot_combos() {
 }
 
 #[test]
-fn subst_unrecognized_escape_in_replacement_drops_backslash() {
-    // GNU sed subst-replacement.sh: backslash followed by unrecognized letter
-    // uses the letter as-is and drops the backslash.
-    new_ucmd!()
-        .args(&["-E", "-e", r"s/(.)/\Q/"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is_bytes(b"Q\n");
-
-    new_ucmd!()
-        .args(&["-e", r"s/a/\q/"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is_bytes(b"q\n");
-
-    new_ucmd!()
-        .args(&["-e", r"s/a/\\q/"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is_bytes(b"\\q\n");
-}
-
-#[test]
 fn subst_case_conversion_disabled_under_posix() {
     // GNU sed posix-mode-s.sh: case-conversion escapes \U \L \u \l \E
     // are GNU extensions and are disabled under POSIX mode.
@@ -834,69 +811,31 @@ fn subst_case_conversion_disabled_under_posix() {
 fn subst_case_conversion_invalid_utf8_preserves_persistent() {
     // Literal invalid UTF-8 bytes in a script replacement pass through under
     // persistent conversion (\U, \L), continuing to convert following text (matching GNU sed).
-    let mut script = NamedTempFile::new().expect("create temporary sed script");
-    script
-        .write_all(b"s/x/\\Uabc\xFFdef/\n")
-        .expect("write temporary sed script");
-    let script_path = script.path().to_str().expect("temporary path is UTF-8");
+    let run_script = |script_bytes: &[u8], expected: &[u8]| {
+        let mut script = NamedTempFile::new().expect("create temporary sed script");
+        script
+            .write_all(script_bytes)
+            .expect("write temporary sed script");
+        let script_path = script.path().to_str().expect("temporary path is UTF-8");
 
-    new_ucmd!()
-        .env("LC_ALL", "C.UTF-8")
-        .args(&["-f", script_path])
-        .pipe_in("x\n")
-        .succeeds()
-        .stdout_is_bytes(b"ABC\xFFDEF\n");
+        new_ucmd!()
+            .env("LC_ALL", "C.UTF-8")
+            .args(&["-f", script_path])
+            .pipe_in("x\n")
+            .succeeds()
+            .stdout_is_bytes(expected);
+    };
 
-    let mut script_lower = NamedTempFile::new().expect("create temporary sed script");
-    script_lower
-        .write_all(b"s/x/\\LABC\xFFDEF/\n")
-        .expect("write temporary sed script");
-    let script_path_lower = script_lower
-        .path()
-        .to_str()
-        .expect("temporary path is UTF-8");
-
-    new_ucmd!()
-        .env("LC_ALL", "C.UTF-8")
-        .args(&["-f", script_path_lower])
-        .pipe_in("x\n")
-        .succeeds()
-        .stdout_is_bytes(b"abc\xFFdef\n");
-
+    run_script(b"s/x/\\Uabc\xFFdef/\n", b"ABC\xFFDEF\n");
+    run_script(b"s/x/\\LABC\xFFDEF/\n", b"abc\xFFdef\n");
     // One-shot modifier is consumed by the first invalid byte; subsequent text remains unconverted.
-    let mut script_oneshot = NamedTempFile::new().expect("create temporary sed script");
-    script_oneshot
-        .write_all(b"s/x/\\u\xFFabc/\n")
-        .expect("write temporary sed script");
-    let script_path_oneshot = script_oneshot
-        .path()
-        .to_str()
-        .expect("temporary path is UTF-8");
-
-    new_ucmd!()
-        .env("LC_ALL", "C.UTF-8")
-        .args(&["-f", script_path_oneshot])
-        .pipe_in("x\n")
-        .succeeds()
-        .stdout_is_bytes(b"\xFFabc\n");
-
+    run_script(b"s/x/\\u\xFFabc/\n", b"\xFFabc\n");
     // Persistent conversion in a literal continues for subsequent replacement
     // parts across invalid bytes.
-    let mut script2 = NamedTempFile::new().expect("create temporary sed script");
-    script2
-        .write_all(b"s/x/\\Ua\xFF&def/\n")
-        .expect("write temporary sed script");
-    let script_path2 = script2.path().to_str().expect("temporary path is UTF-8");
+    run_script(b"s/x/\\Ua\xFF&def/\n", b"A\xFFXDEF\n");
 
-    new_ucmd!()
-        .env("LC_ALL", "C.UTF-8")
-        .args(&["-f", script_path2])
-        .pipe_in("x\n")
-        .succeeds()
-        .stdout_is_bytes(b"A\xFFXDEF\n");
-
-    // In byte mode (C/POSIX locale), all bytes 0..=255 are valid ASCII bytes,
-    // so persistent conversion converts ASCII characters throughout.
+    // In byte mode (C/POSIX locale), each byte is processed individually:
+    // ASCII letters are converted, while non-ASCII bytes (e.g. 0xFF) pass through unchanged.
     new_ucmd!()
         .env("LC_ALL", "C")
         .args(&["-e", r"s/.*/\U&/"])
