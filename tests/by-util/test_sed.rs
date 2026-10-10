@@ -657,6 +657,259 @@ fn subst_backref_allowed_in_c_utf8_locale() {
         .stdout_is_bytes(b"X\n");
 }
 
+/// GNU s/// case-conversion escapes: \U \L \u \l \E (issue #540).
+/// Covers the processor substitution paths (apply_match and apply_captures)
+///
+/// together with the per-occurrence reset required by GNU when `g` is used.
+#[test]
+fn subst_case_conversion_upper_lower() {
+    new_ucmd!()
+        .args(&["-e", r"s/b\(.*\)/\U&/"])
+        .pipe_in("abc def\n")
+        .succeeds()
+        .stdout_is_bytes(b"aBC DEF\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s/b\(.*\)/\u&/"])
+        .pipe_in("abc def\n")
+        .succeeds()
+        .stdout_is_bytes(b"aBc def\n");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/B\(.*\)/\L&/"])
+        .pipe_in("ABC DEF\n")
+        .succeeds()
+        .stdout_is_bytes(b"Abc def\n");
+
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-e", r"s/B\(.*\)/\l&/"])
+        .pipe_in("ABC DEF\n")
+        .succeeds()
+        .stdout_is_bytes(b"AbC DEF\n");
+}
+
+#[test]
+fn subst_case_conversion_end_and_global_reset() {
+    // \E ends \U conversion.
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\U&\E!/"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"ABC!\n");
+
+    // GNU: case conversion does not propagate across `g` occurrences.
+    // s/(b?)-/x\u\1/g on "a-b-" gives "axxB".
+    new_ucmd!()
+        .args(&["-E", "-e", r"s/(b?)-/x\u\1/g"])
+        .pipe_in("a-b-\n")
+        .succeeds()
+        .stdout_is_bytes(b"axxB\n");
+
+    // Empty \1 leaves pending \u for the following literal in the same
+    // occurrence: s/\(a\)*/\u\1x/g on "-" gives "X-X".
+    new_ucmd!()
+        .args(&["-e", r"s/\(a\)*/\u\1x/g"])
+        .pipe_in("-\n")
+        .succeeds()
+        .stdout_is_bytes(b"X-X\n");
+
+    // \U\1-\2 uppercases backreferences.
+    new_ucmd!()
+        .args(&["-E", "-e", r"s/(a)(b)/\U\1-\2/"])
+        .pipe_in("ab\n")
+        .succeeds()
+        .stdout_is_bytes(b"A-B\n");
+}
+
+#[test]
+fn subst_case_conversion_single_shot_combos() {
+    // Last one-shot wins: \u\l -> lower, \l\u -> upper.
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\u\l&/"])
+        .pipe_in("ABC\n")
+        .succeeds()
+        .stdout_is_bytes(b"aBC\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\l\u&/"])
+        .pipe_in("ABC\n")
+        .succeeds()
+        .stdout_is_bytes(b"ABC\n");
+
+    // Persistent + one-shot: \U\l lowercases next char, rest upper.
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\U\l&/"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"aBC\n");
+
+    // Non-letters consume one-shot: \u123abc stays "123abc".
+    new_ucmd!()
+        .args(&["-e", r"s/.*/\u123abc/"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"123abc\n");
+}
+
+#[test]
+fn subst_case_conversion_disabled_under_posix() {
+    // GNU sed posix-mode-s.sh: case-conversion escapes \U \L \u \l \E
+    // are GNU extensions and are disabled under POSIX mode.
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\l&/"])
+        .pipe_in("A\n")
+        .succeeds()
+        .stdout_is_bytes(b"lA\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s/./\l&/"])
+        .pipe_in("A\n")
+        .succeeds()
+        .stdout_is_bytes(b"a\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\u&/"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is_bytes(b"ua\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\U&/"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"Uabc\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\L&/"])
+        .pipe_in("ABC\n")
+        .succeeds()
+        .stdout_is_bytes(b"LABC\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\E&/"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"Eabc\n");
+
+    // In POSIX mode, valid \uXXXX and \UXXXXXXXX forms are not decoded as Unicode escapes
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\u0041/"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"u0041\n");
+
+    new_ucmd!()
+        .args(&["--posix", "-e", r"s/./\U00000041/"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is_bytes(b"U00000041\n");
+}
+
+#[test]
+fn subst_case_conversion_invalid_utf8_preserves_persistent() {
+    // Literal invalid UTF-8 bytes in a script replacement pass through under
+    // persistent conversion (\U, \L), continuing to convert following text (matching GNU sed).
+    let run_script = |script_bytes: &[u8], expected: &[u8]| {
+        let mut script = NamedTempFile::new().expect("create temporary sed script");
+        script
+            .write_all(script_bytes)
+            .expect("write temporary sed script");
+        let script_path = script.path().to_str().expect("temporary path is UTF-8");
+
+        new_ucmd!()
+            .env("LC_ALL", "C.UTF-8")
+            .args(&["-f", script_path])
+            .pipe_in("x\n")
+            .succeeds()
+            .stdout_is_bytes(expected);
+    };
+
+    run_script(b"s/x/\\Uabc\xFFdef/\n", b"ABC\xFFDEF\n");
+    run_script(b"s/x/\\LABC\xFFDEF/\n", b"abc\xFFdef\n");
+    // One-shot modifier is consumed by the first invalid byte; subsequent text remains unconverted.
+    run_script(b"s/x/\\u\xFFabc/\n", b"\xFFabc\n");
+    // Persistent conversion in a literal continues for subsequent replacement
+    // parts across invalid bytes.
+    run_script(b"s/x/\\Ua\xFF&def/\n", b"A\xFFXDEF\n");
+
+    // In byte mode (C/POSIX locale), each byte is processed individually:
+    // ASCII letters are converted, while non-ASCII bytes (e.g. 0xFF) pass through unchanged.
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-e", r"s/.*/\U&/"])
+        .pipe_in(b"abc\xFFdef\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"ABC\xFFDEF\n");
+}
+
+#[test]
+fn subst_escaped_delimiters_retain_precedence() {
+    // Escaped digit delimiters (\0..\9) must not be treated as backreferences or whole match
+    new_ucmd!()
+        .args(&["-e", r"s1a1\11"])
+        .pipe_in("a1c\n")
+        .succeeds()
+        .stdout_is_bytes(b"11c\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s0a0\00"])
+        .pipe_in("a0c\n")
+        .succeeds()
+        .stdout_is_bytes(b"00c\n");
+
+    // Escaped case escape delimiters (\U, \L, \u, \l, \E) must not trigger case conversion
+    new_ucmd!()
+        .args(&["-e", r"sUaU\UU"])
+        .pipe_in("aUc\n")
+        .succeeds()
+        .stdout_is_bytes(b"UUc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"suau\uu"])
+        .pipe_in("auc\n")
+        .succeeds()
+        .stdout_is_bytes(b"uuc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"sLaL\LL"])
+        .pipe_in("aLc\n")
+        .succeeds()
+        .stdout_is_bytes(b"LLc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"slal\ll"])
+        .pipe_in("alc\n")
+        .succeeds()
+        .stdout_is_bytes(b"llc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"sEaE\EE"])
+        .pipe_in("aEc\n")
+        .succeeds()
+        .stdout_is_bytes(b"EEc\n");
+
+    // Delimiter '&' must not be misparsed as WholeMatch and must properly terminate replacement
+    new_ucmd!()
+        .args(&["-e", r"s&a&\&&"])
+        .pipe_in("a&c\n")
+        .succeeds()
+        .stdout_is_bytes(b"&&c\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s&a&x&"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"xbc\n");
+
+    new_ucmd!()
+        .args(&["-e", r"s&a&&"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is_bytes(b"bc\n");
+}
+
 /// Match non-UTF-8 input bytes with byte escapes in byte mode.
 #[test]
 fn subst_byte_escape_matches_invalid_input_in_c_locale() {
