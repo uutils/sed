@@ -3483,6 +3483,34 @@ fn test_quit_silently_discards_appended_text() -> std::io::Result<()> {
     Ok(())
 }
 
+/// `Q` does not write a newline that the last line lacks, as GNU sed does.
+#[test]
+fn test_quit_silently_keeps_missing_newline() {
+    new_ucmd!()
+        .arg("p;Q")
+        .pipe_in("a")
+        .succeeds()
+        .stdout_is("a");
+}
+
+#[test]
+fn test_quit_after_print_adds_missing_newline() {
+    new_ucmd!()
+        .arg("p;q")
+        .pipe_in("a")
+        .succeeds()
+        .stdout_is("a\na\n");
+}
+
+#[test]
+fn test_quit_after_print_silent_adds_missing_newline() {
+    new_ucmd!()
+        .args(&["-n", "p;q"])
+        .pipe_in("a")
+        .succeeds()
+        .stdout_is("a\n");
+}
+
 // P with single line no newline input
 #[test]
 fn test_print_first_line_no_newline() {
