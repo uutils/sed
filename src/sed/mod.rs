@@ -390,7 +390,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
             content: Vec::new(),
             has_newline: true,
         },
-        parsed_block_nesting: 0,
+        open_blocks: Vec::new(),
         label_to_command_map: HashMap::new(),
         named_readers: HashMap::new(),
         range_commands: Vec::new(),

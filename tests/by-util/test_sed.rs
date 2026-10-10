@@ -2773,6 +2773,41 @@ fn test_undefined_label() {
 }
 
 #[test]
+fn test_unmatched_brace_points_at_the_open_block() {
+    // As in GNU sed, the location is that of the command that opened the
+    // block left open.
+    new_ucmd!()
+        .args(&["-e", "p", "-e", "{", "-e", "p"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 2>:1:1: error: unmatched `{'\n");
+}
+
+#[test]
+fn test_unmatched_brace_points_at_the_innermost_block() {
+    // It is reported before an undefined label, as GNU sed does.
+    new_ucmd!()
+        .args(&["-e", "p;1{", "-e", "2{", "-e", "b nowhere"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 2>:1:1: error: unmatched `{'\n");
+}
+
+#[test]
+fn test_unmatched_brace_points_at_the_address_of_the_block() {
+    // The second block of the first expression opens with its address.
+    for (script, column) in [("1{;2{", 4), ("$!{;/re/{", 5)] {
+        new_ucmd!()
+            .args(&["-e", script, "-e", "p"])
+            .fails()
+            .code_is(1)
+            .stderr_is(format!(
+                "sed: <script argument 1>:1:{column}: error: unmatched `{{'\n"
+            ));
+    }
+}
+
+#[test]
 fn test_incomplete_test_command_posix() {
     new_ucmd!()
         .args(&["--posix", "i\\"])
@@ -2892,6 +2927,74 @@ fn test_step_match_zero_closes_range() {
 }
 
 #[test]
+fn test_range_numeric_start_already_passed() {
+    // The inner range is first evaluated on line 3, after its start line.
+    for (script, expected) in [
+        ("3,6{ 1,4p }", "3\n4\n"),
+        ("3,6{ 3,4p }", "3\n4\n"),
+        ("3,6{ 1,3p }", "3\n"),
+        ("3,6{ 1,2p }", ""),
+        ("3,6{ 1,~4p }", "3\n4\n"),
+        ("3,6{ 1,+1p }", "3\n4\n"),
+        ("3,6{ 1,/5/p }", "3\n4\n5\n"),
+        ("3,6{ 1,$p }", "3\n4\n5\n6\n"),
+        ("3,6{ 1,2!p }", "3\n4\n5\n6\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("1\n2\n3\n4\n5\n6\n7\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_range_numeric_start_passed_starts_once() {
+    // Once the range has ended, it does not start again.
+    for (script, expected) in [
+        ("/[2468]/{ 1,/[48]/p }", "2\n4\n"),
+        ("/[3579]/{ 2,/./p }", "3\n5\n"),
+        ("1,/3/p", "1\n2\n3\n"),
+        ("0,/2/p", "1\n2\n"),
+        ("/[3-9]/{ 0,/5/p }", "3\n4\n5\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_range_numeric_start_passed_separate_files() -> std::io::Result<()> {
+    // With -s the "started once" state is reset, so the range starts again in the second file.
+    let input = "1\n2\n3\n4\n5\n6\n7\n";
+    let (_dir, path1, path2) = two_inputs(input, input)?;
+
+    new_ucmd!()
+        .args(&[
+            "-n",
+            "-s",
+            "3,6{ 1,4p }",
+            path1.to_str().unwrap(),
+            path2.to_str().unwrap(),
+        ])
+        .succeeds()
+        .stdout_is("3\n4\n3\n4\n");
+    Ok(())
+}
+
+#[test]
+fn test_range_numeric_start_skipped_by_d() {
+    new_ucmd!()
+        .args(&["-e", "1,3d", "-e", "2,5s/$/!/"])
+        .pipe_in("a\nb\nc\nd\ne\nf\n")
+        .succeeds()
+        .stdout_is("d!\ne!\nf\n");
+}
+
+#[test]
 fn test_step_non_numeric() {
     for (script, column) in [("1~/x/p", 6), ("1,~/x/p", 7)] {
         new_ucmd!()
@@ -2933,6 +3036,25 @@ fn test_comma_without_second_address() {
             .code_is(1)
             .stderr_is(format!(
                 "sed: <script argument 1>:1:{column}: error: unexpected `,'\n"
+            ));
+    }
+}
+
+#[test]
+fn test_unterminated_s_or_y_command() {
+    for (script, column, command) in [
+        ("s", 2, 's'),
+        ("1s", 3, 's'),
+        ("p;s", 4, 's'),
+        ("y", 2, 'y'),
+        ("{y", 3, 'y'),
+    ] {
+        new_ucmd!()
+            .args(&[script])
+            .fails()
+            .code_is(1)
+            .stderr_is(format!(
+                "sed: <script argument 1>:1:{column}: error: unterminated `{command}' command\n"
             ));
     }
 }
