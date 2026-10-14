@@ -302,6 +302,22 @@ impl ReplacementTemplate {
     where
         F: FnMut(&ReplacementPart) -> Option<&'a [u8]>,
     {
+        if !self.has_case_conversion {
+            let mut result = Vec::new();
+            for part in &self.parts {
+                match part {
+                    ReplacementPart::Literal(s) => result.extend_from_slice(s),
+                    ReplacementPart::WholeMatch | ReplacementPart::Group(_) => {
+                        if let Some(bytes) = get_match_bytes(part) {
+                            result.extend_from_slice(bytes);
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            return result;
+        }
+
         let mut result = Vec::new();
         let mut persistent = None;
         let mut single = None;
@@ -367,6 +383,12 @@ impl ReplacementTemplate {
             );
         }
 
+        if !self.has_case_conversion
+            && let [ReplacementPart::Literal(s)] = self.parts.as_slice()
+        {
+            return Ok(s.clone());
+        }
+
         Ok(self.render_parts(character_mode, |part| match part {
             ReplacementPart::WholeMatch => match caps.get(0) {
                 Ok(Some(m)) => Some(m.as_bytes()),
@@ -385,6 +407,11 @@ impl ReplacementTemplate {
 
     /// Apply the template to the given RE single match.
     pub fn apply_match(&self, m: &Match<'_>, character_mode: CharacterMode) -> Vec<u8> {
+        if !self.has_case_conversion
+            && let [ReplacementPart::Literal(s)] = self.parts.as_slice()
+        {
+            return s.clone();
+        }
         self.render_parts(character_mode, |part| match part {
             ReplacementPart::WholeMatch => Some(m.as_bytes()),
             ReplacementPart::Group(_) => {
