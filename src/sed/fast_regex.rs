@@ -18,7 +18,7 @@ use memchr::memmem;
 use regex::bytes::{
     CaptureMatches as ByteCaptureMatches, Captures as ByteCaptures, Regex as ByteRegex,
 };
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use uucore::error::{UResult, USimpleError};
 
 use crate::sed::command::CharacterMode;
@@ -89,7 +89,7 @@ enum AnchoredMatch {
 #[derive(Clone, Debug)]
 /// A fast Regex-like matcher for literal strings using memchr:memmem
 pub struct LiteralMatcher {
-    needle: Vec<u8>,           // Bytes without any anchors
+    needle: Arc<[u8]>,         // Bytes without any anchors; cheap to clone
     match_type: AnchoredMatch, // Type of anchoring specified
 }
 
@@ -100,22 +100,22 @@ impl LiteralMatcher {
         if needle_bytes[0] == b'^' && needle_bytes[needle_bytes.len() - 1] == b'$' {
             LiteralMatcher {
                 match_type: AnchoredMatch::Both,
-                needle: needle_bytes[1..needle_bytes.len() - 1].to_vec(),
+                needle: needle_bytes[1..needle_bytes.len() - 1].into(),
             }
         } else if needle_bytes[0] == b'^' {
             LiteralMatcher {
                 match_type: AnchoredMatch::Begin,
-                needle: needle_bytes[1..needle_bytes.len()].to_vec(),
+                needle: needle_bytes[1..needle_bytes.len()].into(),
             }
         } else if needle_bytes[needle_bytes.len() - 1] == b'$' {
             LiteralMatcher {
                 match_type: AnchoredMatch::End,
-                needle: needle_bytes[0..needle_bytes.len() - 1].to_vec(),
+                needle: needle_bytes[0..needle_bytes.len() - 1].into(),
             }
         } else {
             LiteralMatcher {
                 match_type: AnchoredMatch::Free,
-                needle: needle_bytes.to_vec(),
+                needle: needle_bytes.into(),
             }
         }
     }
@@ -127,21 +127,21 @@ impl LiteralMatcher {
 
         match self.match_type {
             AnchoredMatch::Both => {
-                if hlen == nlen && haystack == self.needle.as_slice() {
+                if hlen == nlen && haystack == &*self.needle {
                     Some(0)
                 } else {
                     None
                 }
             }
             AnchoredMatch::Begin => {
-                if hlen >= nlen && &haystack[..nlen] == self.needle.as_slice() {
+                if hlen >= nlen && haystack[..nlen] == *self.needle {
                     Some(0)
                 } else {
                     None
                 }
             }
             AnchoredMatch::End => {
-                if hlen >= nlen && &haystack[hlen - nlen..] == self.needle.as_slice() {
+                if hlen >= nlen && haystack[hlen - nlen..] == *self.needle {
                     Some(hlen - nlen)
                 } else {
                     None
