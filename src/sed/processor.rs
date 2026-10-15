@@ -824,8 +824,8 @@ fn process_file(
                 'P' => {
                     let line = pattern.as_bytes();
                     if let Some(pos) = memchr(context.line_separator(), line) {
-                        // The trailing \n is output as the line terminator.
-                        output.write_bytes(&[&line[..pos], b"\n"].concat())?;
+                        // Output the first line followed by the terminator.
+                        output.write_line(&line[..pos], true)?;
                     } else {
                         write_chunk(output, context, &pattern)?;
                     }

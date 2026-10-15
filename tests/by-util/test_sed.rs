@@ -3045,6 +3045,26 @@ fn test_null_data_file_input() -> std::io::Result<()> {
 }
 
 #[test]
+fn test_null_data_in_place() -> std::io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    fs::write(&a, b"a\0b\nc")?;
+    fs::write(&b, b"d\0e\0")?;
+
+    new_ucmd!()
+        .args(&["-i", "-z", "s/^/</;$!N;$s/$/>/"])
+        .arg(&a)
+        .arg(&b)
+        .succeeds()
+        .no_stdout();
+
+    assert_eq!(fs::read(&a)?, b"<a\0b\nc>");
+    assert_eq!(fs::read(&b)?, b"<d\0e>\0");
+    Ok(())
+}
+
+#[test]
 fn test_null_data_separates_joined_lines() {
     for (script, input, expected) in [
         ("$!N;l", "a\0b\nc\0", "a\\000b\\nc$\0a\0b\nc\0"),
@@ -3176,6 +3196,27 @@ fn test_null_data_s_e_flag() {
         .pipe_in("x")
         .succeeds()
         .stdout_is("Y\r\n");
+}
+
+// Without an argument, `e` also strips a trailing \0 rather than \n.
+#[cfg(unix)]
+#[test]
+fn test_null_data_e_command_no_arg() {
+    new_ucmd!()
+        .args(&["-z", "e"])
+        .pipe_in("echo A\0printf 'B\\000'\0")
+        .succeeds()
+        .stdout_is("A\n\0B\0");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_null_data_e_command_no_arg() {
+    new_ucmd!()
+        .args(&["-z", "e"])
+        .pipe_in("echo A\0")
+        .succeeds()
+        .stdout_is("A\r\n\0");
 }
 
 #[test]
