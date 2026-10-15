@@ -251,14 +251,15 @@ impl Regex {
                 // fancy_regex has no syntax for a raw non-ASCII byte:
                 // even in BytesMode::Ascii, \xNN denotes the code point
                 // U+00NN, which is matched as its UTF-8 encoding.
-                if !pattern.is_ascii() {
-                    return Err(USimpleError::new(
-                        2,
-                        "back-references combined with non-ASCII bytes are not supported in byte mode",
-                    ));
-                }
                 let pattern = std::str::from_utf8(pattern)
-                    .map_err(|e| USimpleError::new(2, e.to_string()))?;
+                    .ok()
+                    .filter(|pattern| pattern.is_ascii())
+                    .ok_or_else(|| {
+                        USimpleError::new(
+                            2,
+                            "back-references combined with non-ASCII bytes are not supported in byte mode",
+                        )
+                    })?;
                 let pattern = ensure_dotall(pattern);
                 return Ok(Self::FancyBytes(
                     FancyRegexBuilder::new(&pattern)
@@ -673,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn assert_fancy_bytes() {
+    fn byte_mode_backref_uses_fancy_bytes() {
         let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
         assert!(matches!(re, Regex::FancyBytes(_)));
     }
@@ -724,6 +725,65 @@ mod tests {
 
         chunk.set_to_bytes(b"abc".to_vec(), true);
         assert!(re.captures(&chunk).unwrap().is_none());
+    }
+
+    #[test]
+    fn handles_invalid_fancy_bytes_regex_gracefully() {
+        let err = Regex::new(r"(a)\1(", CharacterMode::Byte)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Opening parenthesis without closing parenthesis"),
+            "Unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_fancy_bytes_find_no_match() {
+        let re = Regex::new(r"(a)\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"ab\xE9".to_vec(), true);
+        assert!(re.find(&chunk).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_fancy_bytes_captures_is_not_empty() {
+        let re = Regex::new(r"(a)\1", CharacterMode::Byte).unwrap();
+        let chunk = IOChunk::new_from_str("aa");
+        let caps = re.captures(&chunk).unwrap().expect("captures");
+        assert!(!caps.is_empty());
+    }
+
+    #[test]
+    fn test_fancy_bytes_runtime_errors() {
+        // Exceed fancy_regex's backtracking limit, which it reports as a
+        // runtime error rather than a failed match.
+        let re = Regex::new(r"(a|a)*\1b", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(vec![b'a'; 40], true);
+        let limit = "Max limit for backtracking count exceeded";
+
+        let err = re.is_match(&mut chunk).unwrap_err().to_string();
+        assert!(err.contains(limit), "Unexpected error: {err:?}");
+
+        let err = re.find(&chunk).unwrap_err().to_string();
+        assert!(err.contains(limit), "Unexpected error: {err:?}");
+
+        let err = re.captures(&chunk).err().expect("error").to_string();
+        assert!(err.contains(limit), "Unexpected error: {err:?}");
+
+        let err = re
+            .captures_iter(&chunk)
+            .unwrap()
+            .next()
+            .expect("an item")
+            .err()
+            .expect("error")
+            .to_string();
+        assert!(
+            err.contains("error retrieving RE captures") && err.contains(limit),
+            "Unexpected error: {err:?}"
+        );
     }
 
     #[test]

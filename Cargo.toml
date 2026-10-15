@@ -55,7 +55,7 @@ phf = "0.14.0"
 phf_codegen = "0.14.0"
 predicates = "3.1.3"
 rand = { version = "0.10.0" }
-regex = "1.10.4"
+regex = { version = "1.10.4", features = ["perf-dfa-full"] }
 sha2 = { version = "0.11.0", default-features = false, features = ["alloc"] }
 tempfile = "3.10.1"
 terminal_size = "0.4.2"
