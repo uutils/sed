@@ -2020,12 +2020,12 @@ fn write_first_line_newline() -> std::io::Result<()> {
 
     new_ucmd!()
         .args(&["-n", "-e", &cmd])
-        .pipe_in("abc\ndef\n")
+        .pipe_in("abc\ndef\nghi\njkl\n")
         .succeeds();
 
     let mut actual = String::new();
     temp.reopen()?.read_to_string(&mut actual)?;
-    assert_eq!(actual, "abc\n");
+    assert_eq!(actual, "abc\nghi\n");
 
     Ok(())
 }
@@ -2618,6 +2618,8 @@ fn in_place_edit_separate() -> std::io::Result<()> {
             "b1+b2\n",
         ),
         (&["-n", "-i", "-e", "N;p"], "a1\n", b, "", "b1\nb2\n"),
+        // A newline missing at the end of one file is not written to the next.
+        (&["-i", "-e", "s/a/A/"], "a", "b\n", "A", "b\n"),
     ];
 
     for (args, first, second, expected1, expected2) in cases {
@@ -3407,4 +3409,61 @@ fn test_execute_command_output_is_copied_unchanged() {
         .pipe_in("a")
         .succeeds()
         .stdout_is("a\n");
+}
+
+/// A newline that a file's last line lacks is written before the next
+/// file's output, both to standard output and to `w` and `W` files.
+#[test]
+fn test_missing_newline_is_written_between_files() -> std::io::Result<()> {
+    type Case = (&'static [&'static str], &'static str, [&'static str; 3]);
+    let cases: &[Case] = &[
+        (&[], "w", ["e\nf", "g\nh", "e\nf\ng\nh"]),
+        (&[], "W", ["e\nf", "g\nh", "e\nf\ng\nh"]),
+        (&["-s"], "w", ["e\nf", "g\nh", "e\nf\ng\nh"]),
+        (&[], "2Q;w", ["x", "y", "x"]),
+    ];
+    for (flags, script, [first, second, expected]) in cases {
+        let (dir, one, two) = two_inputs(first, second)?;
+        let out = dir.path().join("out");
+        new_ucmd!()
+            .args(flags)
+            .arg(format!("{script} {}", out.display()))
+            .arg(&one)
+            .arg(&two)
+            .succeeds()
+            .stdout_is(*expected);
+        assert_eq!(fs::read_to_string(&out)?, *expected, "{flags:?} {script}");
+    }
+    Ok(())
+}
+
+/// `0r` at the start of the next file leaves the missing newline for that
+/// file's first line, as in GNU sed.
+#[test]
+fn test_zero_address_read_keeps_missing_newline_for_next_line() -> std::io::Result<()> {
+    let (dir, one, two) = two_inputs("a", "b\n")?;
+    let text = dir.path().join("text");
+    fs::write(&text, "X\nY")?;
+    new_ucmd!()
+        .args(&["-s", &format!("0r {}", text.display())])
+        .arg(&one)
+        .arg(&two)
+        .succeeds()
+        .stdout_is("X\nYaX\nY\nb\n");
+    Ok(())
+}
+
+/// A `w` file gets the newline that an emptied last line lacks before the
+/// next file's line, as in GNU sed.
+#[test]
+fn test_write_empty_line_without_newline() -> std::io::Result<()> {
+    let (dir, one, two) = two_inputs("a", "b")?;
+    let out = dir.path().join("out");
+    new_ucmd!()
+        .args(&["-n", &format!("s/.*//w {}", out.display())])
+        .arg(&one)
+        .arg(&two)
+        .succeeds();
+    assert_eq!(fs::read_to_string(&out)?, "\n");
+    Ok(())
 }

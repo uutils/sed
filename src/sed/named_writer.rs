@@ -30,6 +30,7 @@ pub struct NamedWriter {
     pub path: PathBuf,
     writer: BufWriter<File>,
     location: ScriptLocation,
+    pending_newline: bool, // The last line written lacked its newline
 }
 
 impl NamedWriter {
@@ -49,6 +50,7 @@ impl NamedWriter {
             path,
             writer: BufWriter::new(file),
             location,
+            pending_newline: false,
         }));
 
         FLUSH_LIST.with(|list| list.borrow_mut().push(Rc::clone(&writer)));
@@ -61,23 +63,29 @@ impl NamedWriter {
     }
 
     /// Write bytes to the file, possibly with a newline, returning errors.
+    /// A missing newline is written before any further line.
     pub fn write_line_bytes(&mut self, line: &[u8], newline: bool) -> UResult<()> {
-        self.writer
-            .write_all(line)
-            .and_then(|()| {
-                if newline {
-                    self.writer.write_all(b"\n")
-                } else {
-                    Ok(())
-                }
-            })
-            .map_err(|e| {
-                runtime_error::<()>(
-                    &self.location,
-                    format!("writing to file {}: {e}", self.path.quote()),
-                )
-                .unwrap_err()
-            })
+        let pending = std::mem::replace(&mut self.pending_newline, !newline);
+        (if pending {
+            self.writer.write_all(b"\n")
+        } else {
+            Ok(())
+        })
+        .and_then(|()| self.writer.write_all(line))
+        .and_then(|()| {
+            if newline {
+                self.writer.write_all(b"\n")
+            } else {
+                Ok(())
+            }
+        })
+        .map_err(|e| {
+            runtime_error::<()>(
+                &self.location,
+                format!("writing to file {}: {e}", self.path.quote()),
+            )
+            .unwrap_err()
+        })
     }
 
     /// Flush the writer, returning a descriptive error.
@@ -137,5 +145,32 @@ mod tests {
         writer.borrow_mut().flush().unwrap();
 
         assert_eq!(fs::read(path).unwrap(), b"a\xE9");
+    }
+
+    #[test]
+    fn test_write_line_bytes_reports_deferred_newline_error() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        let mut writer = NamedWriter {
+            path: path.clone(),
+            // Unbuffered writes to a read-only handle fail immediately.
+            writer: BufWriter::with_capacity(0, File::open(&path).unwrap()),
+            location: ScriptLocation {
+                input_name: Rc::from("script.sed"),
+                line_number: 3,
+                column_number: 7,
+                ..ScriptLocation::default()
+            },
+            pending_newline: false,
+        };
+
+        writer.write_line_bytes(b"", false).unwrap();
+        // Only the deferred newline has bytes to write.
+        let error = writer.write_line_bytes(b"", false).unwrap_err();
+        assert_eq!(error.code(), 2);
+        let message = error.to_string();
+        assert!(message.starts_with("script.sed:3:7: error: "));
+        assert!(message.contains("writing to file"));
+        assert!(message.contains(path.to_str().unwrap()));
     }
 }

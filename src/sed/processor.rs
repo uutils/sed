@@ -632,7 +632,7 @@ fn process_address_0(
                     && cmd.addr2.is_none()
                 {
                     let path = extract_variant!(cmd, Path);
-                    output.copy_file(path)?;
+                    output.copy_file_before_pending_newline(path)?;
                 }
 
                 cmd.next.clone()
@@ -902,16 +902,11 @@ fn process_file(
                     // Append only the first line of the pattern space.
                     let writer = extract_variant!(command, NamedWriter);
                     let pattern_bytes = pattern.as_bytes();
-                    let (first_line, found_newline) =
-                        match pattern_bytes.iter().position(|&b| b == b'\n') {
-                            // A slice including the newline
-                            Some(pos) => (&pattern_bytes[..=pos], true),
-                            None => (pattern_bytes, false),
-                        };
-                    writer.borrow_mut().write_line_bytes(
-                        first_line,
-                        !found_newline && pattern.is_newline_terminated(),
-                    )?;
+                    let (first_line, newline) = match memchr(b'\n', pattern_bytes) {
+                        Some(pos) => (&pattern_bytes[..pos], true),
+                        None => (pattern_bytes, pattern.is_newline_terminated()),
+                    };
+                    writer.borrow_mut().write_line_bytes(first_line, newline)?;
                 }
                 'x' => {
                     // Exchange the contents of the pattern and hold spaces.
