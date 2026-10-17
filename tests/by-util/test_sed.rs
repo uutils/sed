@@ -636,14 +636,53 @@ fn subst_word() {
         .stdout_is_fixture_bytes("output/subst_word");
 }
 
-/// Reject FancyRegex-only substitution patterns in byte mode.
+/// Match address back-references in byte mode (issue #543).
 #[test]
-fn subst_backref_rejected_in_c_locale() {
+fn address_backref_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-n", r"/\(a\)b\1/p"])
+        .pipe_in("aba\nabc\n")
+        .succeeds()
+        .stdout_is_bytes(b"aba\n");
+}
+
+/// Allow substitution back-references in byte mode.
+#[test]
+fn subst_backref_in_c_locale() {
     new_ucmd!()
         .env("LC_ALL", "C")
         .args(&["-e", r"s/\(.\)\1/X/"])
+        .pipe_in("aa\n")
+        .succeeds()
+        .stdout_is_bytes(b"X\n");
+}
+
+/// Match back-references against invalid UTF-8 input in byte mode.
+#[test]
+fn subst_backref_matches_invalid_input_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-e", r"s/\(.\)\1/[\1]/g"])
+        .pipe_in(b"x\xE9\xE9y\xFF\xFF\n".to_vec())
+        .succeeds()
+        .stdout_is_bytes(b"x[\xE9]y[\xFF]\n");
+}
+
+/// Reject back-references combined with non-ASCII pattern bytes in byte mode.
+#[test]
+fn subst_backref_with_non_ascii_pattern_rejected_in_c_locale() {
+    let mut script = NamedTempFile::new().expect("create temporary sed script");
+    script
+        .write_all(b"s/\\(\xE9\\)\\1/X/\n")
+        .expect("write temporary sed script");
+    let script_path = script.path().to_str().expect("temporary path is UTF-8");
+
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-f", script_path])
         .fails()
-        .stderr_contains("back-references are not supported in byte mode");
+        .stderr_contains("back-references combined with non-ASCII bytes are not supported");
 }
 
 /// Allow substitution back-references when the locale selects UTF-8 mode.

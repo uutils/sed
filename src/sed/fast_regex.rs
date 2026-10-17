@@ -12,7 +12,8 @@
 // file that was distributed with this source code.
 
 use fancy_regex::{
-    CaptureMatches as FancyCaptureMatches, Captures as FancyCaptures, Regex as FancyRegex,
+    BytesMode, CaptureMatches as FancyCaptureMatches, Captures as FancyCaptures,
+    Regex as FancyRegex, RegexBuilder as FancyRegexBuilder,
 };
 use memchr::memmem;
 use regex::bytes::{
@@ -215,6 +216,7 @@ pub enum Regex {
     Literal(LiteralMatcher), // Fastest: literal bytes
     Byte(ByteRegex),         // Slower: byte-based RE
     Fancy(FancyRegex),       // Slowest: RE supporting UTF-8 and back-references
+    FancyBytes(FancyRegex),  // Slowest: RE supporting bytes and back-references
 }
 
 /// Ensure that a regex matches GNU sed's default semantics for `.`
@@ -246,9 +248,24 @@ impl Regex {
         let pattern = pattern.as_ref();
         if NEEDS_FANCY_RE.is_match(pattern) {
             if character_mode == CharacterMode::Byte {
-                return Err(USimpleError::new(
-                    2,
-                    "back-references are not supported in byte mode",
+                // fancy_regex has no syntax for a raw non-ASCII byte:
+                // even in BytesMode::Ascii, \xNN denotes the code point
+                // U+00NN, which is matched as its UTF-8 encoding.
+                let pattern = std::str::from_utf8(pattern)
+                    .ok()
+                    .filter(|pattern| pattern.is_ascii())
+                    .ok_or_else(|| {
+                        USimpleError::new(
+                            2,
+                            "back-references combined with non-ASCII bytes are not supported in byte mode",
+                        )
+                    })?;
+                let pattern = ensure_dotall(pattern);
+                return Ok(Self::FancyBytes(
+                    FancyRegexBuilder::new(&pattern)
+                        .bytes_mode(BytesMode::Ascii)
+                        .build()
+                        .map_err(|e| USimpleError::new(2, e.to_string()))?,
                 ));
             }
             let pattern =
@@ -291,6 +308,9 @@ impl Regex {
                 re.is_match(text)
                     .map_err(|e| USimpleError::new(2, e.to_string()))
             }
+            Regex::FancyBytes(re) => re
+                .is_match(chunk.as_bytes())
+                .map_err(|e| USimpleError::new(2, e.to_string())),
         }
     }
 
@@ -312,6 +332,10 @@ impl Regex {
                 let text = chunk.as_str()?;
                 Ok(CaptureMatches::Fancy(re.captures_iter(text)))
             }
+
+            Regex::FancyBytes(re) => Ok(CaptureMatches::FancyBytes(
+                re.captures_iter(chunk.as_bytes()),
+            )),
         }
     }
 
@@ -320,7 +344,7 @@ impl Regex {
         match self {
             Regex::Literal(_) => 1, // Only group 0
             Regex::Byte(re) => re.captures_len(),
-            Regex::Fancy(re) => re.captures_len(),
+            Regex::Fancy(re) | Regex::FancyBytes(re) => re.captures_len(),
         }
     }
 
@@ -350,6 +374,12 @@ impl Regex {
                     Err(e) => Err(USimpleError::new(2, e.to_string())),
                 }
             }
+
+            Regex::FancyBytes(re) => match re.captures(chunk.as_bytes()) {
+                Ok(Some(caps)) => Ok(Some(Captures::FancyBytes(caps))),
+                Ok(None) => Ok(None),
+                Err(e) => Err(USimpleError::new(2, e.to_string())),
+            },
         }
     }
 
@@ -385,6 +415,12 @@ impl Regex {
                     Err(e) => Err(USimpleError::new(2, e.to_string())),
                 }
             }
+
+            Regex::FancyBytes(re) => match re.find(chunk.as_bytes()) {
+                Ok(Some(m)) => Ok(Some(Match::from_bytes(m.start(), m.end(), m.as_bytes()))),
+                Ok(None) => Ok(None),
+                Err(e) => Err(USimpleError::new(2, e.to_string())),
+            },
         }
     }
 }
@@ -393,7 +429,8 @@ impl Regex {
 pub enum CaptureMatches<'t> {
     Literal(Box<dyn Iterator<Item = UResult<Captures<'t>>> + 't>),
     Byte(ByteCaptureMatches<'t, 't>),
-    Fancy(FancyCaptureMatches<'t, 't>),
+    Fancy(FancyCaptureMatches<'t, 't, str>),
+    FancyBytes(FancyCaptureMatches<'t, 't, [u8]>),
 }
 
 impl<'t> Iterator for CaptureMatches<'t> {
@@ -405,6 +442,14 @@ impl<'t> Iterator for CaptureMatches<'t> {
             CaptureMatches::Byte(iter) => iter.next().map(|caps| Ok(Captures::Byte(caps))),
             CaptureMatches::Fancy(iter) => match iter.next() {
                 Some(Ok(caps)) => Some(Ok(Captures::Fancy(caps))),
+                Some(Err(e)) => Some(Err(USimpleError::new(
+                    2,
+                    format!("error retrieving RE captures: {e}"),
+                ))),
+                None => None,
+            },
+            CaptureMatches::FancyBytes(iter) => match iter.next() {
+                Some(Ok(caps)) => Some(Ok(Captures::FancyBytes(caps))),
                 Some(Err(e)) => Some(Err(USimpleError::new(
                     2,
                     format!("error retrieving RE captures: {e}"),
@@ -471,7 +516,8 @@ impl<'t> Match<'t> {
 pub enum Captures<'t> {
     Literal(Match<'t>), // only group 0
     Byte(ByteCaptures<'t>),
-    Fancy(FancyCaptures<'t>),
+    Fancy(FancyCaptures<'t, str>),
+    FancyBytes(FancyCaptures<'t, [u8]>),
 }
 
 impl<'t> Captures<'t> {
@@ -489,6 +535,10 @@ impl<'t> Captures<'t> {
                 Some(m) => Ok(Some(Match::from_str(m.start(), m.end(), m.as_str()))),
                 None => Ok(None),
             },
+            Captures::FancyBytes(caps) => match caps.get(i) {
+                Some(m) => Ok(Some(Match::from_bytes(m.start(), m.end(), m.as_bytes()))),
+                None => Ok(None),
+            },
         }
     }
 
@@ -498,6 +548,7 @@ impl<'t> Captures<'t> {
             Captures::Literal(_) => 1,
             Captures::Byte(caps) => caps.len(),
             Captures::Fancy(caps) => caps.len(),
+            Captures::FancyBytes(caps) => caps.len(),
         }
     }
 
@@ -508,6 +559,7 @@ impl<'t> Captures<'t> {
             Captures::Literal(_) => false, // A literal match always has group 0
             Captures::Byte(caps) => caps.len() == 0,
             Captures::Fancy(caps) => caps.len() == 0,
+            Captures::FancyBytes(caps) => caps.len() == 0,
         }
     }
 }
@@ -622,11 +674,137 @@ mod tests {
     }
 
     #[test]
-    fn rejects_fancy_in_byte_mode() {
-        let err = Regex::new(r"(.)\1", CharacterMode::Byte)
+    fn byte_mode_backref_uses_fancy_bytes() {
+        let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
+        assert!(matches!(re, Regex::FancyBytes(_)));
+    }
+
+    #[test]
+    fn rejects_fancy_bytes_with_non_ascii_pattern() {
+        let err = Regex::new(b"(\xE9)\\1", CharacterMode::Byte)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("back-references are not supported in byte mode"));
+        assert!(err.contains("back-references combined with non-ASCII bytes"));
+    }
+
+    #[test]
+    fn test_fancy_bytes_is_match_invalid_utf8() {
+        let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"a\xE9\xE9b".to_vec(), true);
+        assert!(re.is_match(&mut chunk).unwrap());
+
+        chunk.set_to_bytes(b"a\xE9b".to_vec(), true);
+        assert!(!re.is_match(&mut chunk).unwrap());
+    }
+
+    #[test]
+    fn test_fancy_bytes_find_returns_byte_offsets() {
+        let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"\xFFab\xE9\xE9".to_vec(), true);
+        let m = re.find(&chunk).unwrap().expect("match");
+
+        assert_eq!((m.start(), m.end()), (3, 5));
+        assert_eq!(m.as_bytes(), b"\xE9\xE9");
+        assert_eq!(m.as_str(), "");
+    }
+
+    #[test]
+    fn test_fancy_bytes_captures() {
+        let re = Regex::new(r"(a)(x)?b\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"\xE9aba".to_vec(), true);
+        let caps = re.captures(&chunk).unwrap().expect("captures");
+
+        assert_eq!(caps.len(), 3);
+        assert_eq!(re.captures_len(), 3);
+        let group1 = caps.get(1).unwrap().expect("group 1");
+        assert_eq!((group1.start(), group1.end()), (1, 2));
+        assert!(caps.get(2).unwrap().is_none());
+
+        chunk.set_to_bytes(b"abc".to_vec(), true);
+        assert!(re.captures(&chunk).unwrap().is_none());
+    }
+
+    #[test]
+    fn handles_invalid_fancy_bytes_regex_gracefully() {
+        let err = Regex::new(r"(a)\1(", CharacterMode::Byte)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Opening parenthesis without closing parenthesis"),
+            "Unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_fancy_bytes_find_no_match() {
+        let re = Regex::new(r"(a)\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"ab\xE9".to_vec(), true);
+        assert!(re.find(&chunk).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_fancy_bytes_captures_is_not_empty() {
+        let re = Regex::new(r"(a)\1", CharacterMode::Byte).unwrap();
+        let chunk = IOChunk::new_from_str("aa");
+        let caps = re.captures(&chunk).unwrap().expect("captures");
+        assert!(!caps.is_empty());
+    }
+
+    #[test]
+    fn test_fancy_bytes_runtime_errors() {
+        // Exceed fancy_regex's backtracking limit, which it reports as a
+        // runtime error rather than a failed match.
+        let re = Regex::new(r"(a|a)*\1b", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(vec![b'a'; 40], true);
+        let limit = "Max limit for backtracking count exceeded";
+
+        let err = re.is_match(&mut chunk).unwrap_err().to_string();
+        assert!(err.contains(limit), "Unexpected error: {err:?}");
+
+        let err = re.find(&chunk).unwrap_err().to_string();
+        assert!(err.contains(limit), "Unexpected error: {err:?}");
+
+        let err = re.captures(&chunk).err().expect("error").to_string();
+        assert!(err.contains(limit), "Unexpected error: {err:?}");
+
+        let err = re
+            .captures_iter(&chunk)
+            .unwrap()
+            .next()
+            .expect("an item")
+            .err()
+            .expect("error")
+            .to_string();
+        assert!(
+            err.contains("error retrieving RE captures") && err.contains(limit),
+            "Unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_fancy_bytes_captures_iter() {
+        let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
+        let mut chunk = IOChunk::new_from_str("");
+        chunk.set_to_bytes(b"aa\xE9\xE9bc\xFF\xFF".to_vec(), true);
+        let groups: Vec<Vec<u8>> = re
+            .captures_iter(&chunk)
+            .unwrap()
+            .map(|caps| {
+                caps.unwrap()
+                    .get(1)
+                    .unwrap()
+                    .expect("group 1")
+                    .as_bytes()
+                    .to_vec()
+            })
+            .collect();
+
+        assert_eq!(groups, [b"a".to_vec(), b"\xE9".to_vec(), b"\xFF".to_vec()]);
     }
 
     #[test]
