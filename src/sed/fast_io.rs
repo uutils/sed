@@ -594,7 +594,7 @@ pub struct OutputBuffer {
     mmap_chunk: Option<MmapOutput>, // Chunk to write
     // True when the last write didn't end with \n; the \n is deferred so
     // that commands like `p` don't emit a spurious newline under -n.
-    pending_newline: bool,
+    pub(crate) pending_newline: bool,
     #[cfg(test)]
     low_level_flushes: usize, // Number of system call flushes
 }
