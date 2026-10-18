@@ -12,7 +12,7 @@ use crate::sed::error_handling::{ScriptLocation, runtime_error};
 
 use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -66,20 +66,17 @@ impl NamedWriter {
     /// A missing newline is written before any further line.
     pub fn write_line_bytes(&mut self, line: &[u8], newline: bool) -> UResult<()> {
         let pending = std::mem::replace(&mut self.pending_newline, !newline);
-        (if pending {
-            self.writer.write_all(b"\n")
-        } else {
-            Ok(())
-        })
-        .and_then(|()| self.writer.write_all(line))
-        .and_then(|()| {
-            if newline {
-                self.writer.write_all(b"\n")
-            } else {
-                Ok(())
+        let mut write = || -> io::Result<()> {
+            if pending {
+                self.writer.write_all(b"\n")?;
             }
-        })
-        .map_err(|e| {
+            self.writer.write_all(line)?;
+            if newline {
+                self.writer.write_all(b"\n")?;
+            }
+            Ok(())
+        };
+        write().map_err(|e| {
             runtime_error::<()>(
                 &self.location,
                 format!("writing to file {}: {e}", self.path.quote()),

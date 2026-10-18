@@ -478,7 +478,7 @@ fn flush_appends(output: &mut OutputBuffer, context: &mut ProcessingContext) -> 
                 output.write_raw(text.as_ref())?;
             }
             AppendElement::Path(path) => {
-                output.copy_file(path)?;
+                output.copy_file(path, true)?;
             }
         }
     }
@@ -632,7 +632,7 @@ fn process_address_0(
                     && cmd.addr2.is_none()
                 {
                     let path = extract_variant!(cmd, Path);
-                    output.copy_file_before_pending_newline(path)?;
+                    output.copy_file(path, false)?;
                 }
 
                 cmd.next.clone()

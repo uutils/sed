@@ -652,14 +652,6 @@ impl OutputBuffer {
         }
     }
 
-    /// Continue the output of `previous`, which wrote to the same stream,
-    /// including a newline it deferred.
-    #[must_use]
-    pub fn continuing(mut self, previous: &Self) -> Self {
-        self.pending_newline = previous.pending_newline;
-        self
-    }
-
     /// Schedule the specified String or &str for eventual output
     pub fn write_str<S: Into<String>>(&mut self, s: S) -> io::Result<()> {
         let mut s = s.into();
@@ -695,24 +687,18 @@ impl OutputBuffer {
         self.out.write_all(bytes)
     }
 
-    /// Copy the specified file to the output, after any deferred newline.
-    pub fn copy_file(&mut self, path: &PathBuf) -> io::Result<()> {
-        // As in GNU sed, write the deferred newline even when the file is
-        // empty or cannot be read.
-        self.write_raw(b"")?;
-        self.copy_file_contents(path)
-    }
-
-    /// Copy the specified file to the output, leaving any deferred newline
-    /// for the next output, as GNU sed does for `0r`.
-    pub fn copy_file_before_pending_newline(&mut self, path: &PathBuf) -> io::Result<()> {
+    /// Copy the specified file to the output. With `after_newline`, write
+    /// any deferred newline first, even when the file is empty or cannot be
+    /// read, as GNU sed does; otherwise leave it for the next output, as GNU
+    /// sed does for `0r`.
+    pub fn copy_file(&mut self, path: &PathBuf, after_newline: bool) -> io::Result<()> {
+        if after_newline {
+            self.flush_pending_newline()?;
+        }
         // Flush mmap writes, if any.
         #[cfg(unix)]
         self.flush_mmap(WriteRange::Complete)?;
-        self.copy_file_contents(path)
-    }
 
-    fn copy_file_contents(&mut self, path: &PathBuf) -> io::Result<()> {
         let Ok(file) = File::open(path) else {
             // Per POSIX, if the file can't be read treat it as empty.
             return Ok(());

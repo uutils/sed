@@ -67,7 +67,8 @@ impl InPlace {
     /// to the context settings.
     fn begin_resolved(&mut self, file_name: &Path) -> UResult<&mut OutputBuffer> {
         if !self.in_place {
-            self.output = OutputBuffer::new(Box::new(stdout())).continuing(&self.output);
+            // Keep the stdout buffer, which carries a newline deferred at the
+            // end of the previous file.
             return Ok(&mut self.output);
         }
 
