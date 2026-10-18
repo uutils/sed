@@ -488,9 +488,9 @@ fn compile_address(
                 line.advance();
             }
 
-            Ok(Address::Re(compile_regex(
-                lines, line, &re, context, icase, false,
-            )?))
+            Ok(Address::Re(
+                compile_regex(lines, line, &re, context, icase, false)?.map(Rc::new),
+            ))
         }
         '$' => {
             line.advance();
@@ -883,7 +883,8 @@ fn compile_subst_command(
         context,
         subst.ignore_case,
         subst.multiline,
-    )?;
+    )?
+    .map(Rc::new);
 
     // Catch invalid group references at compile time, if possible.
     if let Some(regex) = &subst.regex
