@@ -265,20 +265,21 @@ fn shell_stdout(
 }
 
 /// Execute the pattern space as a shell command, replacing its contents
-/// with the command's standard output, minus one trailing newline.
+/// with the command's standard output, minus one trailing line separator.
 fn execute_pattern_as_shell_command(
     pattern: &mut IOChunk,
     command: &Command,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
     let mut shell_out = shell_stdout(pattern.as_bytes().to_vec(), command, context)?;
+    let separator = context.line_separator();
     #[cfg(windows)]
-    if shell_out.ends_with(b"\r\n") {
+    if separator == b'\n' && shell_out.ends_with(b"\r\n") {
         // On Windows a trailing \r\n is the line terminator. Strip both.
         shell_out.truncate(shell_out.len() - 2);
     }
-    // Unix (and some Windows tools) end with a single \n. Strip it, as GNU sed does.
-    if shell_out.ends_with(b"\n") {
+    // Strip a single trailing separator (\n, or \0 with -z), as GNU sed does.
+    if shell_out.last() == Some(&separator) {
         shell_out.pop();
     }
     pattern.set_to_bytes(shell_out, pattern.is_newline_terminated());
@@ -674,7 +675,11 @@ fn process_file(
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
                 // Continue processing the `N` or `n` command.
-                if let NextLine::Append(mut combined_lines) = action.next_line {
+                if let NextLine::Append {
+                    prepend: mut combined_lines,
+                    ..
+                } = action.next_line
+                {
                     combined_lines.push(context.line_separator());
                     combined_lines.extend_from_slice(pattern.as_bytes());
 
@@ -819,7 +824,10 @@ fn process_file(
                     // to perform when the next line is read.
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
-                        next_line: NextLine::Append(pattern.as_bytes().to_vec()),
+                        next_line: NextLine::Append {
+                            prepend: pattern.as_bytes().to_vec(),
+                            terminated: pattern.is_newline_terminated(),
+                        },
                     });
                     continue 'lines;
                 }
@@ -983,11 +991,13 @@ fn process_file(
     // Take them even with -n, so that they do not carry over to the next file.
     if context.separate
         && let Some(action) = context.input_action.take()
-        && let NextLine::Append(mut pending) = action.next_line
+        && let NextLine::Append {
+            prepend,
+            terminated,
+        } = action.next_line
         && !context.quiet
     {
-        pending.push(b'\n');
-        output.write_bytes(&pending)?;
+        output.write_line(&prepend, terminated)?;
         if context.unbuffered {
             output.flush()?;
         }
@@ -1044,10 +1054,12 @@ pub fn process_all_files(
             && !context.separate
             && !context.quiet
             && let Some(action) = context.input_action.take()
-            && let NextLine::Append(mut pending) = action.next_line
+            && let NextLine::Append {
+                prepend,
+                terminated,
+            } = action.next_line
         {
-            pending.push(b'\n');
-            output.write_bytes(&pending)?;
+            output.write_line(&prepend, terminated)?;
         }
 
         in_place.end()?;
