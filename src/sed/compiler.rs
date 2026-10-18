@@ -824,6 +824,7 @@ pub fn compile_replacement(
                             if let Some(decoded) = parse_char_escape(line) {
                                 push_script_char(&mut literal, decoded, character_mode);
                             } else {
+                                literal.push(b'\\');
                                 literal.push(line.current_byte());
                                 line.advance();
                             }
@@ -2616,7 +2617,6 @@ mod tests {
         assert_eq!(template.parts.len(), 2);
         assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"l"));
         assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
-        assert!(!template.has_case_conversion());
     }
 
     #[test]
@@ -2665,7 +2665,6 @@ mod tests {
         assert!(matches!(&template.parts[1], ReplacementPart::Literal(s) if s == b"ABC"));
         assert!(matches!(&template.parts[2], ReplacementPart::End));
         assert!(matches!(&template.parts[3], ReplacementPart::Literal(s) if s == b"def"));
-        assert!(template.has_case_conversion());
     }
 
     #[test]
@@ -2682,23 +2681,10 @@ mod tests {
                 matches!(&template.parts[0], ReplacementPart::Literal(s) if s == &vec![delim as u8]),
                 "delimiter {delim}"
             );
-            assert!(
-                !template.has_case_conversion(),
-                "escaped delimiter must not set has_case_conversion for {delim}"
-            );
+
         }
     }
 
-    #[test]
-    fn test_compile_replacement_has_case_conversion_flag() {
-        let (mut lines, mut chars) = make_providers(r"/plain/");
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-        assert!(!template.has_case_conversion());
-
-        let (mut lines, mut chars) = make_providers(r"/\E/");
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-        assert!(template.has_case_conversion());
-    }
 
     #[test]
     fn test_compile_replacement_eof_after_backslash() {

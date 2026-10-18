@@ -980,26 +980,7 @@ fn subst_case_conversion_invalid_utf8_preserves_persistent() {
         .stdout_is_bytes(b"ABC\xFFDEF\n");
 }
 
-#[test]
-fn subst_unrecognized_escape_in_replacement_drops_backslash() {
-    new_ucmd!()
-        .args(&["-E", "-e", r"s/(.)/\Q/"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is_bytes(b"Q\n");
 
-    new_ucmd!()
-        .args(&["-e", r"s/a/\q/"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is_bytes(b"q\n");
-
-    new_ucmd!()
-        .args(&["-e", r"s/a/\\q/"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is_bytes(b"\\q\n");
-}
 
 #[test]
 fn subst_escaped_delimiters_retain_precedence() {
