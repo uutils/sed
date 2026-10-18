@@ -286,20 +286,21 @@ fn shell_stdout(
 }
 
 /// Execute the pattern space as a shell command, replacing its contents
-/// with the command's standard output, minus one trailing newline.
+/// with the command's standard output, minus one trailing line separator.
 fn execute_pattern_as_shell_command(
     pattern: &mut IOChunk,
     command: &Command,
     context: &mut ProcessingContext,
 ) -> UResult<()> {
     let mut shell_out = shell_stdout(pattern.as_bytes().to_vec(), command, context)?;
+    let separator = context.line_separator();
     #[cfg(windows)]
-    if shell_out.ends_with(b"\r\n") {
+    if separator == b'\n' && shell_out.ends_with(b"\r\n") {
         // On Windows a trailing \r\n is the line terminator. Strip both.
         shell_out.truncate(shell_out.len() - 2);
     }
-    // Unix (and some Windows tools) end with a single \n. Strip it, as GNU sed does.
-    if shell_out.ends_with(b"\n") {
+    // Strip a single trailing separator (\n, or \0 with -z), as GNU sed does.
+    if shell_out.last() == Some(&separator) {
         shell_out.pop();
     }
     pattern.set_to_bytes(shell_out, pattern.is_newline_terminated());

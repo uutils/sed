@@ -290,7 +290,7 @@ impl<'a> IOChunk<'a> {
             IOChunkContent::MmapInput {
                 content, full_span, ..
             } => {
-                let has_newline = full_span.last().copied() == Some(b'\n');
+                let has_newline = full_span.len() > content.len();
                 self.content = IOChunkContent::new_owned(content.to_vec(), has_newline);
                 self.utf8_verified.set(false);
                 Ok(())
