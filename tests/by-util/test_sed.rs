@@ -707,6 +707,22 @@ fn test_backslash_b_is_not_an_escape() {
 }
 
 #[test]
+fn test_word_boundaries_without_other_regex_characters() {
+    // \< and \> are word boundaries even when nothing else in the
+    // pattern needs a regular expression.
+    new_ucmd!()
+        .args(&["-e", r"s/\<foo\>/X/g"])
+        .pipe_in("foo <foo> food\n")
+        .succeeds()
+        .stdout_is("X <X> food\n");
+    new_ucmd!()
+        .args(&["-n", "-e", r"/\<bar/p"])
+        .pipe_in("foobar\nbar\n<bar\n")
+        .succeeds()
+        .stdout_is("bar\n<bar\n");
+}
+
+#[test]
 fn test_unknown_escape_is_the_bare_character() {
     new_ucmd!()
         .args(&["-e", r"s/x/a\qc/"])
