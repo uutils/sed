@@ -680,6 +680,41 @@ fn test_bracket_backslash_b_is_not_backspace() {
         .stdout_is("aXX\n");
 }
 
+#[test]
+fn test_backslash_b_is_not_an_escape() {
+    // sed has no \b escape, so it is a word boundary in a regular expression
+    // and a bare b everywhere else.
+    new_ucmd!()
+        .args(&["-e", r"s/\b/X/g"])
+        .pipe_in("ab\n")
+        .succeeds()
+        .stdout_is("XabX\n");
+    new_ucmd!()
+        .args(&["-e", r"s/x/a\bc/"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("abc\n");
+    new_ucmd!()
+        .args(&["-e", r"y/x/\b/"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("b\n");
+    new_ucmd!()
+        .args(&["-e", r"a hell\bo"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("x\nhellbo\n");
+}
+
+#[test]
+fn test_unknown_escape_is_the_bare_character() {
+    new_ucmd!()
+        .args(&["-e", r"s/x/a\qc/"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_is("aqc\n");
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);

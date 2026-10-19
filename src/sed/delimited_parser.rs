@@ -639,8 +639,6 @@ fn parse_transliteration_bytes(
                 if let Some(decoded) = parse_char_escape(line) {
                     push_script_char(&mut result, decoded, character_mode);
                 } else {
-                    // Pass through \<any> to tr for literal use
-                    result.push(b'\\');
                     result.push(line.current_byte());
                     line.advance();
                 }
