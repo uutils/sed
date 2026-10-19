@@ -1007,11 +1007,7 @@ pub fn compile_subst_flags(
         match line.current() {
             'g' => {
                 if subst.global {
-                    return compilation_error(
-                        lines,
-                        line,
-                        "multiple 'g' or numeric flags in substitute command",
-                    );
+                    return compilation_error(lines, line, "multiple `g' options to `s' command");
                 }
                 subst.global = true;
                 line.advance();
@@ -1057,7 +1053,7 @@ pub fn compile_subst_flags(
                     return compilation_error(
                         lines,
                         line,
-                        "multiple 'g' or numeric flags in substitute command",
+                        "multiple number options to `s' command",
                     );
                 }
 
@@ -2725,7 +2721,7 @@ mod tests {
         let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(
             err.to_string()
-                .contains("multiple 'g' or numeric flags in substitute command")
+                .contains(":3: error: multiple `g' options to `s' command")
         );
     }
 
@@ -2737,7 +2733,7 @@ mod tests {
         let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(
             err.to_string()
-                .contains("multiple 'g' or numeric flags in substitute command")
+                .contains(":3: error: multiple number options to `s' command")
         );
     }
 
