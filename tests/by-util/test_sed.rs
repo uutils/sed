@@ -579,6 +579,22 @@ fn subst_multiline_flag_matches_embedded_line_end() {
         .stdout_is("foX\nbaX\n");
 }
 
+#[test]
+fn subst_number_and_g_replace_from_that_match_on() {
+    for flags in ["2g", "g2"] {
+        new_ucmd!()
+            .arg(format!("s/a/b/{flags}"))
+            .pipe_in("aaaa\n")
+            .succeeds()
+            .stdout_is("abbb\n");
+    }
+    new_ucmd!()
+        .arg(r"s/\(a\)/<\1>/3g")
+        .pipe_in("aaaa\n")
+        .succeeds()
+        .stdout_is("aa<a><a>\n");
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);

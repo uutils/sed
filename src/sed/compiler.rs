@@ -958,9 +958,10 @@ pub fn compile_subst_flags(
     posix: bool,
     sandbox: bool,
 ) -> UResult<()> {
-    let mut seen_g_or_n = false;
+    let mut seen_number = false;
 
     subst.occurrence = 1; // default
+    subst.global = false;
     subst.print_flag = false;
     subst.p_before_e = false;
     subst.ignore_case = false;
@@ -976,15 +977,14 @@ pub fn compile_subst_flags(
 
         match line.current() {
             'g' => {
-                if seen_g_or_n {
+                if subst.global {
                     return compilation_error(
                         lines,
                         line,
                         "multiple 'g' or numeric flags in substitute command",
                     );
                 }
-                seen_g_or_n = true;
-                subst.occurrence = 0;
+                subst.global = true;
                 line.advance();
             }
 
@@ -1024,7 +1024,7 @@ pub fn compile_subst_flags(
             }
 
             _c @ '1'..='9' => {
-                if seen_g_or_n {
+                if seen_number {
                     return compilation_error(
                         lines,
                         line,
@@ -1049,7 +1049,7 @@ pub fn compile_subst_flags(
                 }
 
                 subst.occurrence = number;
-                seen_g_or_n = true;
+                seen_number = true;
             }
 
             'w' => {
@@ -2601,7 +2601,8 @@ mod tests {
         let mut subst = Substitution::default();
 
         compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
-        assert_eq!(subst.occurrence, 0); // 'g' means all occurrences
+        assert_eq!(subst.occurrence, 1);
+        assert!(subst.global);
     }
 
     #[test]
@@ -2659,8 +2660,20 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_subst_flag_g_and_number_should_fail() {
-        let (lines, mut chars) = make_providers("g3");
+    fn test_compile_subst_flag_g_and_number() {
+        for flags in ["g3", "3g"] {
+            let (lines, mut chars) = make_providers(flags);
+            let mut subst = Substitution::default();
+
+            compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+            assert_eq!(subst.occurrence, 3);
+            assert!(subst.global);
+        }
+    }
+
+    #[test]
+    fn test_compile_subst_flag_multiple_g_should_fail() {
+        let (lines, mut chars) = make_providers("gpg");
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
@@ -2671,8 +2684,8 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_subst_flag_number_and_g_should_fail() {
-        let (lines, mut chars) = make_providers("2g");
+    fn test_compile_subst_flag_multiple_numbers_should_fail() {
+        let (lines, mut chars) = make_providers("2g3");
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
