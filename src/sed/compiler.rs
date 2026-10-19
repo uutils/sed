@@ -729,6 +729,7 @@ pub fn compile_replacement(
 ) -> UResult<ReplacementTemplate> {
     let mut parts = Vec::new();
     let mut literal = Vec::new();
+    let mut max_group: Option<(u32, ScriptLocation)> = None;
 
     let delimiter = line.current();
     line.advance();
@@ -764,6 +765,12 @@ pub fn compile_replacement(
                             if ref_num == 0 {
                                 parts.push(ReplacementPart::WholeMatch);
                             } else {
+                                if max_group.as_ref().is_none_or(|(n, _)| ref_num > *n) {
+                                    // Point at the backslash, one byte back.
+                                    let mut location = ScriptLocation::at_position(lines, line);
+                                    location.column_number -= 1;
+                                    max_group = Some((ref_num, location));
+                                }
                                 parts.push(ReplacementPart::Group(ref_num));
                             }
                             line.advance();
@@ -815,7 +822,9 @@ pub fn compile_replacement(
                     if !literal.is_empty() {
                         parts.push(ReplacementPart::Literal(literal));
                     }
-                    return Ok(ReplacementTemplate::new(parts));
+                    let mut template = ReplacementTemplate::new(parts);
+                    template.max_group_location = max_group.map(|(_, location)| location);
+                    return Ok(template);
                 }
 
                 _ => {
@@ -889,14 +898,14 @@ fn compile_subst_command(
     if let Some(regex) = &subst.regex
         && subst.replacement.max_group_number > regex.captures_len() - 1
     {
-        return compilation_error(
-            lines,
-            line,
-            format!(
-                "invalid reference \\{} on `s' command's RHS",
-                subst.replacement.max_group_number
-            ),
+        let msg = format!(
+            "invalid reference \\{} on `s' command's RHS",
+            subst.replacement.max_group_number
         );
+        return match &subst.replacement.max_group_location {
+            Some(location) => semantic_error(location, msg),
+            None => compilation_error(lines, line, msg),
+        };
     }
     cmd.data = CommandData::Substitution(subst);
 
@@ -958,9 +967,10 @@ pub fn compile_subst_flags(
     posix: bool,
     sandbox: bool,
 ) -> UResult<()> {
-    let mut seen_g_or_n = false;
+    let mut seen_number = false;
 
     subst.occurrence = 1; // default
+    subst.global = false;
     subst.print_flag = false;
     subst.p_before_e = false;
     subst.ignore_case = false;
@@ -976,15 +986,10 @@ pub fn compile_subst_flags(
 
         match line.current() {
             'g' => {
-                if seen_g_or_n {
-                    return compilation_error(
-                        lines,
-                        line,
-                        "multiple 'g' or numeric flags in substitute command",
-                    );
+                if subst.global {
+                    return compilation_error(lines, line, "multiple `g' options to `s' command");
                 }
-                seen_g_or_n = true;
-                subst.occurrence = 0;
+                subst.global = true;
                 line.advance();
             }
 
@@ -1024,11 +1029,11 @@ pub fn compile_subst_flags(
             }
 
             _c @ '1'..='9' => {
-                if seen_g_or_n {
+                if seen_number {
                     return compilation_error(
                         lines,
                         line,
-                        "multiple 'g' or numeric flags in substitute command",
+                        "multiple number options to `s' command",
                     );
                 }
 
@@ -1049,7 +1054,7 @@ pub fn compile_subst_flags(
                 }
 
                 subst.occurrence = number;
-                seen_g_or_n = true;
+                seen_number = true;
             }
 
             'w' => {
@@ -2601,7 +2606,8 @@ mod tests {
         let mut subst = Substitution::default();
 
         compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
-        assert_eq!(subst.occurrence, 0); // 'g' means all occurrences
+        assert_eq!(subst.occurrence, 1);
+        assert!(subst.global);
     }
 
     #[test]
@@ -2659,26 +2665,38 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_subst_flag_g_and_number_should_fail() {
-        let (lines, mut chars) = make_providers("g3");
+    fn test_compile_subst_flag_g_and_number() {
+        for flags in ["g3", "3g"] {
+            let (lines, mut chars) = make_providers(flags);
+            let mut subst = Substitution::default();
+
+            compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+            assert_eq!(subst.occurrence, 3);
+            assert!(subst.global);
+        }
+    }
+
+    #[test]
+    fn test_compile_subst_flag_multiple_g_should_fail() {
+        let (lines, mut chars) = make_providers("gpg");
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(
             err.to_string()
-                .contains("multiple 'g' or numeric flags in substitute command")
+                .contains(":3: error: multiple `g' options to `s' command")
         );
     }
 
     #[test]
-    fn test_compile_subst_flag_number_and_g_should_fail() {
-        let (lines, mut chars) = make_providers("2g");
+    fn test_compile_subst_flag_multiple_numbers_should_fail() {
+        let (lines, mut chars) = make_providers("2g3");
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
         assert!(
             err.to_string()
-                .contains("multiple 'g' or numeric flags in substitute command")
+                .contains(":3: error: multiple number options to `s' command")
         );
     }
 
