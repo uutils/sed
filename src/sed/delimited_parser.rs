@@ -217,8 +217,8 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
 /// This functionality is needed to avoid terminating delimited
 /// sequences when a delimiter appears within a character class.
 /// While at it, handle escaped characters for the sake of consistency.
-/// Under --posix the GNU character escapes are disabled here, although
-/// they remain available outside bracket expressions.
+/// Under --posix no backslash escape is recognized here, as GNU sed does,
+/// although they all remain available outside bracket expressions.
 fn parse_character_class(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
@@ -353,7 +353,10 @@ fn scan_delimiter(lines: &ScriptLineProvider, line: &mut ScriptCharProvider) -> 
 /// On return, the line is on the closing delimiter.
 /// In Basic mode, quantifiers like {m,n} must be escaped (\{m,n\}).
 /// In Extended mode, quantifiers like {m,n} don't require escaping.
-pub fn parse_regex(
+/// Only for tests; the compiler calls parse_regex_for_mode, which is
+/// where the character and --posix modes of the run are supplied.
+#[cfg(test)]
+fn parse_regex(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     regex_mode: RegexMode,
