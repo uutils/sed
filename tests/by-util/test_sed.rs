@@ -1648,6 +1648,23 @@ fn diagnostics_count_columns_in_bytes_like_the_message() {
 }
 
 #[test]
+fn diagnostics_underline_the_second_number_flag() {
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["s/a/b/2g3"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:9: error: multiple number options to `s' command\n",
+            "   ╭─[ <script argument 1>:1:9 ]\n",
+            "   │\n",
+            " 1 │ s/a/b/2g3\n",
+            "   │         ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
 fn diagnostics_reach_errors_raised_after_the_line_was_read() {
     // Undefined labels are found after compilation; the gutter shows line 2.
     new_ucmd!()
