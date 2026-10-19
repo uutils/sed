@@ -305,8 +305,8 @@ fn substitute(
     // The following let block allows a common input_runtime_error to be
     // called once in all cases, and most importantly, to finish the regex
     // mutable borrowing of context, so as to reuse context in the error call.
-    let subst_result = match (sub.occurrence, sub.replacement.max_group_number) {
-        (1, 0) => {
+    let subst_result = match (sub.occurrence, sub.global, sub.replacement.max_group_number) {
+        (1, false, 0) => {
             // Example: s/foo/bar/: find() is enough.
             match regex.find(pattern) {
                 Err(e) => Err(e),
@@ -323,7 +323,7 @@ fn substitute(
             }
         }
 
-        (1, _) => {
+        (1, false, _) => {
             // Example: s/\(.\)\(.\)/\2\1/: captures() is enough.
             match regex.captures(pattern) {
                 Err(e) => Err(e),
@@ -341,7 +341,7 @@ fn substitute(
             }
         }
 
-        (_, _) => {
+        (_, _, _) => {
             // Example: s/(.)(.)/\2\1/3: captures_iter() is needed.
             // Iterate over multiple captures of the RE in the pattern.
             'captures: {
@@ -357,7 +357,7 @@ fn substitute(
                     // Always write the unmatched text before this match.
                     result.extend_from_slice(&text[last_end..m.start()]);
 
-                    if sub.occurrence == 0 || count == sub.occurrence {
+                    if count == sub.occurrence || (sub.global && count > sub.occurrence) {
                         let replacement = sub.replacement.apply_captures(command, &caps)?;
                         result.extend_from_slice(&replacement);
                         replaced = true;
@@ -370,7 +370,7 @@ fn substitute(
 
                     // Early exit if only a specific occurrence,
                     // (likely 1) needed replacing.
-                    if count == sub.occurrence {
+                    if !sub.global && count == sub.occurrence {
                         break 'captures Ok(());
                     }
                 }
