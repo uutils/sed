@@ -1272,6 +1272,26 @@ fn diagnostics_reach_errors_raised_after_the_line_was_read() {
 }
 
 #[test]
+fn diagnostics_underline_the_invalid_back_reference() {
+    // The message is raised after the flags are read; the caret still
+    // points at the first `\3`, not past the end of the command.
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&[r"s/\(a\)/x\3\1\3/"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:10: error: invalid reference \\3 on `s' command's RHS\n",
+            "   ╭─[ <script argument 1>:1:10 ]\n",
+            "   │\n",
+            r" 1 │ s/\(a\)/x\3\1\3/",
+            "\n",
+            "   │          ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
 fn diagnostics_line_up_under_wide_characters() {
     // `日本` takes four columns: the underline must sit under `q`.
     new_ucmd!()
