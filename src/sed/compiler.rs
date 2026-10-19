@@ -792,7 +792,6 @@ pub fn compile_replacement(
                             if let Some(decoded) = parse_char_escape(line) {
                                 push_script_char(&mut literal, decoded, character_mode);
                             } else {
-                                literal.push(b'\\');
                                 literal.push(line.current_byte());
                                 line.advance();
                             }
@@ -2565,12 +2564,13 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_replacement_preserves_unknown_escape() {
+    fn test_compile_replacement_drops_unknown_escape() {
+        // GNU sed emits the bare character for an escape it does not know.
         let (mut lines, mut chars) = make_providers(r"/a\q/");
         let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == br"a\q"));
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"aq"));
     }
 
     #[test]
