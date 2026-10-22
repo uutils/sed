@@ -142,7 +142,6 @@ pub enum RegexMode {
 pub struct ReplacementTemplate {
     pub parts: Vec<ReplacementPart>,
     pub max_group_number: usize, // Highest used group number (e.g. 8 for \8)
-
 }
 
 impl Default for ReplacementTemplate {
@@ -290,7 +289,11 @@ impl ReplacementTemplate {
         })
     }
 
-    fn render_parts<'a, F>(&self, character_mode: CharacterMode, mut get_match_bytes: F) -> UResult<Vec<u8>>
+    fn render_parts<'a, F>(
+        &self,
+        character_mode: CharacterMode,
+        mut get_match_bytes: F,
+    ) -> UResult<Vec<u8>>
     where
         F: FnMut(&ReplacementPart) -> UResult<Option<&'a [u8]>>,
     {
@@ -974,8 +977,6 @@ mod tests {
         let m = Match::from_bytes(0, 3, b"abc");
         assert_eq!(template.apply_match(&m, CharacterMode::Utf8), b"hi");
     }
-
-
 
     #[test]
     fn test_case_unicode_expansion() {

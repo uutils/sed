@@ -2681,10 +2681,8 @@ mod tests {
                 matches!(&template.parts[0], ReplacementPart::Literal(s) if s == &vec![delim as u8]),
                 "delimiter {delim}"
             );
-
         }
     }
-
 
     #[test]
     fn test_compile_replacement_eof_after_backslash() {

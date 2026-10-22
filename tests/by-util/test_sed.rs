@@ -980,8 +980,6 @@ fn subst_case_conversion_invalid_utf8_preserves_persistent() {
         .stdout_is_bytes(b"ABC\xFFDEF\n");
 }
 
-
-
 #[test]
 fn subst_escaped_delimiters_retain_precedence() {
     // Escaped digit delimiters (\0..\9) must not be treated as backreferences or whole match
