@@ -67,7 +67,8 @@ impl InPlace {
     /// to the context settings.
     fn begin_resolved(&mut self, file_name: &Path) -> UResult<&mut OutputBuffer> {
         if !self.in_place {
-            self.output = OutputBuffer::new(Box::new(stdout()));
+            // Keep the stdout buffer across files, so that a separator
+            // missing at the end of one file is output before the next.
             return Ok(&mut self.output);
         }
 

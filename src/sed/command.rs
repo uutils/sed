@@ -81,6 +81,13 @@ pub struct ProcessingContext {
     pub append_elements: Vec<AppendElement>,
 }
 
+impl ProcessingContext {
+    /// Return the byte that separates lines: \0 with -z, otherwise \n.
+    pub fn line_separator(&self) -> u8 {
+        if self.null_data { b'\0' } else { b'\n' }
+    }
+}
+
 #[derive(Clone, Debug)]
 /// Elements that shall be appended at the end of each command processing cycle
 pub enum AppendElement {
@@ -405,8 +412,13 @@ pub struct InputAction {
 pub enum NextLine {
     /// Replace the pattern space with the line (`n`)
     Replace,
-    /// Append the line, after a newline, to these contents (`N`)
-    Append(Vec<u8>),
+    /// Append the line, after a line separator, to these contents (`N`)
+    Append {
+        /// Data to prepend to the read contents
+        prepend: Vec<u8>,
+        /// True if the prepended line ended with a line separator
+        terminated: bool,
+    },
 }
 
 #[cfg(test)]
