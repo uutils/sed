@@ -70,7 +70,7 @@ pub(crate) static NEEDS_RE: LazyLock<ByteRegex> = LazyLock::new(|| {
                                  # BOL but they should error there,
                                  # not use them as literals.
              | \\[WwDdSsPp]      # Unicode classes
-             | \\[AzBb]          # Empty matches
+             | \\[AzBb<>]        # Empty matches
              | \\[0-9]           # Back-references
            )
         ",
@@ -618,6 +618,8 @@ mod tests {
             r"\S",      // Class shorthand
             r"\1",      // Backreference
             r"a\Pb",    // Unicode property
+            r"\<foo",   // Word start
+            r"foo\>",   // Word end
         ];
 
         for pat in &should_match {

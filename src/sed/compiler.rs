@@ -478,7 +478,13 @@ fn compile_address(
             } else {
                 RegexMode::Basic
             };
-            let re = parse_regex_for_mode(lines, line, regex_mode, context.character_mode)?;
+            let re = parse_regex_for_mode(
+                lines,
+                line,
+                regex_mode,
+                context.character_mode,
+                context.posix,
+            )?;
             // Skip over delimiter
             line.advance();
 
@@ -786,7 +792,6 @@ pub fn compile_replacement(
                             if let Some(decoded) = parse_char_escape(line) {
                                 push_script_char(&mut literal, decoded, character_mode);
                             } else {
-                                literal.push(b'\\');
                                 literal.push(line.current_byte());
                                 line.advance();
                             }
@@ -861,7 +866,13 @@ fn compile_subst_command(
     } else {
         RegexMode::Basic
     };
-    let pattern = parse_regex_for_mode(lines, line, regex_mode, context.character_mode)?;
+    let pattern = parse_regex_for_mode(
+        lines,
+        line,
+        regex_mode,
+        context.character_mode,
+        context.posix,
+    )?;
     let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line, context.character_mode)?;
@@ -2554,12 +2565,13 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_replacement_preserves_unknown_escape() {
+    fn test_compile_replacement_drops_unknown_escape() {
+        // GNU sed emits the bare character for an escape it does not know.
         let (mut lines, mut chars) = make_providers(r"/a\q/");
         let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == br"a\q"));
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"aq"));
     }
 
     #[test]
@@ -3573,7 +3585,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b">helll\x08o\nto\nall\x07\n");
+                assert_eq!(text.as_ref(), b">helllbo\nto\nall\x07\n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
