@@ -594,7 +594,7 @@ pub struct OutputBuffer {
     mmap_chunk: Option<MmapOutput>, // Chunk to write
     // True when the last write didn't end with \n; the \n is deferred so
     // that commands like `p` don't emit a spurious newline under -n.
-    pending_newline: bool,
+    pub(crate) pending_newline: bool,
     #[cfg(test)]
     low_level_flushes: usize, // Number of system call flushes
 }
@@ -687,11 +687,17 @@ impl OutputBuffer {
         self.out.write_all(bytes)
     }
 
-    /// Copy the specified file to the output, after any deferred newline.
-    pub fn copy_file(&mut self, path: &PathBuf) -> io::Result<()> {
-        // As in GNU sed, write the deferred newline even when the file is
-        // empty or cannot be read.
-        self.write_raw(b"")?;
+    /// Copy the specified file to the output. With `after_newline`, write
+    /// any deferred newline first, even when the file is empty or cannot be
+    /// read, as GNU sed does; otherwise leave it for the next output, as GNU
+    /// sed does for `0r`.
+    pub fn copy_file(&mut self, path: &PathBuf, after_newline: bool) -> io::Result<()> {
+        if after_newline {
+            self.flush_pending_newline()?;
+        }
+        // Flush mmap writes, if any.
+        #[cfg(unix)]
+        self.flush_mmap(WriteRange::Complete)?;
 
         let Ok(file) = File::open(path) else {
             // Per POSIX, if the file can't be read treat it as empty.
