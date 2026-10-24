@@ -453,6 +453,42 @@ fn test_ere_quantifier_unmatched_brace_2() {
 }
 
 #[test]
+fn test_ere_quantifier_without_preceding_atom() {
+    for (script, column) in [
+        ("/*/p", 3),
+        ("/+/p", 3),
+        ("/?/p", 3),
+        ("/{2}/p", 5),
+        ("/a|*b/p", 6),
+        ("/(*a)/p", 6),
+        ("/^*/p", 4),
+        ("/$*/p", 4),
+        ("/a^+/p", 5),
+    ] {
+        new_ucmd!()
+            .args(&["-n", "-E", "-e", script])
+            .fails()
+            .code_is(1)
+            .stderr_only(format!(
+                "sed: <script argument 1>:1:{column}: error: Invalid preceding regular expression\n"
+            ));
+    }
+}
+
+#[test]
+fn test_ere_quantifier_after_atom() {
+    for script in [
+        "/a**/p", "/a+?/p", "/()*/p", "/(a|)*/p", "/[a]*/p", "/a{1}*/p", "/\\(*/p", "/\\**/p",
+    ] {
+        new_ucmd!()
+            .args(&["-n", "-E", "-e", script])
+            .pipe_in("xa*b\n")
+            .succeeds()
+            .stdout_is("xa*b\n");
+    }
+}
+
+#[test]
 fn test_bre_quantifier_unmatched_brace() {
     new_ucmd!()
         .args(&["-e", "/l\\{1,2}/p"])
