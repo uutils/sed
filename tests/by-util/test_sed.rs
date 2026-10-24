@@ -464,6 +464,9 @@ fn test_ere_quantifier_without_preceding_atom() {
         ("/^*/p", 4),
         ("/$*/p", 4),
         ("/a^+/p", 5),
+        ("s/*/x/", 4),
+        ("s/a|+b/x/", 7),
+        ("s/^*/x/g", 5),
     ] {
         new_ucmd!()
             .args(&["-n", "-E", "-e", script])
