@@ -387,8 +387,22 @@ pub fn parse_regex_for_mode(
 ) -> UResult<Vec<u8>> {
     let delimiter = scan_delimiter(lines, line)?;
     let mut result = Vec::new();
+    // In an ERE, a quantifier must follow something it can repeat. GNU sed
+    // rejects one at the start of the regex or right after `(`, `|`, `^` or
+    // `$`, and reports it once the whole regex has been read.
+    let is_ere = matches!(regex_mode, RegexMode::Extended);
+    let mut can_quantify = false;
+    let mut quantifier_without_atom = false;
     while !line.eol() {
-        match line.current() {
+        let c = line.current();
+        if is_ere && c != delimiter {
+            let is_quantifier = matches!(c, '*' | '+' | '?') || (c == '{' && delimiter != '{');
+            if is_quantifier && !can_quantify {
+                quantifier_without_atom = true;
+            }
+            can_quantify = !matches!(c, '(' | '|' | '^' | '$');
+        }
+        match c {
             '[' if delimiter != '[' => {
                 let cc = parse_character_class(lines, line, character_mode, posix)?;
                 result.extend_from_slice(&cc);
@@ -447,7 +461,12 @@ pub fn parse_regex_for_mode(
                 continue;
             }
 
-            c if c == delimiter => return Ok(result),
+            c if c == delimiter => {
+                if quantifier_without_atom {
+                    return compilation_error(lines, line, "Invalid preceding regular expression");
+                }
+                return Ok(result);
+            }
             _ => result.push(line.current_byte()),
         }
         line.advance();
