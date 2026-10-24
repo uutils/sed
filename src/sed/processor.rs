@@ -80,6 +80,8 @@ fn applies(
     context: &mut ProcessingContext,
 ) -> UResult<bool> {
     let linenum = context.line_number;
+    // Set below when this line ends a range; read by `c`.
+    context.last_address = false;
 
     let result = if command.addr1.is_none() && command.addr2.is_none() {
         // No address
@@ -94,6 +96,10 @@ fn applies(
                         command.start_line = None;
                         Ok(false)
                     } else {
+                        if linenum - start == *n {
+                            command.start_line = None;
+                            context.last_address = true;
+                        }
                         Ok(true)
                     }
                 }
@@ -103,6 +109,10 @@ fn applies(
                         command.start_line = None;
                         Ok(false)
                     } else {
+                        if linenum == *n {
+                            command.start_line = None;
+                            context.last_address = true;
+                        }
                         Ok(true)
                     }
                 }
@@ -111,6 +121,7 @@ fn applies(
                     // Inclusive end on multiple of step
                     if linenum.is_multiple_of(*step) {
                         command.start_line = None;
+                        context.last_address = true;
                     }
                     Ok(true)
                 }
@@ -712,10 +723,10 @@ fn process_file(
                     break;
                 }
                 'c' => {
-                    // At range end replace pattern space with text and
-                    // start the next cycle.
+                    // Print the text at the end of a range, or for every line
+                    // when the range is negated, then start the next cycle.
                     pattern.clear();
-                    if command.addr2.is_none() || context.last_address || reader.last_line()? {
+                    if command.addr2.is_none() || command.non_select || context.last_address {
                         let text = extract_variant!(command, Text);
                         output.write_bytes(text.as_ref())?;
                     }
