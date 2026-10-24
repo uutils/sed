@@ -1025,6 +1025,26 @@ fn test_posix_keeps_posix_regex_constructs() {
             .stdout_is("Xb\n");
     }
 }
+#[test]
+fn test_buffer_start_and_end_anchors() {
+    // \` and \' match only at the start and end of the pattern space,
+    // also with the M flag.
+    new_ucmd!()
+        .args(&["-e", r"s/\`./X/g"])
+        .pipe_in("ab\ncd\n")
+        .succeeds()
+        .stdout_is("Xb\nXd\n");
+    new_ucmd!()
+        .args(&["-e", r"N;s/\`/>/Mg;s/\'/</Mg"])
+        .pipe_in("ab\ncd\n")
+        .succeeds()
+        .stdout_is(">ab\ncd<\n");
+    new_ucmd!()
+        .args(&["-e", r"s/\`a/X/;s/a\'/Y/"])
+        .pipe_in("ab\nca\n")
+        .succeeds()
+        .stdout_is("Xb\ncY\n");
+}
 
 #[test]
 fn test_posix_keeps_gnu_character_escapes() {
