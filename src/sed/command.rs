@@ -59,7 +59,7 @@ pub struct ProcessingContext {
     /// Whether sed operates on bytes or UTF-8 characters
     pub character_mode: CharacterMode,
     /// Previously compiled RE, saved for reuse when specifying an empty RE
-    pub saved_regex: Option<Regex>,
+    pub saved_regex: Option<Rc<Regex>>,
     /// Modification of input processing action
     // This is required to avoid doubly borrowing the reader in the 'N'
     // command.
@@ -106,12 +106,12 @@ pub struct ByteSpace {
 #[derive(Debug)]
 /// Types of address specifications that precede commands
 pub enum Address {
-    Re(Option<Regex>), // Line that matches (optional) regex
-    Line(usize),       // Specific line
-    RelLine(usize),    // Relative line
-    Last,              // Last line
-    StepMatch(usize),  // Lines matching specified step from first
-    StepEnd(usize),    // Range ending at specified step from first
+    Re(Option<Rc<Regex>>), // Line that matches (optional) regex
+    Line(usize),           // Specific line
+    RelLine(usize),        // Relative line
+    Last,                  // Last line
+    StepMatch(usize),      // Lines matching specified step from first
+    StepEnd(usize),        // Range ending at specified step from first
 }
 
 #[derive(Debug)]
@@ -226,7 +226,7 @@ impl ReplacementTemplate {
 #[derive(Debug, Default)]
 /// Substitution command
 pub struct Substitution {
-    pub regex: Option<Regex>,                         // Regular expression
+    pub regex: Option<Rc<Regex>>,                     // Regular expression
     pub replacement: ReplacementTemplate,             // Specified broken-down replacement
     pub occurrence: usize,                            // Which occurrence to substitute
     pub print_flag: bool,                             // True if 'p' flag

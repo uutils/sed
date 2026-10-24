@@ -190,13 +190,14 @@ fn write_chunk(
 /// Return a reference to the current or the saved RE if the RE is None.
 /// Update the saved RE to RE.
 fn re_or_saved_re<'a>(
-    regex: Option<&Regex>,
+    regex: Option<&Rc<Regex>>,
     context: &'a mut ProcessingContext,
     location: &ScriptLocation,
 ) -> UResult<&'a Regex> {
     if let Some(re) = regex {
-        // First time we see this regex: clone it *once* into the context.
-        context.saved_regex = Some(re.clone());
+        // Share the compiled RE with the context: a reference count
+        // increment, rather than a deep copy for every input line.
+        context.saved_regex = Some(Rc::clone(re));
         // Return a reference into context.saved_regex.
         Ok(context.saved_regex.as_ref().unwrap())
     } else if let Some(ref saved_re) = context.saved_regex {
