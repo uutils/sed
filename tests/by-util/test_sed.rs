@@ -2283,6 +2283,22 @@ fn write_single_file() -> std::io::Result<()> {
 }
 
 #[test]
+fn write_dev_stdout_is_sed_output() {
+    // GNU sed writes /dev/stdout through its own output, in order.
+    for (script, expected) in [
+        ("w /dev/stdout", "a\na\nb\nb\n"),
+        ("W /dev/stdout", "a\na\nb\nb\n"),
+        ("s/a/X/w /dev/stdout", "X\nX\nb\n"),
+    ] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("a\nb\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
 fn write_single_file_no_newline() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
     let cmd = format!("w {}", temp.path().display());
