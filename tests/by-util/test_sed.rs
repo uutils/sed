@@ -3230,6 +3230,35 @@ fn test_step_without_number_is_zero() {
 }
 
 #[test]
+fn test_step_match_starts_range() {
+    // `first~step,addr2` starts the range on every line first~step selects.
+    let input = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n";
+    for (script, expected) in [
+        ("1~3,+1p", "1\n2\n4\n5\n7\n8\n10\n11\n"),
+        ("1~3,5p", "1\n2\n3\n4\n5\n7\n10\n"),
+        ("0~4,~3p", "4\n5\n6\n8\n9\n12\n"),
+        ("2~3,/7/p", "2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n"),
+        ("1~0,3p", "1\n2\n3\n"),
+        ("3~2,1p", "3\n5\n7\n9\n11\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_step_match_zero_zero_range_start() {
+    new_ucmd!()
+        .args(&["-n", "0~0,3p"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:4: error: address 0 can only be used with ~step, a second regular expression, or a read command\n");
+}
+
+#[test]
 fn test_step_match_zero_closes_range() {
     // `3~0` selects line 3 alone, so `c` prints its text there.
     new_ucmd!()

@@ -111,6 +111,7 @@ pub enum Address {
     RelLine(usize),        // Relative line
     Last,                  // Last line
     StepMatch(usize),      // Lines matching specified step from first
+    Step(usize, usize),    // first~step starting a range: first, first+step, ...
     StepEnd(usize),        // Range ending at specified step from first
 }
 
