@@ -2283,6 +2283,26 @@ fn write_single_file() -> std::io::Result<()> {
 }
 
 #[test]
+fn write_same_file_from_two_commands() -> std::io::Result<()> {
+    // Commands naming the same file share it, as in GNU sed.
+    let temp = NamedTempFile::new()?;
+    let path = temp.path().display();
+    let w = format!("w {path}");
+    let s = format!("s/a/X/w {path}");
+
+    new_ucmd!()
+        .args(&["-n", "-e", &w, "-e", &s])
+        .pipe_in("a\nb\nc\n")
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert_eq!(actual, "a\nX\nb\nc\n");
+
+    Ok(())
+}
+
+#[test]
 fn write_single_file_no_newline() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
     let cmd = format!("w {}", temp.path().display());
