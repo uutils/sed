@@ -483,8 +483,13 @@ fn test_ere_quantifier_after_atom() {
     for script in [
         "/a**/p", "/a+?/p", "/()*/p", "/(a|)*/p", "/[a]*/p", "/a{1}*/p", "/\\(*/p", "/\\**/p",
     ] {
+        // Read the script from a file, since on Windows an argument like
+        // `/\(*/p` would go through glob expansion first.
+        let mut file = NamedTempFile::new().expect("create temporary sed script");
+        writeln!(file, "{script}").expect("write temporary sed script");
+        let path = file.path().to_str().expect("temporary path is UTF-8");
         new_ucmd!()
-            .args(&["-n", "-E", "-e", script])
+            .args(&["-n", "-E", "-f", path])
             .pipe_in("xa*b\n")
             .succeeds()
             .stdout_is("xa*b\n");
