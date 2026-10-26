@@ -1417,11 +1417,13 @@ fn compile_text_command_gnu(
 /// Compile commands that take text as an argument (POSIX syntax).
 // Handles a, c, i; after the command and initial whitespace have been consumed.
 // According to POSIX, these commands expect \ followed by text.
+// Like GNU sed, the text may still start on the same line as the \,
+// and is read the same way as without --posix.
 fn compile_text_command_posix(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    _context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     if line.eol() || line.current() != '\\' {
         return compilation_error(
@@ -1431,37 +1433,13 @@ fn compile_text_command_posix(
         );
     }
 
-    line.advance(); // Skip \.
-    line.eat_spaces(); // Skip any whitespace at the end of \.
-    if !line.eol() {
-        return compilation_error(
-            lines,
-            line,
-            format!(
-                "extra characters after \\ at the end of `{}' command",
-                cmd.code
-            ),
-        );
-    }
+    compile_text_command_gnu(lines, line, cmd, context)?;
 
-    let mut text = Vec::new();
-    while let Some(line) = lines.next_line()? {
-        if line.ends_with(b"\\") {
-            // Line ends with \ to escape \n; remove the trailing \.
-            text.extend_from_slice(&line[..line.len() - 1]);
-            text.push(b'\n');
-        } else {
-            text.extend_from_slice(&line);
-            text.push(b'\n');
-            break;
-        }
-    }
-
-    if text.is_empty() {
+    // A \ at the end of the script leaves the command without any text.
+    if matches!(&cmd.data, CommandData::Text(text) if text.is_empty()) {
         compilation_error(lines, line, "incomplete command")?;
     }
 
-    cmd.data = CommandData::Text(Rc::from(text));
     Ok(CommandHandling::Continue)
 }
 
@@ -3580,7 +3558,8 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_text_command_posix_spaces_single_line() {
+    fn test_compile_text_command_posix_space_after_backslash() {
+        // Like GNU sed, the space after the \ is the text.
         let mut chars = make_char_provider("a \\ ");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
@@ -3592,7 +3571,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b"line1\n");
+                assert_eq!(text.as_ref(), b" \n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3753,7 +3732,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_text_command_posix_with_trailing_chars() {
+    fn test_compile_text_command_posix_text_on_same_line() {
         let mut chars = make_char_provider("a \\ foo");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
@@ -3762,10 +3741,13 @@ mod tests {
             ..Default::default()
         };
 
-        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("extra characters after \\"));
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text.as_ref(), b" foo\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
     }
 
     // read_file_path
