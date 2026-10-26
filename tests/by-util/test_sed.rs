@@ -3721,3 +3721,23 @@ fn test_execute_command_output_is_copied_unchanged() {
         .succeeds()
         .stdout_is("a\n");
 }
+
+/// `}` and a comment may follow a command directly, as in GNU sed.
+#[test]
+fn test_brace_or_comment_after_command() {
+    new_ucmd!()
+        .args(&["-n", "1{s/o/0/p}"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("f0o\n");
+    new_ucmd!()
+        .arg("{s/o/0/g }")
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("f00\n");
+    new_ucmd!()
+        .args(&["-n", "s/o/0/p # comment\np # comment\ny/f/F/ # comment\np"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("f0o\nf0o\nF0o\n");
+}
