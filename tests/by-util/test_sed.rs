@@ -3623,6 +3623,41 @@ fn test_default_version() {
     new_ucmd!().args(&["v"]).succeeds();
 }
 
+#[test]
+fn test_version_with_input() {
+    for script in ["v", "v 4.2", "{v}"] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("x\n")
+            .succeeds()
+            .stdout_is("x\n");
+    }
+}
+
+#[test]
+fn test_version_followed_by_command() {
+    for script in ["v;p", "v 4.2;p", "v 4.2 p", "{v;p}"] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("x\n")
+            .succeeds()
+            .stdout_is("x\n");
+    }
+}
+
+#[test]
+fn test_version_compared_part_by_part() {
+    for version in ["v4.2.2", "v3.10", "v1.2.3.4"] {
+        new_ucmd!().args(&[version]).succeeds();
+    }
+    for version in ["v4.9.0", "v4.9.1", "v5"] {
+        new_ucmd!()
+            .args(&[version])
+            .fails()
+            .stderr_contains("expected newer version of sed");
+    }
+}
+
 //--posix should reject GNU substitute flags i/I https://github.com/uutils/sed/issues/401
 #[test]
 fn test_posix_reject_flags() {
