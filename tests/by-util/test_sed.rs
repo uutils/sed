@@ -715,6 +715,65 @@ fn test_bracket_literal_open_bracket() {
 }
 
 #[test]
+fn test_bracket_collating_symbol_and_equivalence_class() {
+    // Without locale collation data [.c.] and [=c=] stand for the single character c.
+    for (script, expected) in [
+        (r"s/[[.a.]]/X/g", r".=X]\^-c[&~|9z"),
+        (r"s/[[=a=]]/X/g", r".=X]\^-c[&~|9z"),
+        (r"s/[[.].]]/X/g", r".=aX\^-c[&~|9z"),
+        (r"s/[[=]=]]/X/g", r".=aX\^-c[&~|9z"),
+        (r"s/[[.-.]]/X/g", r".=a]\^Xc[&~|9z"),
+        (r"s/[[.\.]]/X/g", r".=a]X^-c[&~|9z"),
+        (r"s/[[.^.][.[.]]/X/g", r".=a]\X-cX&~|9z"),
+        (r"s/[[.&.][.~.][.|.]]/X/g", r".=a]\^-c[XXX9z"),
+        (r"s/[^[.a.]]/X/g", "XXaXXXXXXXXXXX"),
+        (r"s/[[.a.]-[.c.]]/X/g", r".=X]\^-X[&~|9z"),
+        (r"s/[b-[.d.]9]/X/g", r".=a]\^-X[&~|Xz"),
+        (r"s/[a[.-.]z]/X/g", r".=X]\^Xc[&~|9X"),
+    ] {
+        new_ucmd!()
+            .args(&["-e", script])
+            .pipe_in(".=a]\\^-c[&~|9z\n")
+            .succeeds()
+            .stdout_is(format!("{expected}\n"));
+    }
+}
+
+#[test]
+fn test_bracket_collating_symbol_with_character_escape() {
+    for (script, expected) in [
+        (r"N;s/[[.\n.]]/X/", "aXb\tA\n"),
+        (r"N;s/[[.\t.]]/X/", "a\nbXA\n"),
+        (r"N;s/[[=\x41=]]/X/", "a\nb\tX\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-e", script])
+            .pipe_in("a\nb\tA\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_bracket_invalid_collation_character() {
+    for script in [
+        "s/[[.dzs.]]/X/",
+        "s/[[.space.]]/X/",
+        "s/[[..]]/X/",
+        "s/[[=ab=]]/X/",
+        "s/[[==]]/X/",
+        r"s/[[.\].]]/X/",
+        "/[[.ab.]]/p",
+    ] {
+        new_ucmd!()
+            .args(&["-e", script])
+            .fails()
+            .code_is(1)
+            .stderr_contains("Invalid collation character");
+    }
+}
+
+#[test]
 fn test_bracket_backslash_b_is_not_backspace() {
     // sed has no \b character escape, so [\b] holds a backslash and a b.
     new_ucmd!()
