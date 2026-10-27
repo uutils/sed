@@ -1723,6 +1723,42 @@ fn test_next_reads_across_files_unless_separate() {
         .stdout_is("a\nline one\nXline two\n");
 }
 
+/// When `N` finds no next line it prints the pattern space without adding
+/// the newline the last line lacks, as GNU sed does.
+#[test]
+fn test_append_next_at_end_keeps_missing_newline() -> std::io::Result<()> {
+    for script in ["N", "N;P;D", "N;N;N"] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\nb\nc")
+            .succeeds()
+            .stdout_is("a\nb\nc");
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\nb\nc\n")
+            .succeeds()
+            .stdout_is("a\nb\nc\n");
+    }
+    new_ucmd!()
+        .args(&["-s", "N"])
+        .pipe_in("a\nb\nc")
+        .succeeds()
+        .stdout_is("a\nb\nc");
+    // A newline that was there before `N` is still written.
+    new_ucmd!()
+        .arg("G;N")
+        .pipe_in("a\nb\nc")
+        .succeeds()
+        .stdout_is("a\n\nb\nc\n\n");
+
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
+    fs::write(&path, "a\nb\nc")?;
+    new_ucmd!().args(&["-i", "N"]).arg(&path).succeeds();
+    assert_eq!(fs::read_to_string(&path)?, "a\nb\nc");
+    Ok(())
+}
+
 #[test]
 fn test_quit_exit_code() {
     new_ucmd!()
@@ -1779,7 +1815,7 @@ fn test_uppercase_delete_prevents_automatic_printing() {
         .args(&["-e", "N", "-e", "D"])
         .pipe_in("line1\nline2\nline3")
         .succeeds()
-        .stdout_is("line3\n");
+        .stdout_is("line3");
 }
 
 ////////////////////////////////////////////////////////////
