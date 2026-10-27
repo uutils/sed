@@ -672,6 +672,12 @@ impl OutputBuffer {
         } else {
             (bytes, false)
         };
+        self.write_line(content, has_newline)
+    }
+
+    /// Schedule the specified line for eventual output, followed by a
+    /// newline if `has_newline` is set
+    pub fn write_line(&mut self, content: &[u8], has_newline: bool) -> io::Result<()> {
         self.write_chunk(&IOChunk::from_content(IOChunkContent::new_owned(
             content.to_vec(),
             has_newline,
