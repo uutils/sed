@@ -137,6 +137,8 @@ pub enum RegexMode {
 pub struct ReplacementTemplate {
     pub parts: Vec<ReplacementPart>,
     pub max_group_number: usize, // Highest used group number (e.g. 8 for \8)
+    /// Where the first reference to `max_group_number` appears in the script.
+    pub max_group_location: Option<ScriptLocation>,
 }
 
 impl Default for ReplacementTemplate {
@@ -161,6 +163,7 @@ impl ReplacementTemplate {
         Self {
             parts,
             max_group_number: max_group_number.try_into().unwrap(),
+            max_group_location: None,
         }
     }
 
