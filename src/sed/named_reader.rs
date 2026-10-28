@@ -29,18 +29,20 @@ enum State {
 pub struct NamedReader {
     path: PathBuf,
     state: State,
+    separator: u8, // Line separator (\n, or \0 with -z)
 }
 
 impl NamedReader {
     /// Create a reader for `path` without opening it yet.
-    pub fn new(path: PathBuf) -> Rc<RefCell<Self>> {
+    pub fn new(path: PathBuf, separator: u8) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(NamedReader {
             path,
             state: State::Unopened,
+            separator,
         }))
     }
 
-    /// Return the next line of the file, including its trailing newline if
+    /// Return the next line of the file, including its trailing separator if
     /// present, or `None` once the file is exhausted or could not be read.
     pub fn next_line(&mut self) -> Option<Vec<u8>> {
         if matches!(self.state, State::Unopened) {
@@ -55,7 +57,7 @@ impl NamedReader {
         };
 
         let mut line = Vec::new();
-        match reader.read_until(b'\n', &mut line) {
+        match reader.read_until(self.separator, &mut line) {
             Ok(0) | Err(_) => {
                 self.state = State::Exhausted;
                 None
@@ -75,7 +77,7 @@ mod tests {
     fn yields_successive_lines_then_none() {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"one\ntwo\n").unwrap();
-        let reader = NamedReader::new(file.path().to_path_buf());
+        let reader = NamedReader::new(file.path().to_path_buf(), b'\n');
 
         assert_eq!(reader.borrow_mut().next_line(), Some(b"one\n".to_vec()));
         assert_eq!(reader.borrow_mut().next_line(), Some(b"two\n".to_vec()));
@@ -87,7 +89,7 @@ mod tests {
     fn last_line_without_newline_is_preserved() {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"abc").unwrap();
-        let reader = NamedReader::new(file.path().to_path_buf());
+        let reader = NamedReader::new(file.path().to_path_buf(), b'\n');
 
         assert_eq!(reader.borrow_mut().next_line(), Some(b"abc".to_vec()));
         assert_eq!(reader.borrow_mut().next_line(), None);
@@ -95,7 +97,21 @@ mod tests {
 
     #[test]
     fn missing_file_yields_no_lines() {
-        let reader = NamedReader::new(PathBuf::from("/nonexistent/xyzzy-42-does-not-exist"));
+        let reader = NamedReader::new(PathBuf::from("/nonexistent/xyzzy-42-does-not-exist"), b'\n');
+        assert_eq!(reader.borrow_mut().next_line(), None);
+    }
+
+    #[test]
+    fn nul_separator_splits_lines() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"one\0two\nthree").unwrap();
+        let reader = NamedReader::new(file.path().to_path_buf(), b'\0');
+
+        assert_eq!(reader.borrow_mut().next_line(), Some(b"one\0".to_vec()));
+        assert_eq!(
+            reader.borrow_mut().next_line(),
+            Some(b"two\nthree".to_vec())
+        );
         assert_eq!(reader.borrow_mut().next_line(), None);
     }
 }
