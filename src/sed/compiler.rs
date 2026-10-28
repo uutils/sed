@@ -1431,63 +1431,39 @@ fn compile_version_command(
     _cmd: &mut Command,
     _context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
-    // Claim version partify with GNU sed 4.9
-    const GNU_MAJOR: u8 = 4;
-    const GNU_MINOR: u8 = 9;
-    const GNU_PATCH: u8 = 0;
+    // Claim version parity with GNU sed 4.9
+    const GNU_VERSION: [u8; 2] = [4, 9];
 
     line.advance();
     line.eat_spaces(); // Skip any leading whitespace.
 
-    let mut major = String::new();
-    let mut minor = String::new();
-    let mut patch = String::new();
+    // The version ends at a blank, ';' or '}', so `v 4.2;p` and `{v}` work.
+    let mut version = String::new();
+    while !line.eol() && !matches!(line.current(), ';' | '}') && !line.current().is_whitespace() {
+        version.push(line.current());
+        line.advance();
+    }
 
-    let mut ver_semantic = 0;
-
-    while !line.eol() {
-        if line.current() == '.' {
-            ver_semantic += 1;
-            line.advance();
-        } else {
-            match ver_semantic {
-                0 => major.push(line.current()),
-                1 => minor.push(line.current()),
-                2 => patch.push(line.current()),
-                _ => return compilation_error(lines, line, "invalid version of sed"),
-            }
-            line.advance();
+    if !version.is_empty() {
+        // Compared part by part, as GNU sed does: 4.2.2 and 3.10 are older
+        // than 4.9, while 4.9.1 and 4.10 are newer.
+        let Ok(requested) = version
+            .split('.')
+            .map(str::parse::<u8>)
+            .collect::<Result<Vec<_>, _>>()
+        else {
+            return compilation_error(lines, line, "invalid version of sed");
+        };
+        if requested.as_slice() > GNU_VERSION.as_slice() {
+            return compilation_error(lines, line, "expected newer version of sed");
         }
     }
 
-    if major.is_empty() {
-        major = GNU_MAJOR.to_string();
-        minor = GNU_MINOR.to_string();
-        patch = GNU_PATCH.to_string();
+    line.eat_spaces();
+    if !line.eol() && line.current() == ';' {
+        line.advance();
     }
-
-    if minor.is_empty() {
-        minor.push('0');
-    }
-    if patch.is_empty() {
-        patch.push('0');
-    }
-
-    match major.parse::<u8>() {
-        Ok(major_int) => match minor.parse::<u8>() {
-            Ok(minor_int) => match patch.parse::<u8>() {
-                Ok(patch_int) => {
-                    if minor_int <= GNU_MINOR && major_int <= GNU_MAJOR && patch_int == GNU_PATCH {
-                        return Ok(CommandHandling::Continue);
-                    }
-                    compilation_error(lines, line, "expected newer version of sed")
-                }
-                Err(_) => compilation_error(lines, line, "invalid version of sed"),
-            },
-            Err(_) => compilation_error(lines, line, "invalid version of sed"),
-        },
-        Err(_) => compilation_error(lines, line, "invalid version of sed"),
-    }
+    Ok(CommandHandling::Continue)
 }
 
 // Handles e
