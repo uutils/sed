@@ -1121,6 +1121,49 @@ fn test_posix_keeps_gnu_character_escapes() {
     }
 }
 
+#[test]
+fn test_posix_text_command_on_same_line() {
+    // GNU sed accepts the text right after `a\`, `i\` and `c\` under --posix too.
+    for (script, expected) in [
+        (r"a\bar", "foo\nbar\n"),
+        (r"i\(text", "(text\nfoo\n"),
+        (r"c\bar", "bar\n"),
+        (r"a\  bar", "foo\n  bar\n"),
+        (r"1a\b\tc", "foo\nb\tc\n"),
+        ("a\\bar\\\nbaz", "foo\nbar\nbaz\n"),
+    ] {
+        new_ucmd!()
+            .args(&["--posix", "-e", script])
+            .pipe_in("foo\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_posix_text_command_next_line() {
+    // The text on the following lines is read the same way as without --posix.
+    new_ucmd!()
+        .args(&["--posix", "-e", "a\\\n\\  b\\\nc\\x41"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("foo\n  b\ncA\n");
+}
+
+#[test]
+fn test_posix_text_command_errors() {
+    new_ucmd!()
+        .args(&["--posix", "-e", "a bar"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("expects \\ followed by text");
+    new_ucmd!()
+        .args(&["--posix", "-e", "a\\"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("incomplete command");
+}
+
 ////////////////////////////////////////////////////////////
 // e command (execute)
 // The with-argument form writes the shell's raw, unmodified output to the
