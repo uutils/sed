@@ -876,7 +876,7 @@ fn compile_subst_command(
     let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line, context.character_mode)?;
-    compile_subst_flags(lines, line, &mut subst, context.posix, context.sandbox)?;
+    compile_subst_flags(lines, line, &mut subst, context)?;
 
     if pattern.is_empty() && (subst.ignore_case || subst.multiline) {
         return compilation_error(
@@ -967,8 +967,7 @@ pub fn compile_subst_flags(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     subst: &mut Substitution,
-    posix: bool,
-    sandbox: bool,
+    context: &mut ProcessingContext,
 ) -> UResult<()> {
     let mut seen_g_or_n = false;
 
@@ -1008,7 +1007,7 @@ pub fn compile_subst_flags(
             }
 
             'i' | 'I' => {
-                if posix {
+                if context.posix {
                     return compilation_error(lines, line, ERR_UNKNOWN_OPTION_TO_S);
                 }
                 subst.ignore_case = true;
@@ -1016,7 +1015,7 @@ pub fn compile_subst_flags(
             }
 
             'm' | 'M' => {
-                if posix {
+                if context.posix {
                     return compilation_error(lines, line, ERR_UNKNOWN_OPTION_TO_S);
                 }
                 subst.multiline = true;
@@ -1024,7 +1023,7 @@ pub fn compile_subst_flags(
             }
 
             'e' => {
-                if posix || sandbox {
+                if context.posix || context.sandbox {
                     return compilation_error(
                         lines,
                         line,
@@ -1065,12 +1064,12 @@ pub fn compile_subst_flags(
             }
 
             'w' => {
-                if sandbox {
+                if context.sandbox {
                     return compilation_error(lines, line, ERR_SANDBOX);
                 }
                 let location = ScriptLocation::at_position(lines, line);
                 let path = read_file_path(lines, line)?;
-                subst.write_file = Some(NamedWriter::new(path, location)?);
+                subst.write_file = Some(named_writer(context, path, location)?);
                 return Ok(()); // 'w' is the last flag allowed
             }
 
@@ -1185,8 +1184,23 @@ fn compile_write_file_command(
     }
     let location = ScriptLocation::at_position(lines, line);
     let path = read_file_path(lines, line)?;
-    cmd.data = CommandData::NamedWriter(NamedWriter::new(path, location)?);
+    cmd.data = CommandData::NamedWriter(named_writer(context, path, location)?);
     Ok(CommandHandling::Continue)
+}
+
+/// Return the writer for path, creating (and truncating) the file only the
+/// first time a script names it.
+fn named_writer(
+    context: &mut ProcessingContext,
+    path: PathBuf,
+    location: ScriptLocation,
+) -> UResult<Rc<RefCell<NamedWriter>>> {
+    if let Some(writer) = context.named_writers.get(&path) {
+        return Ok(Rc::clone(writer));
+    }
+    let writer = NamedWriter::new(path.clone(), location)?;
+    context.named_writers.insert(path, Rc::clone(&writer));
+    Ok(writer)
 }
 
 // Handles {
@@ -2613,7 +2627,7 @@ mod tests {
         let (lines, mut chars) = make_providers("g");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert_eq!(subst.occurrence, 0); // 'g' means all occurrences
     }
 
@@ -2622,7 +2636,7 @@ mod tests {
         let (lines, mut chars) = make_providers("p");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.print_flag);
     }
 
@@ -2631,7 +2645,7 @@ mod tests {
         let (lines, mut chars) = make_providers("I");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.ignore_case);
     }
 
@@ -2640,7 +2654,7 @@ mod tests {
         let (lines, mut chars) = make_providers("i");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.ignore_case);
     }
 
@@ -2649,7 +2663,7 @@ mod tests {
         let (lines, mut chars) = make_providers("M");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.multiline);
     }
 
@@ -2658,7 +2672,7 @@ mod tests {
         let (lines, mut chars) = make_providers("m");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.multiline);
     }
 
@@ -2667,7 +2681,7 @@ mod tests {
         let (lines, mut chars) = make_providers("3");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert_eq!(subst.occurrence, 3);
     }
 
@@ -2676,7 +2690,7 @@ mod tests {
         let (lines, mut chars) = make_providers("g3");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
         assert!(
             err.to_string()
                 .contains("multiple 'g' or numeric flags in substitute command")
@@ -2688,7 +2702,7 @@ mod tests {
         let (lines, mut chars) = make_providers("2g");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
         assert!(
             err.to_string()
                 .contains("multiple 'g' or numeric flags in substitute command")
@@ -2700,7 +2714,7 @@ mod tests {
         let (lines, mut chars) = make_providers("w ");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
         assert!(err.to_string().contains("missing file path"));
     }
 
@@ -2711,7 +2725,7 @@ mod tests {
         let (lines, mut chars) = make_providers(&format!("w {}", out.display()));
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert_eq!(
             subst.write_file.as_ref().map(|w| w.borrow().path.clone()),
             Some(out)
@@ -2723,7 +2737,16 @@ mod tests {
         let (lines, mut chars) = make_providers("w out.txt");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, true).unwrap_err();
+        let err = compile_subst_flags(
+            &lines,
+            &mut chars,
+            &mut subst,
+            &mut ProcessingContext {
+                sandbox: true,
+                ..ctx()
+            },
+        )
+        .unwrap_err();
         assert!(err.to_string().contains(ERR_SANDBOX));
     }
 
@@ -2732,7 +2755,7 @@ mod tests {
         let (lines, mut chars) = make_providers("e");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.execute);
     }
 
@@ -2741,7 +2764,16 @@ mod tests {
         let (lines, mut chars) = make_providers("e");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, true, false).unwrap_err();
+        let err = compile_subst_flags(
+            &lines,
+            &mut chars,
+            &mut subst,
+            &mut ProcessingContext {
+                posix: true,
+                ..ctx()
+            },
+        )
+        .unwrap_err();
         assert!(
             err.to_string()
                 .contains("not allowed with --posix or --sandbox")
@@ -2753,7 +2785,16 @@ mod tests {
         let (lines, mut chars) = make_providers("e");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, true).unwrap_err();
+        let err = compile_subst_flags(
+            &lines,
+            &mut chars,
+            &mut subst,
+            &mut ProcessingContext {
+                sandbox: true,
+                ..ctx()
+            },
+        )
+        .unwrap_err();
         assert!(
             err.to_string()
                 .contains("not allowed with --posix or --sandbox")
@@ -2765,7 +2806,7 @@ mod tests {
         let (lines, mut chars) = make_providers("z");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
 
