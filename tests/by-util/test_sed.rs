@@ -2594,6 +2594,38 @@ fn list_empty_line_without_newline() {
         .stdout_is("$\n");
 }
 
+/// `l` shows a newline inside the pattern space as `\n`, as GNU sed does,
+/// and folds it like any other escape.
+#[test]
+fn list_embedded_newline() {
+    new_ucmd!()
+        .args(&["-n", "N;l"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\\nb$\n");
+    new_ucmd!()
+        .args(&["-n", "G;l"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\\n$\n");
+    new_ucmd!()
+        .args(&["-n", "s/b/\\n/;l"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is("a\\nc$\n");
+    new_ucmd!()
+        .args(&["-n", "N;l 3"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\\\n\\n\\\nb$\n");
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["--uutil-extensions", "-n", "N;l"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\\nb$\n");
+}
+
 ////////////////////////////////////////////////////////////
 // In-place editing
 #[test]
