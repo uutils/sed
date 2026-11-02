@@ -3740,4 +3740,9 @@ fn test_brace_or_comment_after_command() {
         .pipe_in("foo\n")
         .succeeds()
         .stdout_is("f0o\nf0o\nF0o\n");
+    new_ucmd!()
+        .args(&["-n", "y/o/0/ ;p"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("f00\n");
 }
