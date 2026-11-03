@@ -3308,6 +3308,24 @@ fn test_range_numeric_start_skipped_by_d() {
 }
 
 #[test]
+fn test_range_restarts_on_line_after_numeric_end() {
+    // The line after a range that ends at a line number or +N can start a new range.
+    for (script, expected) in [
+        ("/[14]/,+2s/^/>/", ">1\n>2\n>3\n>4\n>5\n>6\n"),
+        ("/./,+1{=}", "1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n"),
+        ("/./,3d", ""),
+        ("/./,+1!d", "1\n2\n3\n4\n5\n6\n"),
+        ("2,3b;/./,+1s/^/>/", ">1\n2\n3\n>4\n>5\n>6\n"),
+    ] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("1\n2\n3\n4\n5\n6\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
 fn test_step_non_numeric() {
     for (script, column) in [("1~/x/p", 6), ("1,~/x/p", 7)] {
         new_ucmd!()

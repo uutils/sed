@@ -87,25 +87,21 @@ fn applies(
     } else if let Some(addr2) = &command.addr2 {
         // Two addresses
         if let Some(start) = command.start_line {
+            // A range ending at a line number or +N is closed on the first
+            // line past its end. That line can start a new range.
+            let ended = match addr2 {
+                Address::RelLine(n) => linenum - start > *n,
+                Address::Line(n) => linenum > *n,
+                _ => false,
+            };
+            if ended {
+                command.start_line = None;
+            }
+        }
+        if let Some(start) = command.start_line {
             // Range is already latched active.
             match addr2 {
-                Address::RelLine(n) => {
-                    if linenum - start > *n {
-                        command.start_line = None;
-                        Ok(false)
-                    } else {
-                        Ok(true)
-                    }
-                }
-                Address::Line(n) => {
-                    // Special case: already ended
-                    if linenum > *n {
-                        command.start_line = None;
-                        Ok(false)
-                    } else {
-                        Ok(true)
-                    }
-                }
+                Address::RelLine(_) | Address::Line(_) => Ok(true),
                 Address::StepMatch(step) => Ok((linenum - start).is_multiple_of(*step)),
                 Address::StepEnd(step) => {
                     // Inclusive end on multiple of step
