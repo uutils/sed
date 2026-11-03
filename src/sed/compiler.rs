@@ -1333,11 +1333,23 @@ fn compile_text_command(
 ) -> UResult<CommandHandling> {
     line.advance(); // Skip the command character.
     line.eat_spaces(); // Skip any leading whitespace.
-    if context.posix {
-        compile_text_command_posix(lines, line, cmd, context)
-    } else {
-        compile_text_command_gnu(lines, line, cmd, context)
+    // --posix needs the \ before the text.
+    if context.posix && (line.eol() || line.current() != '\\') {
+        return compilation_error(
+            lines,
+            line,
+            format!("command `{}' expects \\ followed by text", cmd.code),
+        );
     }
+
+    compile_text_command_gnu(lines, line, cmd, context)?;
+
+    // With --posix, a \ at the end of the script leaves the command without any text.
+    if context.posix && matches!(&cmd.data, CommandData::Text(text) if text.is_empty()) {
+        compilation_error(lines, line, "incomplete command")?;
+    }
+
+    Ok(CommandHandling::Continue)
 }
 
 /// Compile commands that take text as an argument (GNU syntax).
@@ -1411,35 +1423,6 @@ fn compile_text_command_gnu(
         }
     }
     cmd.data = CommandData::Text(Rc::from(text));
-    Ok(CommandHandling::Continue)
-}
-
-/// Compile commands that take text as an argument (POSIX syntax).
-// Handles a, c, i; after the command and initial whitespace have been consumed.
-// According to POSIX, these commands expect \ followed by text.
-// Like GNU sed, the text may still start on the same line as the \,
-// and is read the same way as without --posix.
-fn compile_text_command_posix(
-    lines: &mut ScriptLineProvider,
-    line: &mut ScriptCharProvider,
-    cmd: &mut Command,
-    context: &mut ProcessingContext,
-) -> UResult<CommandHandling> {
-    if line.eol() || line.current() != '\\' {
-        return compilation_error(
-            lines,
-            line,
-            format!("command `{}' expects \\ followed by text", cmd.code),
-        );
-    }
-
-    compile_text_command_gnu(lines, line, cmd, context)?;
-
-    // A \ at the end of the script leaves the command without any text.
-    if matches!(&cmd.data, CommandData::Text(text) if text.is_empty()) {
-        compilation_error(lines, line, "incomplete command")?;
-    }
-
     Ok(CommandHandling::Continue)
 }
 
