@@ -3308,6 +3308,43 @@ fn test_range_numeric_start_skipped_by_d() {
 }
 
 #[test]
+fn test_unreadable_input_file_is_skipped() -> std::io::Result<()> {
+    // Like GNU sed, report the file, process the others and exit with 2.
+    let (dir, path1, path2) = two_inputs("1\n2\n", "a\nb\n")?;
+    let missing = dir.path().join("missing");
+    for (args, expected) in [
+        (&["1d"][..], "2\na\nb\n"),
+        (&["0,/1/d"][..], "2\na\nb\n"),
+        (&["-n", "$p"][..], "b\n"),
+        (&["-s", "-n", "1p"][..], "1\na\n"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .arg(&missing)
+            .arg(&path1)
+            .arg(&path2)
+            .fails()
+            .code_is(2)
+            .stdout_is(expected)
+            .stderr_contains("error opening input file");
+    }
+    Ok(())
+}
+
+#[test]
+fn test_quit_before_unreadable_input_file() -> std::io::Result<()> {
+    let (dir, path1, _path2) = two_inputs("1\n2\n", "")?;
+    new_ucmd!()
+        .arg("q")
+        .arg(&path1)
+        .arg(dir.path().join("missing"))
+        .succeeds()
+        .stdout_is("1\n")
+        .no_stderr();
+    Ok(())
+}
+
+#[test]
 fn test_step_non_numeric() {
     for (script, column) in [("1~/x/p", 6), ("1,~/x/p", 7)] {
         new_ucmd!()

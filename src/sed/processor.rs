@@ -28,6 +28,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, set_exit_code};
+use uucore::show;
 
 /// Return the specified command variant or panic.
 // Example: let path = extract_variant!(command, Path);
@@ -1004,9 +1005,6 @@ pub fn process_all_files(
 
     for (index, path) in files.into_iter().enumerate() {
         context.last_file = index == last_file_index;
-        let mut reader = LineReader::open(&path)
-            .map_err_context(|| format!("error opening input file {}", path.quote()))?;
-        let output = in_place.begin(&path)?;
 
         if context.separate || index == 0 {
             context.line_number = 0;
@@ -1016,6 +1014,17 @@ pub fn process_all_files(
             context.hold.content.clear();
             context.hold.has_newline = true;
         }
+
+        let mut reader = match LineReader::open(&path) {
+            Ok(reader) => reader,
+            Err(e) => {
+                // Like GNU sed, report the file and go on with the next one.
+                show!(e.map_err_context(|| format!("error opening input file {}", path.quote())));
+                set_exit_code(2);
+                continue;
+            }
+        };
+        let output = in_place.begin(&path)?;
 
         context.input_name = path;
         process_file(commands.clone(), &mut reader, output, context)?;
