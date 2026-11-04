@@ -497,6 +497,27 @@ fn test_ere_quantifier_after_atom() {
 }
 
 #[test]
+fn test_bre_anchors_in_subexpression() {
+    for (script, expected) in [
+        ("s/\\(^a\\)/x/g", "xb\n"),
+        ("s/b\\|^a/x/g", "xx\n"),
+        ("s/x*\\(^a\\)/y/", "yb\n"),
+        ("s/\\(b$\\)/x/", "ax\n"),
+        ("s/a$\\|b$/x/g", "ax\n"),
+    ] {
+        // Read the script from a file, see test_ere_quantifier_after_atom.
+        let mut file = NamedTempFile::new().expect("create temporary sed script");
+        writeln!(file, "{script}").expect("write temporary sed script");
+        let path = file.path().to_str().expect("temporary path is UTF-8");
+        new_ucmd!()
+            .args(&["-f", path])
+            .pipe_in("ab\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
 fn test_bre_quantifier_unmatched_brace() {
     new_ucmd!()
         .args(&["-e", "/l\\{1,2}/p"])
