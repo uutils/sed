@@ -584,12 +584,15 @@ fn bre_to_ere(pattern: &[u8]) -> Vec<u8> {
     while pos < pattern.len() {
         let c = pattern[pos];
         pos += 1;
+        // A ^ right after \( or \| is an anchor, as at the beginning.
+        let mut starts_subexpression = false;
 
         if c == b'\\' {
             match pattern.get(pos).copied() {
                 Some(b'(') => {
                     pos += 1;
                     result.push(b'('); // Group start
+                    starts_subexpression = true;
                 }
                 Some(b')') => {
                     pos += 1;
@@ -606,6 +609,7 @@ fn bre_to_ere(pattern: &[u8]) -> Vec<u8> {
                 Some(b'|') => {
                     pos += 1;
                     result.push(b'|'); // Alternation operator
+                    starts_subexpression = true;
                 }
                 Some(b'{') => {
                     pos += 1;
@@ -656,15 +660,19 @@ fn bre_to_ere(pattern: &[u8]) -> Vec<u8> {
                     result.push(b'\\');
                     result.push(c);
                 }
-                b'$' if pos < pattern.len() => {
-                    // Similarly for $ appearing not at the end.
+                b'$' if pos < pattern.len()
+                    && !pattern[pos..].starts_with(b"\\)")
+                    && !pattern[pos..].starts_with(b"\\|") =>
+                {
+                    // Similarly for $ appearing not at the end or before
+                    // the end of a group or an alternative.
                     result.push(b'\\');
                     result.push(c);
                 }
                 _ => result.push(c),
             }
         }
-        at_beginning = false;
+        at_beginning = starts_subexpression;
         previous = Some(c);
     }
 
@@ -2919,11 +2927,13 @@ mod tests {
     #[test]
     fn test_caret_escaped_in_middle() {
         assert_eq!(bre_to_ere_string(r"^a^[^x]c"), r"^a\^[^x]c");
+        assert_eq!(bre_to_ere_string(r"a\(^b\|^c\)"), "a(^b|^c)");
     }
 
     #[test]
     fn test_dollar_escaped_in_middle() {
         assert_eq!(bre_to_ere_string(r"a$c$"), r"a\$c$");
+        assert_eq!(bre_to_ere_string(r"\(a$\|b$\)c$"), "(a$|b$)c$");
     }
 
     #[test]
