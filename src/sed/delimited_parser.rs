@@ -441,9 +441,14 @@ pub fn parse_regex_for_mode(
                 if let Some(decoded) = parse_char_escape(line) {
                     push_script_char(&mut result, decoded, character_mode);
                 } else {
-                    // Pass through \<any> to RE engine for further treatment
+                    // Pass through \<any> to RE engine for further treatment,
+                    // spelling the buffer anchors \` and \' as \A and \z
                     result.push(b'\\');
-                    result.push(line.current_byte());
+                    result.push(match line.current_byte() {
+                        b'`' => b'A',
+                        b'\'' => b'z',
+                        c => c,
+                    });
                     line.advance();
                 }
                 continue;
