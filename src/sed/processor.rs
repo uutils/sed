@@ -494,6 +494,7 @@ fn readable_ascii_byte(byte: u8) -> Cow<'static, str> {
         b'\x08' => Cow::Borrowed(r"\b"),
         b'\x0b' => Cow::Borrowed(r"\v"),
         b'\x0c' => Cow::Borrowed(r"\f"),
+        b'\n' => Cow::Borrowed(r"\n"),
         b'\\' => Cow::Borrowed(r"\\"),
         b'\r' => Cow::Borrowed(r"\r"),
         b'\t' => Cow::Borrowed(r"\t"),
@@ -545,15 +546,6 @@ impl ListLine {
         Ok(())
     }
 
-    /// Write the current list line with an embedded newline marker.
-    fn write_embedded_newline(&mut self, output: &mut OutputBuffer) -> UResult<()> {
-        self.buffer.push_str("$\n");
-        output.write_str(&self.buffer)?;
-        self.buffer.clear();
-        self.width = 0;
-        Ok(())
-    }
-
     /// Finish the list line if it has buffered output.
     fn finish(&mut self, output: &mut OutputBuffer) -> UResult<()> {
         if !self.buffer.is_empty() {
@@ -585,10 +577,6 @@ fn list(
     if !context.uutil_extensions || context.character_mode == CharacterMode::Byte {
         // List non-ASCII bytes in octal.
         for &byte in line.as_bytes() {
-            if byte == b'\n' {
-                list_line.write_embedded_newline(output)?;
-                continue;
-            }
             let out_str = readable_ascii_byte(byte);
             list_line.write_item(output, &out_str)?;
         }
@@ -603,10 +591,6 @@ fn list(
             .unwrap_err()
         })?;
         for ch in line.chars() {
-            if ch == '\n' {
-                list_line.write_embedded_newline(output)?;
-                continue;
-            }
             let out_str = readable_char(ch);
             list_line.write_item(output, &out_str)?;
         }
@@ -1052,7 +1036,7 @@ mod tests {
 
     #[test]
     fn test_readable_ascii_byte_named_escapes() {
-        assert_eq!(readable_ascii_byte(b'\n'), r"\012");
+        assert_eq!(readable_ascii_byte(b'\n'), r"\n");
         assert_eq!(readable_ascii_byte(b'\t'), r"\t");
         assert_eq!(readable_ascii_byte(b'\\'), r"\\");
     }
