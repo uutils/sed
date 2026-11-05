@@ -74,9 +74,13 @@ fn parse_numeric_escape(
 
     let ndigits_read = valid_chars.len();
     let char_string: String = valid_chars.into_iter().collect();
-    let decoded = u32::from_str_radix(&char_string, radix)
-        .ok()
-        .and_then(char::from_u32);
+    let mut value = u32::from_str_radix(&char_string, radix).ok();
+    // \d, \o and \x give a single byte. Like GNU sed, keep only its low 8 bits
+    // when the number is bigger, so \d513 and \o401 are both \x01.
+    if ndigits <= 3 {
+        value = value.map(|v| v & 0xFF);
+    }
+    let decoded = value.and_then(char::from_u32);
     if decoded.is_none() {
         line.retreat(ndigits_read);
     }
@@ -845,6 +849,11 @@ mod tests {
     #[case::control_backslash_escape(r"c\\x", Some('\x1c'), Some('x'))]
     #[case::control_escape_invalid("cé", Some('c'), Some('Ã'))]
     #[case::decimal_escape_valid("d065r", Some('A'), Some('r'))]
+    #[case::decimal_wrap_zero("d256r", Some('\0'), Some('r'))]
+    #[case::decimal_wrap_one("d513r", Some('\x01'), Some('r'))]
+    #[case::decimal_wrap_max("d999", Some('\u{e7}'), None)]
+    #[case::octal_wrap_one("o401x", Some('\x01'), Some('x'))]
+    #[case::octal_wrap_max("o777", Some('\u{ff}'), None)]
     #[case::octal_escape_valid("o141x", Some('a'), Some('x'))]
     #[case::hex_escape_valid("x41;", Some('A'), Some(';'))]
     #[case::short_unicode_escape_valid("u2665;", Some('♥'), Some(';'))]
