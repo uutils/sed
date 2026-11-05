@@ -67,7 +67,10 @@ impl InPlace {
     /// to the context settings.
     fn begin_resolved(&mut self, file_name: &Path) -> UResult<&mut OutputBuffer> {
         if !self.in_place {
+            // Carry over a newline deferred at the end of the previous file.
+            let pending_newline = self.output.pending_newline;
             self.output = OutputBuffer::new(Box::new(stdout()));
+            self.output.pending_newline = pending_newline;
             return Ok(&mut self.output);
         }
 
