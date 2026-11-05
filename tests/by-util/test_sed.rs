@@ -649,6 +649,22 @@ fn subst_multiline_flag_matches_embedded_line_end() {
         .stdout_is("foX\nbaX\n");
 }
 
+#[test]
+fn address_multiline_modifier() {
+    for (script, expected) in [
+        ("$!N;/^b$/Mp", "a\nb\n"),
+        ("$!N;/^b$/p", ""),
+        ("$!N;/^B/ I M p", "a\nb\n"),
+        ("/^b/M,/c$/Mp", "b\nc\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("a\nb\nc\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
 ////////////////////////////////////////////////////////////
 // Bracket expressions
 // A backslash is only special inside a bracket expression when it starts a
