@@ -154,11 +154,14 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         }
 
         'c' => {
-            // Control character escape: \cC
+            // Control character escape: \cC, with \c\\ for control-backslash
             line.advance(); // move past 'c'
             match create_control_char(line.current()) {
                 Some(decoded) => {
                     line.advance();
+                    if decoded == '\x1c' && !line.eol() && line.current() == '\\' {
+                        line.advance();
+                    }
                     Some(decoded)
                 }
                 None => Some('c'),
