@@ -17,7 +17,7 @@ use crate::sed::error_handling::{ScriptLocation, input_runtime_error};
 use crate::sed::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::sed::fast_regex::Regex;
 use crate::sed::in_place::InPlace;
-use crate::sed::named_writer;
+use crate::sed::named_writer::{self, NamedWriter};
 
 use memchr::memchr;
 use std::borrow::Cow;
@@ -170,6 +170,24 @@ fn applies(
     } else {
         result
     }
+}
+
+/// Write line, possibly with a newline, to the file of a `w` command or flag.
+/// `/dev/stdout` is sed's own output, so the lines keep their order there.
+fn write_to_file(
+    writer: &Rc<RefCell<NamedWriter>>,
+    output: &mut OutputBuffer,
+    line: &[u8],
+    newline: bool,
+) -> UResult<()> {
+    if !writer.borrow().is_stdout() {
+        return writer.borrow_mut().write_line_bytes(line, newline);
+    }
+    output.write_raw(line)?;
+    if newline {
+        output.write_raw(b"\n")?;
+    }
+    Ok(())
 }
 
 /// Write the specified chunk to the output for a given processing context.
@@ -406,9 +424,12 @@ fn substitute(
 
         // Write to file if needed.
         if let Some(ref writer) = sub.write_file {
-            writer
-                .borrow_mut()
-                .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
+            write_to_file(
+                writer,
+                output,
+                pattern.as_bytes(),
+                pattern.is_newline_terminated(),
+            )?;
         }
         context.substitution_made = true;
     }
@@ -895,9 +916,12 @@ fn process_file(
                 'w' => {
                     // Append the pattern space to the specified file.
                     let writer = extract_variant!(command, NamedWriter);
-                    writer
-                        .borrow_mut()
-                        .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
+                    write_to_file(
+                        writer,
+                        output,
+                        pattern.as_bytes(),
+                        pattern.is_newline_terminated(),
+                    )?;
                 }
                 'W' => {
                     // Append only the first line of the pattern space.
@@ -909,7 +933,9 @@ fn process_file(
                             Some(pos) => (&pattern_bytes[..=pos], true),
                             None => (pattern_bytes, false),
                         };
-                    writer.borrow_mut().write_line_bytes(
+                    write_to_file(
+                        writer,
+                        output,
                         first_line,
                         !found_newline && pattern.is_newline_terminated(),
                     )?;
