@@ -2928,12 +2928,14 @@ mod tests {
     fn test_caret_escaped_in_middle() {
         assert_eq!(bre_to_ere_string(r"^a^[^x]c"), r"^a\^[^x]c");
         assert_eq!(bre_to_ere_string(r"a\(^b\|^c\)"), "a(^b|^c)");
+        assert_eq!(bre_to_ere_string(r"\(a\)^b"), r"(a)\^b");
     }
 
     #[test]
     fn test_dollar_escaped_in_middle() {
         assert_eq!(bre_to_ere_string(r"a$c$"), r"a\$c$");
         assert_eq!(bre_to_ere_string(r"\(a$\|b$\)c$"), "(a$|b$)c$");
+        assert_eq!(bre_to_ere_string(r"\($a\)"), r"(\$a)");
     }
 
     #[test]

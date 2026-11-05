@@ -478,18 +478,26 @@ fn test_ere_quantifier_without_preceding_atom() {
     }
 }
 
+/// Write a sed script to a temporary file. Tests pass it with `-f`, since on
+/// Windows an argument like `/\(*/p` would go through glob expansion first.
+fn script_file(script: &str) -> NamedTempFile {
+    let mut file = NamedTempFile::new().expect("create temporary sed script");
+    writeln!(file, "{script}").expect("write temporary sed script");
+    file
+}
+
+fn script_path(file: &NamedTempFile) -> &str {
+    file.path().to_str().expect("temporary path is UTF-8")
+}
+
 #[test]
 fn test_ere_quantifier_after_atom() {
     for script in [
         "/a**/p", "/a+?/p", "/()*/p", "/(a|)*/p", "/[a]*/p", "/a{1}*/p", "/\\(*/p", "/\\**/p",
     ] {
-        // Read the script from a file, since on Windows an argument like
-        // `/\(*/p` would go through glob expansion first.
-        let mut file = NamedTempFile::new().expect("create temporary sed script");
-        writeln!(file, "{script}").expect("write temporary sed script");
-        let path = file.path().to_str().expect("temporary path is UTF-8");
+        let file = script_file(script);
         new_ucmd!()
-            .args(&["-n", "-E", "-f", path])
+            .args(&["-n", "-E", "-f", script_path(&file)])
             .pipe_in("xa*b\n")
             .succeeds()
             .stdout_is("xa*b\n");
@@ -505,12 +513,9 @@ fn test_bre_anchors_in_subexpression() {
         ("s/\\(b$\\)/x/", "ax\n"),
         ("s/a$\\|b$/x/g", "ax\n"),
     ] {
-        // Read the script from a file, see test_ere_quantifier_after_atom.
-        let mut file = NamedTempFile::new().expect("create temporary sed script");
-        writeln!(file, "{script}").expect("write temporary sed script");
-        let path = file.path().to_str().expect("temporary path is UTF-8");
+        let file = script_file(script);
         new_ucmd!()
-            .args(&["-f", path])
+            .args(&["-f", script_path(&file)])
             .pipe_in("ab\n")
             .succeeds()
             .stdout_is(expected);
