@@ -71,10 +71,13 @@ fn parse_numeric_escape(
     }
 
     let char_string: String = valid_chars.into_iter().collect();
-    match u32::from_str_radix(&char_string, radix)
-        .ok()
-        .and_then(char::from_u32)
-    {
+    let mut value = u32::from_str_radix(&char_string, radix).ok();
+    // \d, \o and \x give a single byte. Like GNU sed, keep only its low 8 bits
+    // when the number is bigger, so \d513 and \o401 are both \x01.
+    if ndigits <= 3 {
+        value = value.map(|v| v & 0xFF);
+    }
+    match value.and_then(char::from_u32) {
         Some(decoded) => Some(decoded),
         None => panic!("Unable to decode numeric character escape."),
     }
@@ -903,6 +906,25 @@ mod tests {
     #[test]
     fn test_decimal_escape_valid() {
         assert_eq!(escape_result_with_current("d065r"), (Some('A'), Some('r')));
+    }
+
+    #[test]
+    fn test_decimal_escape_wraps_to_a_byte() {
+        assert_eq!(escape_result_with_current("d256r"), (Some('\0'), Some('r')));
+        assert_eq!(
+            escape_result_with_current("d513r"),
+            (Some('\x01'), Some('r'))
+        );
+        assert_eq!(escape_result_with_current("d999"), (Some('\u{e7}'), None));
+    }
+
+    #[test]
+    fn test_octal_escape_wraps_to_a_byte() {
+        assert_eq!(
+            escape_result_with_current("o401x"),
+            (Some('\x01'), Some('x'))
+        );
+        assert_eq!(escape_result_with_current("o777"), (Some('\u{ff}'), None));
     }
 
     #[test]

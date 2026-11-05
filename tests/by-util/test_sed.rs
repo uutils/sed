@@ -1121,6 +1121,16 @@ fn test_posix_keeps_gnu_character_escapes() {
     }
 }
 
+#[test]
+fn test_numeric_escape_keeps_the_low_byte() {
+    // A \d or \o value above 255 wraps to a byte, as GNU sed does.
+    new_ucmd!()
+        .args(&["-e", r"1s/./\d513/;2s/./\o401/;3s/./\d321/;4s/./\d1234/"])
+        .pipe_in("a\na\na\na\n")
+        .succeeds()
+        .stdout_is("\x01\n\x01\nA\n{4\n");
+}
+
 ////////////////////////////////////////////////////////////
 // e command (execute)
 // The with-argument form writes the shell's raw, unmodified output to the
