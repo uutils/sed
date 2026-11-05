@@ -555,7 +555,8 @@ fn parse_command_ending(
         return Ok(());
     }
 
-    if !line.eol() && line.current() == '}' {
+    // A closing brace or a comment is left for the caller
+    if !line.eol() && matches!(line.current(), '}' | '#') {
         return Ok(());
     }
 
@@ -966,6 +967,7 @@ fn compile_trans_command(
     cmd.data = CommandData::Transliteration(transliteration);
 
     line.advance(); // move past last delimiter
+    line.eat_spaces();
     parse_command_ending(lines, line, cmd)?;
     Ok(CommandHandling::Continue)
 }
@@ -1082,7 +1084,8 @@ pub fn compile_subst_flags(
                 return Ok(()); // 'w' is the last flag allowed
             }
 
-            ';' | '\n' => break,
+            // `}` and a comment end the command like `;`; the caller handles them
+            ';' | '\n' | '}' | '#' => break,
 
             other => {
                 return compilation_error(
