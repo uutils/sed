@@ -929,6 +929,39 @@ mod tests {
     }
 
     #[test]
+    fn test_literal_matcher_escaped_caret_is_literal() {
+        let matcher = LiteralMatcher::new(r"\^a");
+        assert!(matcher.is_match(b"x^a"));
+        assert!(!matcher.is_match(b"a"));
+        assert_eq!(matcher.find(b"x^a"), Some((1, 3, &b"^a"[..])));
+    }
+
+    #[test]
+    fn test_literal_matcher_escaped_dollar_is_literal() {
+        let matcher = LiteralMatcher::new(r"a\$");
+        assert!(matcher.is_match(b"a$x"));
+        assert!(!matcher.is_match(b"xa"));
+        assert_eq!(matcher.find(b"a$x"), Some((0, 2, &b"a$"[..])));
+    }
+
+    #[test]
+    fn test_literal_matcher_anchor_then_escaped_caret() {
+        let matcher = LiteralMatcher::new(r"^\^");
+        assert!(matcher.is_match(b"^a"));
+        assert!(!matcher.is_match(b"a^"));
+        assert!(!matcher.is_match(b"a"));
+    }
+
+    #[test]
+    fn test_literal_matcher_escaped_backslash_then_anchor() {
+        let matcher = LiteralMatcher::new(r"a\\$");
+        assert!(matcher.is_match(br"xa\"));
+        assert!(!matcher.is_match(br"a\x"));
+        assert!(!matcher.is_match(b"xa"));
+        assert_eq!(matcher.find(br"xa\"), Some((1, 3, &br"a\"[..])));
+    }
+
+    #[test]
     fn test_literal_matcher_utf8_match() {
         let matcher = LiteralMatcher::new("✓"); // U+2713 CHECK MARK (3 bytes)
         let haystack = "contains ✓ unicode".as_bytes();
