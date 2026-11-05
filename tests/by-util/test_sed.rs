@@ -775,6 +775,17 @@ fn test_unknown_escape_is_the_bare_character() {
         .stdout_is("aqc\n");
 }
 
+#[test]
+fn test_control_backslash_escape() {
+    // \c\\ is a single control-backslash (0x1c) in the regex, the
+    // replacement and y strings.
+    new_ucmd!()
+        .args(&["-e", r"s/b/\c\\/", "-e", r"s/\c\\/x/", "-e", r"y/a/\c\\/"])
+        .pipe_in("ab\x1c\n")
+        .succeeds()
+        .stdout_is("\x1cx\x1c\n");
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
