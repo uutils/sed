@@ -517,6 +517,15 @@ fn test_bre_star_without_preceding_atom() {
             .succeeds()
             .stdout_is(expected);
     }
+    // Under --posix `\|` is a literal `|`, so the `*` repeats it.
+    let mut file = NamedTempFile::new().expect("create temporary sed script");
+    writeln!(file, "s/b\\|*/x/g").expect("write temporary sed script");
+    let path = file.path().to_str().expect("temporary path is UTF-8");
+    new_ucmd!()
+        .args(&["--posix", "-f", path])
+        .pipe_in("*a*b\nab||*\n")
+        .succeeds()
+        .stdout_is("*a*x\nax*\n");
 }
 
 #[test]

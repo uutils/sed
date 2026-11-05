@@ -405,8 +405,7 @@ pub fn parse_regex_for_mode(
                 quantifier_without_atom = true;
             }
             can_quantify = !matches!(c, '(' | '|' | '^' | '$');
-        }
-        if !is_ere && c != delimiter {
+        } else if c != delimiter {
             if c == '*' && !can_quantify {
                 result.extend_from_slice(b"\\*");
                 can_quantify = true;
@@ -417,14 +416,16 @@ pub fn parse_regex_for_mode(
             let at_start = bre_at_start;
             bre_at_start = false;
             can_quantify = !(c == '^' && at_start);
-            let next = line
-                .get_line()
-                .get(line.get_pos() + 1)
-                .map(|&b| char::from(b));
-            let opens = matches!(next, Some('(')) || (matches!(next, Some('|')) && !posix);
-            if c == '\\' && opens && next != Some(delimiter) {
-                can_quantify = false;
-                bre_at_start = true;
+            if c == '\\' {
+                let next = line
+                    .get_line()
+                    .get(line.get_pos() + 1)
+                    .map(|&b| char::from(b));
+                let opens = matches!(next, Some('(')) || (matches!(next, Some('|')) && !posix);
+                if opens && next != Some(delimiter) {
+                    can_quantify = false;
+                    bre_at_start = true;
+                }
             }
         }
         match c {
