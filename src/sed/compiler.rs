@@ -488,14 +488,23 @@ fn compile_address(
             // Skip over delimiter
             line.advance();
 
-            line.eat_spaces();
-            if !line.eol() && line.current() == 'I' {
-                icase = true;
+            // Read the I and M modifiers, in any order and number.
+            let mut multiline = false;
+            loop {
+                line.eat_spaces();
+                if line.eol() {
+                    break;
+                }
+                match line.current() {
+                    'I' => icase = true,
+                    'M' => multiline = true,
+                    _ => break,
+                }
                 line.advance();
             }
 
             Ok(Address::Re(
-                compile_regex(lines, line, &re, context, icase, false)?.map(Rc::new),
+                compile_regex(lines, line, &re, context, icase, multiline)?.map(Rc::new),
             ))
         }
         '$' => {
@@ -2100,6 +2109,22 @@ mod tests {
             }
             _ => panic!("expected Address::Re(Some(_))"),
         }
+    }
+
+    #[test]
+    fn test_compile_addr_regex_with_multiline_modifier() {
+        let (lines, mut chars) = make_providers("/^b$/ I M");
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
+
+        match addr {
+            Address::Re(Some(re)) => {
+                // Case-insensitive, with ^ and $ matching at embedded newlines
+                assert!(re.is_match(&mut IOChunk::new_from_str("a\nB")).unwrap());
+                assert!(!re.is_match(&mut IOChunk::new_from_str("a\nBc")).unwrap());
+            }
+            _ => panic!("expected Address::Re(Some(_))"),
+        }
+        assert!(chars.eol());
     }
 
     // compile_address_range
