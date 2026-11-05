@@ -390,9 +390,13 @@ pub fn parse_regex_for_mode(
     // In an ERE, a quantifier must follow something it can repeat. GNU sed
     // rejects one at the start of the regex or right after `(`, `|`, `^` or
     // `$`, and reports it once the whole regex has been read.
+    // In a BRE, a `*` with nothing to repeat stands for itself, so it is
+    // emitted as `\*`. That is at the start of the regex, right after `\(`
+    // or `\|`, or right after a `^` anchor in one of those places.
     let is_ere = matches!(regex_mode, RegexMode::Extended);
     let mut can_quantify = false;
     let mut quantifier_without_atom = false;
+    let mut bre_at_start = true;
     while !line.eol() {
         let c = line.current();
         if is_ere && c != delimiter {
@@ -401,6 +405,28 @@ pub fn parse_regex_for_mode(
                 quantifier_without_atom = true;
             }
             can_quantify = !matches!(c, '(' | '|' | '^' | '$');
+        } else if c != delimiter {
+            if c == '*' && !can_quantify {
+                result.extend_from_slice(b"\\*");
+                can_quantify = true;
+                bre_at_start = false;
+                line.advance();
+                continue;
+            }
+            let at_start = bre_at_start;
+            bre_at_start = false;
+            can_quantify = !(c == '^' && at_start);
+            if c == '\\' {
+                let next = line
+                    .get_line()
+                    .get(line.get_pos() + 1)
+                    .map(|&b| char::from(b));
+                let opens = matches!(next, Some('(')) || (matches!(next, Some('|')) && !posix);
+                if opens && next != Some(delimiter) {
+                    can_quantify = false;
+                    bre_at_start = true;
+                }
+            }
         }
         match c {
             '[' if delimiter != '[' => {

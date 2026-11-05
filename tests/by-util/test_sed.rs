@@ -497,6 +497,38 @@ fn test_ere_quantifier_after_atom() {
 }
 
 #[test]
+fn test_bre_star_without_preceding_atom() {
+    for (script, expected) in [
+        ("s/*/x/", "xa*b\n"),
+        ("s/^*/x/", "xa*b\n"),
+        ("s/^**/x/g", "xa*b\n"),
+        ("s/\\(*\\)/x/g", "xaxb\n"),
+        ("s/b\\|*/x/g", "xaxx\n"),
+        ("/^*a/s/b/x/", "*a*x\n"),
+        ("s|\\|*|x|g", "x*xax*xbx\n"),
+    ] {
+        // Read the script from a file, see test_ere_quantifier_after_atom.
+        let mut file = NamedTempFile::new().expect("create temporary sed script");
+        writeln!(file, "{script}").expect("write temporary sed script");
+        let path = file.path().to_str().expect("temporary path is UTF-8");
+        new_ucmd!()
+            .args(&["-f", path])
+            .pipe_in("*a*b\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+    // Under --posix `\|` is a literal `|`, so the `*` repeats it.
+    let mut file = NamedTempFile::new().expect("create temporary sed script");
+    writeln!(file, "s/b\\|*/x/g").expect("write temporary sed script");
+    let path = file.path().to_str().expect("temporary path is UTF-8");
+    new_ucmd!()
+        .args(&["--posix", "-f", path])
+        .pipe_in("*a*b\nab||*\n")
+        .succeeds()
+        .stdout_is("*a*x\nax*\n");
+}
+
+#[test]
 fn test_bre_quantifier_unmatched_brace() {
     new_ucmd!()
         .args(&["-e", "/l\\{1,2}/p"])
