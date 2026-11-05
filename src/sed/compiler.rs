@@ -357,7 +357,7 @@ fn compile_address_range(
     }
 
     line.eat_spaces();
-    if n_addr == 1 && !line.eol() && matches!(line.current(), ',' | '~') {
+    while n_addr == 1 && !line.eol() && matches!(line.current(), ',' | '~') {
         let is_step_match = line.current() == '~'; // E.g. 0~2: Pick even-numbered lines
         line.advance();
         line.eat_spaces();
@@ -400,6 +400,19 @@ fn compile_address_range(
         } else {
             0 // dummy, not used
         };
+
+        // first~step,addr2: the lines first~step selects start the range.
+        line.eat_spaces();
+        if is_step_match
+            && !line.eol()
+            && line.current() == ','
+            && let Some(Address::Line(first)) = cmd.addr1
+            && (first, step_n) != (0, 0)
+        {
+            cmd.addr1 = Some(Address::Step(first, step_n));
+            is_line0 = false;
+            continue;
+        }
 
         // Address 0 needs a regex end or a positive ~step (0~0 selects no line).
         if is_line0 && !matches!(addr2, Address::Re(_)) && !(is_step_match && step_n > 0) {
