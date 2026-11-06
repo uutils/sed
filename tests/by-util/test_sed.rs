@@ -828,6 +828,18 @@ fn test_control_backslash_escape() {
         .stdout_is("\x1cx\x1c\n");
 }
 
+#[test]
+fn test_control_backslash_recursive_escape() {
+    // GNU only allows \c\ when it is followed by a second backslash
+    for script in [r"s/b/\c\d/", r"s/\c\d/x/", r"y/a/\c\d/", r"a foo\c\d"] {
+        new_ucmd!()
+            .args(&[script])
+            .fails()
+            .code_is(1)
+            .stderr_contains(r"recursive escaping after \c not allowed");
+    }
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
