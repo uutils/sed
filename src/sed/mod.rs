@@ -382,6 +382,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
         last_address: false,
         last_line: false,
         last_file: false,
+        input_files: None,
         stop_processing: false,
         quit_silently: false,
         saved_regex: None,
