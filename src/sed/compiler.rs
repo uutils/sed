@@ -789,7 +789,7 @@ pub fn compile_replacement(
 
                         // other escape sequences
                         _ => {
-                            if let Some(decoded) = parse_char_escape(line) {
+                            if let Some(decoded) = parse_char_escape(lines, line)? {
                                 push_script_char(&mut literal, decoded, character_mode);
                             } else {
                                 literal.push(line.current_byte());
@@ -1357,7 +1357,7 @@ fn compile_text_command_gnu(
                 continue 'text_content;
             }
 
-            if let Some(decoded) = parse_char_escape(line) {
+            if let Some(decoded) = parse_char_escape(lines, line)? {
                 push_script_char(&mut text, decoded, context.character_mode);
             } else {
                 // Invalid escapes result in the escaped character.
@@ -1565,7 +1565,7 @@ fn compile_execute_command(
                 continue 'text_content;
             }
 
-            if let Some(decoded) = parse_char_escape(line) {
+            if let Some(decoded) = parse_char_escape(lines, line)? {
                 push_script_char(&mut text, decoded, context.character_mode);
             } else {
                 // Invalid escapes result in the escaped character.

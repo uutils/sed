@@ -125,9 +125,13 @@ fn parsed_bytes_to_utf8(
 /// transliterarion) and return the corresponding char.
 /// At entry line.current() must have advanced after the `\\`.
 /// Advance line to the first character not part of the escape.
-/// Return `None` if an invalid escape has been specified.
-pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
-    match line.current() {
+/// Return `None` if an invalid escape has been specified, and an error
+/// for `\c\` followed by anything other than a second backslash.
+pub fn parse_char_escape(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+) -> UResult<Option<char>> {
+    let decoded = match line.current() {
         'a' => {
             line.advance();
             Some('\x07')
@@ -154,14 +158,24 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         }
 
         'c' => {
-            // Control character escape: \cC, with \c\\ for control-backslash
+            // Control character escape: \cC
             line.advance(); // move past 'c'
+            if !line.eol() && line.current() == '\\' {
+                // Control-backslash has to be written as \c\\
+                line.advance();
+                if line.eol() || line.current() != '\\' {
+                    return compilation_error(
+                        lines,
+                        line,
+                        "recursive escaping after \\c not allowed",
+                    );
+                }
+                line.advance();
+                return Ok(Some('\x1c'));
+            }
             match create_control_char(line.current()) {
                 Some(decoded) => {
                     line.advance();
-                    if decoded == '\x1c' && !line.eol() && line.current() == '\\' {
-                        line.advance();
-                    }
                     Some(decoded)
                 }
                 None => Some('c'),
@@ -213,7 +227,8 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
             }
         }
         _ => None,
-    }
+    };
+    Ok(decoded)
 }
 
 /// Parse a POSIX RE character class returning it as bytes.
@@ -317,7 +332,11 @@ fn parse_character_class(
             if line.eol() {
                 break;
             }
-            let decoded = if posix { None } else { parse_char_escape(line) };
+            let decoded = if posix {
+                None
+            } else {
+                parse_char_escape(lines, line)?
+            };
             if let Some(decoded) = decoded {
                 push_script_char(&mut result, decoded, character_mode);
             } else {
@@ -441,7 +460,7 @@ pub fn parse_regex_for_mode(
                     line.advance();
                     continue;
                 }
-                if let Some(decoded) = parse_char_escape(line) {
+                if let Some(decoded) = parse_char_escape(lines, line)? {
                     push_script_char(&mut result, decoded, character_mode);
                 } else {
                     // Pass through \<any> to RE engine for further treatment
@@ -661,7 +680,7 @@ fn parse_transliteration_bytes(
                     line.advance();
                     continue;
                 }
-                if let Some(decoded) = parse_char_escape(line) {
+                if let Some(decoded) = parse_char_escape(lines, line)? {
                     push_script_char(&mut result, decoded, character_mode);
                 } else {
                     result.push(line.current_byte());
@@ -858,8 +877,8 @@ mod tests {
 
     // parse_char_escape
     fn escape_result_with_current(input: &str) -> (Option<char>, Option<char>) {
-        let mut provider = ScriptCharProvider::new(input);
-        let result = parse_char_escape(&mut provider);
+        let (lines, mut provider) = make_providers(input);
+        let result = parse_char_escape(&lines, &mut provider).unwrap();
         let current = if provider.eol() {
             None
         } else {
@@ -896,6 +915,26 @@ mod tests {
     #[test]
     fn test_control_escape_valid() {
         assert_eq!(escape_result_with_current("cZ"), (Some('\x1A'), None));
+    }
+
+    #[test]
+    fn test_control_backslash_escape() {
+        assert_eq!(
+            escape_result_with_current(r"c\\x"),
+            (Some('\x1c'), Some('x'))
+        );
+    }
+
+    #[test]
+    fn test_control_recursive_escape() {
+        for input in [r"c\d", r"c\"] {
+            let (lines, mut provider) = make_providers(input);
+            let err = parse_char_escape(&lines, &mut provider).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(r"recursive escaping after \c not allowed")
+            );
+        }
     }
 
     #[test]
