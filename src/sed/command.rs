@@ -12,6 +12,7 @@ use crate::sed::error_handling::{ScriptLocation, runtime_error};
 use crate::sed::fast_regex::{Captures, Match, Regex};
 use crate::sed::named_reader::NamedReader;
 use crate::sed::named_writer::NamedWriter;
+use crate::sed::processor::InputFiles;
 use crate::sed::script_char_provider::ScriptCharProvider;
 use crate::sed::script_line_provider::ScriptLineProvider;
 
@@ -52,6 +53,8 @@ pub struct ProcessingContext {
     pub last_line: bool,
     /// True if the file is the last file of the ones specified
     pub last_file: bool,
+    /// The input files still to read, so `$` can check if any input follows
+    pub input_files: Option<Rc<RefCell<InputFiles>>>,
     /// Stop processing further input.
     pub stop_processing: bool,
     /// Stop without writing a missing final newline (`Q`).
