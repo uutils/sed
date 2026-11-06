@@ -71,13 +71,10 @@ fn parse_numeric_escape(
     }
 
     let char_string: String = valid_chars.into_iter().collect();
-    let mut value = u32::from_str_radix(&char_string, radix).ok();
-    // \d, \o and \x give a single byte. Like GNU sed, keep only its low 8 bits
-    // when the number is bigger, so \d513 and \o401 are both \x01.
-    if ndigits <= 3 {
-        value = value.map(|v| v & 0xFF);
-    }
-    match value.and_then(char::from_u32) {
+    match u32::from_str_radix(&char_string, radix)
+        .ok()
+        .and_then(char::from_u32)
+    {
         Some(decoded) => Some(decoded),
         None => panic!("Unable to decode numeric character escape."),
     }
@@ -171,8 +168,9 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         'd' => {
             // Decimal escape: \dnnn
             line.advance(); // move past 'd'
+            // Values above 255 keep only their low byte, so \d513 is \x01.
             match parse_numeric_escape(line, |c| c.is_ascii_digit(), 3, 10) {
-                Some(decoded) => Some(decoded),
+                Some(decoded) => char::from_u32(u32::from(decoded) & 0xFF),
                 None => Some('d'),
             }
         }
@@ -180,8 +178,9 @@ pub fn parse_char_escape(line: &mut ScriptCharProvider) -> Option<char> {
         'o' => {
             // Octal escape: \onnn
             line.advance(); // move past 'o'
+            // Values above 255 keep only their low byte, so \o401 is \x01.
             match parse_numeric_escape(line, is_ascii_octal_digit, 3, 8) {
-                Some(decoded) => Some(decoded),
+                Some(decoded) => char::from_u32(u32::from(decoded) & 0xFF),
                 None => Some('o'),
             }
         }
