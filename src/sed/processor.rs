@@ -23,11 +23,13 @@ use memchr::memchr;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, set_exit_code};
+use uucore::show_error;
 
 /// Return the specified command variant or panic.
 // Example: let path = extract_variant!(command, Path);
@@ -1000,12 +1002,27 @@ pub fn process_all_files(
     context.unbuffered = context.unbuffered || io::stdout().is_terminal();
 
     let mut in_place = InPlace::new(context.clone());
-    let last_file_index = files.len() - 1;
+    // A file that can't be opened is skipped, so the input ends in the
+    // last file that can be.
+    let last_file_index = files
+        .iter()
+        .rposition(|path| path.as_os_str() == "-" || File::open(path).is_ok())
+        .unwrap_or(files.len() - 1);
+    let mut unreadable_input = false;
 
     for (index, path) in files.into_iter().enumerate() {
         context.last_file = index == last_file_index;
-        let mut reader = LineReader::open(&path)
-            .map_err_context(|| format!("error opening input file {}", path.quote()))?;
+        let mut reader = match LineReader::open(&path) {
+            Ok(reader) => reader,
+            Err(e) => {
+                // Like GNU sed, report it and go on with the other files.
+                let err =
+                    e.map_err_context(|| format!("error opening input file {}", path.quote()));
+                show_error!("{err}");
+                unreadable_input = true;
+                continue;
+            }
+        };
         let output = in_place.begin(&path)?;
 
         if context.separate || index == 0 {
@@ -1040,6 +1057,11 @@ pub fn process_all_files(
 
     // Flush all output files
     named_writer::flush_all()?;
+
+    // GNU sed exits with 2 when an input file couldn't be read, even after q.
+    if unreadable_input {
+        set_exit_code(2);
+    }
 
     Ok(())
 }
