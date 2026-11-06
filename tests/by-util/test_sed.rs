@@ -4393,3 +4393,27 @@ fn test_lone_lead_byte_delimiter() {
         .succeeds()
         .stdout_only("y\n");
 }
+
+#[test]
+fn test_missing_input_file_is_skipped() {
+    new_ucmd!()
+        .args(&["p", "input/missing", "input/two-lines.txt"])
+        .fails()
+        .code_is(2)
+        .stdout_is("line one\nline one\nline two\nline two\n")
+        .stderr_contains("input/missing");
+
+    // The last line is in the last file that can be read.
+    new_ucmd!()
+        .args(&["-n", "$=", "input/two-lines.txt", "input/missing"])
+        .fails()
+        .code_is(2)
+        .stdout_is("2\n");
+
+    // The status stays 2 even when q gives one.
+    new_ucmd!()
+        .args(&["1q5", "input/missing", "input/two-lines.txt"])
+        .fails()
+        .code_is(2)
+        .stdout_is("line one\n");
+}
