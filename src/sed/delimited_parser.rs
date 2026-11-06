@@ -185,8 +185,9 @@ pub fn parse_char_escape(
         'd' => {
             // Decimal escape: \dnnn
             line.advance(); // move past 'd'
+            // Values above 255 keep only their low byte, so \d513 is \x01.
             match parse_numeric_escape(line, |c| c.is_ascii_digit(), 3, 10) {
-                Some(decoded) => Some(decoded),
+                Some(decoded) => char::from_u32(u32::from(decoded) & 0xFF),
                 None => Some('d'),
             }
         }
@@ -194,8 +195,9 @@ pub fn parse_char_escape(
         'o' => {
             // Octal escape: \onnn
             line.advance(); // move past 'o'
+            // Values above 255 keep only their low byte, so \o401 is \x01.
             match parse_numeric_escape(line, is_ascii_octal_digit, 3, 8) {
-                Some(decoded) => Some(decoded),
+                Some(decoded) => char::from_u32(u32::from(decoded) & 0xFF),
                 None => Some('o'),
             }
         }
@@ -945,6 +947,25 @@ mod tests {
     #[test]
     fn test_decimal_escape_valid() {
         assert_eq!(escape_result_with_current("d065r"), (Some('A'), Some('r')));
+    }
+
+    #[test]
+    fn test_decimal_escape_wraps_to_a_byte() {
+        assert_eq!(escape_result_with_current("d256r"), (Some('\0'), Some('r')));
+        assert_eq!(
+            escape_result_with_current("d513r"),
+            (Some('\x01'), Some('r'))
+        );
+        assert_eq!(escape_result_with_current("d999"), (Some('\u{e7}'), None));
+    }
+
+    #[test]
+    fn test_octal_escape_wraps_to_a_byte() {
+        assert_eq!(
+            escape_result_with_current("o401x"),
+            (Some('\x01'), Some('x'))
+        );
+        assert_eq!(escape_result_with_current("o777"), (Some('\u{ff}'), None));
     }
 
     #[test]
