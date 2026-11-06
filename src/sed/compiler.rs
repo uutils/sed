@@ -692,8 +692,8 @@ fn bre_to_ere(pattern: &[u8]) -> Vec<u8> {
 /// In POSIX regexes `a+?` repeats `a+` zero or one times and `a*+` repeats
 /// `a*` one or more times. The regex engines read a `?` or `+` there as a
 /// lazy or possessive modifier, so put the repeated part in a group first,
-/// as in `(?:a+)?`.
-fn group_stacked_quantifiers(pattern: &[u8]) -> Vec<u8> {
+/// as in `(?:a+)?`. In byte mode every byte is a character of its own.
+fn group_stacked_quantifiers(pattern: &[u8], character_mode: CharacterMode) -> Vec<u8> {
     let mut result = Vec::with_capacity(pattern.len());
     let mut pos = 0;
     // Where the last thing that can be repeated starts in `result`.
@@ -761,7 +761,7 @@ fn group_stacked_quantifiers(pattern: &[u8]) -> Vec<u8> {
                 pos += 1;
             }
             // The rest of a multi-byte UTF-8 character.
-            0x80..=0xbf => {
+            0x80..=0xbf if character_mode == CharacterMode::Utf8 => {
                 result.push(c);
                 pos += 1;
             }
@@ -845,7 +845,7 @@ fn compile_regex(
     } else {
         bre_to_ere(pattern)
     };
-    let pattern = group_stacked_quantifiers(&pattern);
+    let pattern = group_stacked_quantifiers(&pattern, context.character_mode);
 
     // Add any required modifiers.
     let mut modifiers = Vec::new();
@@ -3044,7 +3044,11 @@ mod tests {
 
     // group_stacked_quantifiers
     fn group_stacked_quantifiers_string(pattern: &str) -> String {
-        String::from_utf8(group_stacked_quantifiers(pattern.as_bytes())).unwrap()
+        String::from_utf8(group_stacked_quantifiers(
+            pattern.as_bytes(),
+            CharacterMode::Utf8,
+        ))
+        .unwrap()
     }
 
     #[test]
@@ -3056,6 +3060,23 @@ mod tests {
         assert_eq!(group_stacked_quantifiers_string("x[ab]+?"), "x(?:[ab]+)?");
         assert_eq!(group_stacked_quantifiers_string(r"x\.+?"), r"x(?:\.+)?");
         assert_eq!(group_stacked_quantifiers_string("xé+?"), "x(?:é+)?");
+    }
+
+    #[test]
+    fn test_group_stacked_quantifiers_byte_mode() {
+        // In byte mode 0xa9 is a character of its own, not part of the a.
+        assert_eq!(
+            group_stacked_quantifiers(b"a\xa9+?", CharacterMode::Byte),
+            b"a(?:\xa9+)?"
+        );
+        assert_eq!(
+            group_stacked_quantifiers(b"\xc3\xa9+?", CharacterMode::Byte),
+            b"\xc3(?:\xa9+)?"
+        );
+        assert_eq!(
+            group_stacked_quantifiers(b"\xc3\xa9+?", CharacterMode::Utf8),
+            b"(?:\xc3\xa9+)?"
+        );
     }
 
     #[test]
