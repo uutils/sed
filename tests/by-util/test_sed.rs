@@ -505,6 +505,51 @@ fn test_ere_quantifier_after_atom() {
 }
 
 #[test]
+fn test_quantifier_after_quantifier_stays_greedy() {
+    for (args, input, expected) in [
+        (&["-E", "s/b+?/X/"][..], "abbc\n", "Xabbc\n"),
+        (&["-E", "s/b+?/X/g"], "abbc\n", "XaXcX\n"),
+        (&["-E", "s/ab??/X/"], "abbc\n", "Xbc\n"),
+        (&["-E", "s/ab+?/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/ab+???/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/a(b)+?/X\\1/"], "abbc\n", "Xbc\n"),
+        (&["-E", "s/a[b]+?/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/b+?/X/"], "bbc\n", "Xc\n"),
+        (&["-E", "s/b+?/X/I"], "BBc\n", "Xc\n"),
+        (&["-E", "s/b+?/X/gM"], "bbc\n", "XcX\n"),
+        (&["-E", "s/ab*+b/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/(a)b*+b\\1/X/"], "abba\n", "X\n"),
+        (&["s/ab\\+\\?/X/"], "abbc\n", "Xc\n"),
+        (&["s/a\\(b\\)*\\?b\\1/X/"], "abbb\n", "X\n"),
+        (&["-n", "/ab\\+\\?c/p"], "abbc\n", "abbc\n"),
+        // A literal ? or + is still one.
+        (&["-E", "s/a\\??/X/"], "a?bc\n", "Xbc\n"),
+        (&["-E", "s/a[?+]+/X/"], "a?+c\n", "Xc\n"),
+        (&["s/b?+/X/"], "ab?+c\n", "aXc\n"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_quantifier_after_quantifier_byte_mode() {
+    // With LC_ALL=C the \xa9 byte is a character of its own, so a\xa9+?
+    // only makes the \xa9 part optional and still matches a lone a.
+    for (input, expected) in [(&b"ab\n"[..], &b"Xb\n"[..]), (b"a\xa9\xa9b\n", b"Xb\n")] {
+        new_ucmd!()
+            .env("LC_ALL", "C")
+            .args(&["-E", "s/a\\xa9+?/X/"])
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is_bytes(expected);
+    }
+}
+
+#[test]
 fn test_bre_anchors_in_subexpression() {
     for (script, expected) in [
         ("s/\\(^a\\)/x/g", "xb\n"),

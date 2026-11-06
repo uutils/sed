@@ -688,6 +688,141 @@ fn bre_to_ere(pattern: &[u8]) -> Vec<u8> {
     result
 }
 
+/// Keep a quantifier that follows another quantifier greedy.
+/// In POSIX regexes `a+?` repeats `a+` zero or one times and `a*+` repeats
+/// `a*` one or more times. The regex engines read a `?` or `+` there as a
+/// lazy or possessive modifier, so put the repeated part in a group first,
+/// as in `(?:a+)?`. In byte mode every byte is a character of its own.
+fn group_stacked_quantifiers(pattern: &[u8], character_mode: CharacterMode) -> Vec<u8> {
+    let mut result = Vec::with_capacity(pattern.len());
+    let mut pos = 0;
+    // Where the last thing that can be repeated starts in `result`.
+    let mut atom_start: Option<usize> = None;
+    let mut group_starts = Vec::new();
+    let mut after_quantifier = false;
+    while pos < pattern.len() {
+        let c = pattern[pos];
+        let interval_len = if c == b'{' {
+            interval_length(&pattern[pos..])
+        } else {
+            None
+        };
+        let quantifier_len = match c {
+            b'*' | b'+' | b'?' => Some(1),
+            b'{' => interval_len,
+            _ => None,
+        };
+        if let (Some(len), Some(start)) = (quantifier_len, atom_start) {
+            if after_quantifier {
+                result.splice(start..start, b"(?:".iter().copied());
+                result.push(b')');
+            }
+            result.extend_from_slice(&pattern[pos..pos + len]);
+            pos += len;
+            after_quantifier = true;
+            continue;
+        }
+        after_quantifier = false;
+        match c {
+            b'\\' => {
+                atom_start = Some(result.len());
+                result.push(c);
+                pos += 1;
+                if let Some(&next) = pattern.get(pos) {
+                    result.push(next);
+                    pos += 1;
+                }
+            }
+            b'[' => {
+                atom_start = Some(result.len());
+                let len = bracket_length(&pattern[pos..]);
+                result.extend_from_slice(&pattern[pos..pos + len]);
+                pos += len;
+            }
+            b'(' => {
+                group_starts.push(result.len());
+                atom_start = None;
+                result.push(c);
+                pos += 1;
+                // Copy the `?:` of a non-capturing group as it is.
+                if pattern[pos..].starts_with(b"?:") {
+                    result.extend_from_slice(b"?:");
+                    pos += 2;
+                }
+            }
+            b')' => {
+                atom_start = group_starts.pop();
+                result.push(c);
+                pos += 1;
+            }
+            b'|' | b'^' | b'$' => {
+                atom_start = None;
+                result.push(c);
+                pos += 1;
+            }
+            // The rest of a multi-byte UTF-8 character.
+            0x80..=0xbf if character_mode == CharacterMode::Utf8 => {
+                result.push(c);
+                pos += 1;
+            }
+            _ => {
+                atom_start = Some(result.len());
+                result.push(c);
+                pos += 1;
+            }
+        }
+    }
+    result
+}
+
+/// Return the length of the `{m,n}` interval at the start of `pattern`,
+/// or None if it isn't one.
+fn interval_length(pattern: &[u8]) -> Option<usize> {
+    let mut len = 1;
+    let mut seen_comma = false;
+    while let Some(&b) = pattern.get(len) {
+        match b {
+            b'0'..=b'9' => {}
+            b',' if !seen_comma => seen_comma = true,
+            b'}' if len > 1 => return Some(len + 1),
+            _ => return None,
+        }
+        len += 1;
+    }
+    None
+}
+
+/// Return the length of the bracket expression at the start of `pattern`.
+/// A `]` right after the opening `[` or `[^` is part of the set, and so is
+/// anything inside `[:`, `[.` or `[=`.
+fn bracket_length(pattern: &[u8]) -> usize {
+    let mut pos = 1;
+    if pattern.get(pos) == Some(&b'^') {
+        pos += 1;
+    }
+    if pattern.get(pos) == Some(&b']') {
+        pos += 1;
+    }
+    while pos < pattern.len() {
+        let b = pattern[pos];
+        pos += 1;
+        if b == b'[' && matches!(pattern.get(pos), Some(b':' | b'.' | b'=')) {
+            let kind = pattern[pos];
+            pos += 1;
+            while pos < pattern.len() {
+                if pattern[pos] == kind && pattern.get(pos + 1) == Some(&b']') {
+                    pos += 2;
+                    break;
+                }
+                pos += 1;
+            }
+        } else if b == b']' {
+            break;
+        }
+    }
+    pos
+}
+
 /// Compile the provided regular expression string into a corresponding engine.
 /// An empty pattern results in None, which means that the last RE employed
 /// at runtime will be used.
@@ -710,6 +845,7 @@ fn compile_regex(
     } else {
         bre_to_ere(pattern)
     };
+    let pattern = group_stacked_quantifiers(&pattern, context.character_mode);
 
     // Add any required modifiers.
     let mut modifiers = Vec::new();
@@ -2904,6 +3040,59 @@ mod tests {
             }
             _ => panic!("Expected CommandData::Transliteration"),
         }
+    }
+
+    // group_stacked_quantifiers
+    fn group_stacked_quantifiers_string(pattern: &str) -> String {
+        String::from_utf8(group_stacked_quantifiers(
+            pattern.as_bytes(),
+            CharacterMode::Utf8,
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn test_group_stacked_quantifiers() {
+        assert_eq!(group_stacked_quantifiers_string("ab+?"), "a(?:b+)?");
+        assert_eq!(group_stacked_quantifiers_string("ab*+c"), "a(?:b*)+c");
+        assert_eq!(group_stacked_quantifiers_string("a{2}??"), "(?:(?:a{2})?)?");
+        assert_eq!(group_stacked_quantifiers_string("(ab)*?"), "(?:(ab)*)?");
+        assert_eq!(group_stacked_quantifiers_string("x[ab]+?"), "x(?:[ab]+)?");
+        assert_eq!(group_stacked_quantifiers_string(r"x\.+?"), r"x(?:\.+)?");
+        assert_eq!(group_stacked_quantifiers_string("xé+?"), "x(?:é+)?");
+    }
+
+    #[test]
+    fn test_group_stacked_quantifiers_byte_mode() {
+        // In byte mode 0xa9 is a character of its own, not part of the a.
+        assert_eq!(
+            group_stacked_quantifiers(b"a\xa9+?", CharacterMode::Byte),
+            b"a(?:\xa9+)?"
+        );
+        assert_eq!(
+            group_stacked_quantifiers(b"\xc3\xa9+?", CharacterMode::Byte),
+            b"\xc3(?:\xa9+)?"
+        );
+        assert_eq!(
+            group_stacked_quantifiers(b"\xc3\xa9+?", CharacterMode::Utf8),
+            b"(?:\xc3\xa9+)?"
+        );
+    }
+
+    #[test]
+    fn test_group_stacked_quantifiers_leaves_the_rest() {
+        assert_eq!(group_stacked_quantifiers_string("a+b?c{1,2}"), "a+b?c{1,2}");
+        assert_eq!(group_stacked_quantifiers_string(r"a\*?\++"), r"a\*?\++");
+        assert_eq!(group_stacked_quantifiers_string("[]+?]"), "[]+?]");
+        assert_eq!(
+            group_stacked_quantifiers_string("[[:alpha:]+?]"),
+            "[[:alpha:]+?]"
+        );
+        assert_eq!(
+            group_stacked_quantifiers_string(r"(a)(?:\1)?"),
+            r"(a)(?:\1)?"
+        );
+        assert_eq!(group_stacked_quantifiers_string("a{b}?"), "a{b}?");
     }
 
     // bre_to_ere
