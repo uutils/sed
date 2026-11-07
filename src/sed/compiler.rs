@@ -752,6 +752,7 @@ pub fn compile_replacement(
 ) -> UResult<ReplacementTemplate> {
     let mut parts = Vec::new();
     let mut literal = Vec::new();
+    let mut max_group: Option<(u32, ScriptLocation)> = None;
 
     let delimiter = line.current();
     line.advance();
@@ -787,6 +788,12 @@ pub fn compile_replacement(
                             if ref_num == 0 {
                                 parts.push(ReplacementPart::WholeMatch);
                             } else {
+                                if max_group.as_ref().is_none_or(|(n, _)| ref_num > *n) {
+                                    // Point at the backslash, one byte back.
+                                    let mut location = ScriptLocation::at_position(lines, line);
+                                    location.column_number -= 1;
+                                    max_group = Some((ref_num, location));
+                                }
                                 parts.push(ReplacementPart::Group(ref_num));
                             }
                             line.advance();
@@ -837,7 +844,9 @@ pub fn compile_replacement(
                     if !literal.is_empty() {
                         parts.push(ReplacementPart::Literal(literal));
                     }
-                    return Ok(ReplacementTemplate::new(parts));
+                    let mut template = ReplacementTemplate::new(parts);
+                    template.max_group_location = max_group.map(|(_, location)| location);
+                    return Ok(template);
                 }
 
                 _ => {
@@ -915,12 +924,14 @@ fn compile_subst_command(
     .map(Rc::new);
 
     // Catch invalid group references at compile time, if possible.
+    // `compile_replacement` records a location for every `\N` it reads,
+    // so the location is only absent when there is no group reference.
     if let Some(regex) = &subst.regex
+        && let Some(location) = &subst.replacement.max_group_location
         && subst.replacement.max_group_number > regex.captures_len() - 1
     {
-        return compilation_error(
-            lines,
-            line,
+        return semantic_error(
+            location,
             format!(
                 "invalid reference \\{} on `s' command's RHS",
                 subst.replacement.max_group_number
