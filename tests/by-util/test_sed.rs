@@ -840,6 +840,22 @@ fn test_control_backslash_recursive_escape() {
     }
 }
 
+#[test]
+fn subst_number_and_g_replace_from_that_match_on() {
+    for flags in ["2g", "g2"] {
+        new_ucmd!()
+            .arg(format!("s/a/b/{flags}"))
+            .pipe_in("aaaa\n")
+            .succeeds()
+            .stdout_is("abbb\n");
+    }
+    new_ucmd!()
+        .arg(r"s/\(a\)/<\1>/3g")
+        .pipe_in("aaaa\n")
+        .succeeds()
+        .stdout_is("aa<a><a>\n");
+}
+
 // Check appropriate selection and behavior of fast_Regex matcher
 // Literal matcher
 check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
@@ -1627,6 +1643,23 @@ fn diagnostics_count_columns_in_bytes_like_the_message() {
             "   │\n",
             " 1 │ s/é/e/z\n",
             "   │       ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_underline_the_second_number_flag() {
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["s/a/b/2g3"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:9: error: multiple number options to `s' command\n",
+            "   ╭─[ <script argument 1>:1:9 ]\n",
+            "   │\n",
+            " 1 │ s/a/b/2g3\n",
+            "   │         ─\n",
             "───╯\n",
         ));
 }
