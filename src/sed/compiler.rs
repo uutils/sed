@@ -924,17 +924,19 @@ fn compile_subst_command(
     .map(Rc::new);
 
     // Catch invalid group references at compile time, if possible.
+    // `compile_replacement` records a location for every `\N` it reads,
+    // so the location is only absent when there is no group reference.
     if let Some(regex) = &subst.regex
+        && let Some(location) = &subst.replacement.max_group_location
         && subst.replacement.max_group_number > regex.captures_len() - 1
     {
-        let msg = format!(
-            "invalid reference \\{} on `s' command's RHS",
-            subst.replacement.max_group_number
+        return semantic_error(
+            location,
+            format!(
+                "invalid reference \\{} on `s' command's RHS",
+                subst.replacement.max_group_number
+            ),
         );
-        return match &subst.replacement.max_group_location {
-            Some(location) => semantic_error(location, msg),
-            None => compilation_error(lines, line, msg),
-        };
     }
     cmd.data = CommandData::Substitution(subst);
 
