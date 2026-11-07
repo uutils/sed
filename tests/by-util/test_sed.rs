@@ -1670,6 +1670,25 @@ fn diagnostics_underline_the_invalid_back_reference() {
 }
 
 #[test]
+fn diagnostics_underline_the_invalid_back_reference_on_a_later_line() {
+    // The replacement continues on line 2: the caret follows it there.
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["-e", "s/\\(a\\)/x\\\ny\\2/"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:2:2: error: invalid reference \\2 on `s' command's RHS\n",
+            "   ╭─[ <script argument 1>:2:2 ]\n",
+            "   │\n",
+            r" 2 │ y\2/",
+            "\n",
+            "   │  ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
 fn diagnostics_line_up_under_wide_characters() {
     // `日本` takes four columns: the underline must sit under `q`.
     new_ucmd!()
