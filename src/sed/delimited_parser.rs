@@ -463,8 +463,14 @@ pub fn parse_regex_for_mode(
                 if let Some(decoded) = parse_char_escape(lines, line)? {
                     push_script_char(&mut result, decoded, character_mode);
                 } else {
-                    // Pass through \<any> to RE engine for further treatment
-                    result.push(b'\\');
+                    // Unknown letter and zero escapes are literal in sed, even
+                    // when the regex engine gives them another meaning.
+                    if !(line.current().is_ascii_alphanumeric()
+                        && !is_gnu_regex_escape(line.current(), regex_mode)
+                        && !matches!(line.current(), '1'..='9'))
+                    {
+                        result.push(b'\\');
+                    }
                     result.push(line.current_byte());
                     line.advance();
                 }

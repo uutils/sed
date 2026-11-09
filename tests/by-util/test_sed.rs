@@ -818,6 +818,22 @@ fn test_unknown_escape_is_the_bare_character() {
 }
 
 #[test]
+fn test_unknown_regex_escape_is_literal() {
+    for (script, input, expected) in [
+        (r"s/\D/X/", "aDb1\n", "aXb1\n"),
+        (r"s/\A/X/", "xAy\n", "xXy\n"),
+        (r"s/\0/X/", "x0y\n", "xXy\n"),
+        (r"s/\p/X/", "xpy\n", "xXy\n"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
 fn test_control_backslash_escape() {
     // \c\\ is a single control-backslash (0x1c) in the regex, the
     // replacement and y strings.
