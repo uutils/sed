@@ -839,6 +839,28 @@ fn test_trailing_backslash_c_does_not_panic() {
         .pipe_in("a\n")
         .succeeds()
         .stdout_is("a\na\nhelloJ");
+
+    // GNU sed ends `i` and `c` text with a newline instead.
+    for code in ['i', 'c'] {
+        for script in [format!("{code}\\hello\\c"), format!("{code} hello\\c")] {
+            let expected = if code == 'i' { "hello\na\n" } else { "hello\n" };
+            new_ucmd!()
+                .arg(&script)
+                .pipe_in("a\n")
+                .succeeds()
+                .stdout_is(expected);
+        }
+    }
+    new_ucmd!()
+        .arg("i hello\\c\n1d")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("hello\nhello\nb\n");
+    new_ucmd!()
+        .arg("c hello\\c\n$d")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("hello\nhello\n");
 }
 
 #[test]

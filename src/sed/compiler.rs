@@ -1381,16 +1381,18 @@ fn compile_text_command_gnu(
                 continue 'text_content;
             }
 
-            // A \c at the end of the line consumes the newline that would end
-            // the text, leaving control-newline ('J') as its last character and
-            // no trailing newline, as GNU sed does.
-            let control_newline =
-                line.current() == 'c' && line.get_pos() + 1 == line.get_line().len();
+            // A \c at the end of the line takes the newline that would end the
+            // text, which ends there. As in GNU sed, `a` is left with
+            // control-newline ('J') and no trailing newline, while `i` and `c`
+            // still end their text with a newline.
+            if line.current() == 'c' && line.get_pos() + 1 == line.get_line().len() {
+                line.advance();
+                text.push(if cmd.code == 'a' { b'J' } else { b'\n' });
+                break 'text_content;
+            }
+
             if let Some(decoded) = parse_char_escape(lines, line)? {
                 push_script_char(&mut text, decoded, context.character_mode);
-                if control_newline {
-                    break 'text_content;
-                }
             } else {
                 // Invalid escapes result in the escaped character.
                 text.push(line.current_byte());
