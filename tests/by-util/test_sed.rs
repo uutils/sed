@@ -3951,3 +3951,21 @@ fn test_execute_command_output_is_copied_unchanged() {
         .succeeds()
         .stdout_is("a\n");
 }
+
+/// Like GNU sed, `addr1,+N` allows blanks after the `+` and reads a missing
+/// `N` as 0.
+#[test]
+fn test_relative_range_blank_or_missing_number() {
+    for (script, expected) in [
+        ("2,+ 1d", "1\n4\n"),
+        ("2,+\t1d", "1\n4\n"),
+        ("2,+d", "1\n3\n4\n"),
+        ("2,+1d", "1\n4\n"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("1\n2\n3\n4\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
