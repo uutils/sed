@@ -818,6 +818,31 @@ fn test_unknown_escape_is_the_bare_character() {
 }
 
 #[test]
+fn test_invalid_unicode_escape_does_not_panic() {
+    // \u and \U digits that are not a Unicode scalar value (a surrogate or
+    // a value above U+10FFFF) are not an escape: the letter stands for
+    // itself, as with too few digits.
+    for script in [r"s/\ud800/x/", r"s/\Udeadbeef/x/"] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is("a\n");
+    }
+    new_ucmd!()
+        .args(&["-e", r"s/\ud800/x/", "-e", r"s/\Udeadbeef/y/"])
+        .pipe_in("ud800 Udeadbeef\n")
+        .succeeds()
+        .stdout_is("x y\n");
+    new_ucmd!()
+        .arg(r"y/a/\ud800/")
+        .pipe_in("a\n")
+        .fails()
+        .code_is(1)
+        .stderr_contains("transliteration strings are not the same length");
+}
+
+#[test]
 fn test_control_backslash_escape() {
     // \c\\ is a single control-backslash (0x1c) in the regex, the
     // replacement and y strings.
