@@ -2440,6 +2440,23 @@ fn write_same_file_from_two_commands() -> std::io::Result<()> {
 }
 
 #[test]
+fn write_same_file_from_two_w_commands() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let w = format!("w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["-n", "-e", &w, "-e", &w])
+        .pipe_in("a\nb\n")
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert_eq!(actual, "a\na\nb\nb\n");
+
+    Ok(())
+}
+
+#[test]
 fn write_single_file_no_newline() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
     let cmd = format!("w {}", temp.path().display());
