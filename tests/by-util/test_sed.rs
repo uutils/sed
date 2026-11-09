@@ -834,6 +834,17 @@ fn test_invalid_unicode_escape_does_not_panic() {
         .pipe_in("ud800 Udeadbeef\n")
         .succeeds()
         .stdout_is("x y\n");
+    // The replacement side goes through the same escape parsing.
+    for (script, expected) in [
+        (r"s/a/\ud800/", "ud800\n"),
+        (r"s/a/\Udeadbeef/", "Udeadbeef\n"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
     new_ucmd!()
         .arg(r"y/a/\ud800/")
         .pipe_in("a\n")
