@@ -818,6 +818,45 @@ fn test_unknown_escape_is_the_bare_character() {
 }
 
 #[test]
+fn test_trailing_backslash_c_does_not_panic() {
+    // A \c at the end of the text takes the newline that ends it, giving
+    // control-newline ('J') and no trailing newline.
+    for script in ["a\\hello\\c", "a hello\\c"] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is("a\nhelloJ");
+    }
+    // The text ends there; the next script line is a new command.
+    new_ucmd!()
+        .arg("a hello\\c\n1d")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("helloJb\nhelloJ");
+    new_ucmd!()
+        .args(&["-e", "a hello\\c", "-e", "p"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\na\nhelloJ");
+}
+
+#[test]
+fn test_trailing_backslash_c_in_delimited_string_does_not_panic() {
+    for (script, message) in [
+        ("s/a\\c\n/x/", "unterminated regular expression"),
+        ("y/a/\\c\n/", "unterminated transliteration string"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .fails()
+            .code_is(1)
+            .stderr_contains(message);
+    }
+}
+
+#[test]
 fn test_control_backslash_escape() {
     // \c\\ is a single control-backslash (0x1c) in the regex, the
     // replacement and y strings.

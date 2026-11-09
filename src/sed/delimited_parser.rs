@@ -160,7 +160,12 @@ pub fn parse_char_escape(
         'c' => {
             // Control character escape: \cC
             line.advance(); // move past 'c'
-            if !line.eol() && line.current() == '\\' {
+            if line.eol() {
+                // A \c at the end of a script line takes the newline that
+                // ends it, as GNU sed does: control-newline is 'J'.
+                return Ok(create_control_char('\n'));
+            }
+            if line.current() == '\\' {
                 // Control-backslash has to be written as \c\\
                 line.advance();
                 if line.eol() || line.current() != '\\' {
@@ -885,6 +890,11 @@ mod tests {
             Some(provider.current())
         };
         (result, current)
+    }
+
+    #[test]
+    fn test_control_escape_at_eol() {
+        assert_eq!(escape_result_with_current("c"), (Some('J'), None));
     }
 
     #[test]
