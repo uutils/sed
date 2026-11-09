@@ -1025,6 +1025,9 @@ pub fn compile_subst_flags(
             }
 
             'p' => {
+                if subst.print_flag {
+                    return compilation_error(lines, line, "multiple `p' options to `s' command");
+                }
                 subst.print_flag = true;
                 // 'p' is applied before 'e' iff 'e' has not been seen yet.
                 subst.p_before_e = !subst.execute;
