@@ -865,13 +865,14 @@ fn test_trailing_backslash_c_does_not_panic() {
 
 #[test]
 fn test_trailing_backslash_c_in_delimited_string_does_not_panic() {
+    // The script fails to compile, so sed exits without reading any input;
+    // piping input in here would race with that and hit a broken pipe.
     for (script, message) in [
         ("s/a\\c\n/x/", "unterminated regular expression"),
         ("y/a/\\c\n/", "unterminated transliteration string"),
     ] {
         new_ucmd!()
             .arg(script)
-            .pipe_in("a\n")
             .fails()
             .code_is(1)
             .stderr_contains(message);
