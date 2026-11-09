@@ -512,8 +512,11 @@ fn compile_address(
             Ok(Address::Last)
         }
         '+' => {
+            // Like GNU sed, allow blanks before the number and read a
+            // missing number as 0 (`2,+ 1` and `2,+`).
             line.advance();
-            let number = parse_number(lines, line, true)?.unwrap();
+            line.eat_spaces();
+            let number = parse_number(lines, line, false)?.unwrap_or(0);
             Ok(Address::RelLine(number))
         }
         c if c.is_ascii_digit() => {
@@ -2052,6 +2055,18 @@ mod tests {
         let (lines, mut chars) = make_providers("+7");
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr, Address::RelLine(7)));
+    }
+
+    #[test]
+    fn test_compile_addr_relative_line_blank_and_missing_number() {
+        let (lines, mut chars) = make_providers("+ \t3");
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
+        assert!(matches!(addr, Address::RelLine(3)));
+
+        let (lines, mut chars) = make_providers("+d");
+        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
+        assert!(matches!(addr, Address::RelLine(0)));
+        assert_eq!(chars.current(), 'd');
     }
 
     #[test]
