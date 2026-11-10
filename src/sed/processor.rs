@@ -646,7 +646,11 @@ fn process_file(
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
                 // Continue processing the `N` or `n` command.
-                if let NextLine::Append(mut combined_lines, _) = action.next_line {
+                if let NextLine::Append {
+                    contents: mut combined_lines,
+                    ..
+                } = action.next_line
+                {
                     combined_lines.push(b'\n');
                     combined_lines.extend_from_slice(pattern.as_bytes());
 
@@ -791,10 +795,10 @@ fn process_file(
                     // to perform when the next line is read.
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
-                        next_line: NextLine::Append(
-                            pattern.as_bytes().to_vec(),
-                            pattern.is_newline_terminated(),
-                        ),
+                        next_line: NextLine::Append {
+                            contents: pattern.as_bytes().to_vec(),
+                            has_newline: pattern.is_newline_terminated(),
+                        },
                     });
                     continue 'lines;
                 }
@@ -953,7 +957,10 @@ fn process_file(
     // Take them even with -n, so that they do not carry over to the next file.
     if context.separate
         && let Some(action) = context.input_action.take()
-        && let NextLine::Append(pending, has_newline) = action.next_line
+        && let NextLine::Append {
+            contents: pending,
+            has_newline,
+        } = action.next_line
         && !context.quiet
     {
         output.write_line(&pending, has_newline)?;
@@ -1011,7 +1018,10 @@ pub fn process_all_files(
             && !context.separate
             && !context.quiet
             && let Some(action) = context.input_action.take()
-            && let NextLine::Append(pending, has_newline) = action.next_line
+            && let NextLine::Append {
+                contents: pending,
+                has_newline,
+            } = action.next_line
         {
             output.write_line(&pending, has_newline)?;
         }
