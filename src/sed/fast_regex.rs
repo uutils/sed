@@ -235,6 +235,11 @@ pub fn ensure_dotall(pattern: &str) -> String {
     // Add s flag to ?(...) unless 's' or its complement 'm' is there.
     let flags = &pattern[2..close];
 
+    // A group such as `(?:...)` holds no flags of its own.
+    if !flags.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return format!("(?s){pattern}");
+    }
+
     if flags.contains('m') || flags.contains('s') {
         pattern.to_owned()
     } else {
@@ -1020,6 +1025,12 @@ mod tests {
     fn adds_s_when_no_m_or_s() {
         assert_eq!(ensure_dotall("(?i)abc"), "(?is)abc");
         assert_eq!(ensure_dotall("(?)abc"), "(?s)abc");
+    }
+
+    #[test]
+    fn prepends_s_before_a_non_capturing_group() {
+        assert_eq!(ensure_dotall("(?:a)b"), "(?s)(?:a)b");
+        assert_eq!(ensure_dotall("(?:a.)?"), "(?s)(?:a.)?");
     }
 
     #[test]
