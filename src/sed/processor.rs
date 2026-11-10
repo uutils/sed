@@ -306,8 +306,8 @@ fn substitute(
     // The following let block allows a common input_runtime_error to be
     // called once in all cases, and most importantly, to finish the regex
     // mutable borrowing of context, so as to reuse context in the error call.
-    let subst_result = match (sub.occurrence, sub.replacement.max_group_number) {
-        (1, 0) => {
+    let subst_result = match (sub.occurrence, sub.global, sub.replacement.max_group_number) {
+        (1, false, 0) => {
             // Example: s/foo/bar/: find() is enough.
             match regex.find(pattern) {
                 Err(e) => Err(e),
@@ -324,7 +324,7 @@ fn substitute(
             }
         }
 
-        (1, _) => {
+        (1, false, _) => {
             // Example: s/\(.\)\(.\)/\2\1/: captures() is enough.
             match regex.captures(pattern) {
                 Err(e) => Err(e),
@@ -342,7 +342,7 @@ fn substitute(
             }
         }
 
-        (_, _) => {
+        (_, _, _) => {
             // Example: s/(.)(.)/\2\1/3: captures_iter() is needed.
             // Iterate over multiple captures of the RE in the pattern.
             'captures: {
@@ -358,7 +358,7 @@ fn substitute(
                     // Always write the unmatched text before this match.
                     result.extend_from_slice(&text[last_end..m.start()]);
 
-                    if sub.occurrence == 0 || count == sub.occurrence {
+                    if count == sub.occurrence || (sub.global && count > sub.occurrence) {
                         let replacement = sub.replacement.apply_captures(command, &caps)?;
                         result.extend_from_slice(&replacement);
                         replaced = true;
@@ -371,7 +371,7 @@ fn substitute(
 
                     // Early exit if only a specific occurrence,
                     // (likely 1) needed replacing.
-                    if count == sub.occurrence {
+                    if !sub.global && count == sub.occurrence {
                         break 'captures Ok(());
                     }
                 }
@@ -494,6 +494,7 @@ fn readable_ascii_byte(byte: u8) -> Cow<'static, str> {
         b'\x08' => Cow::Borrowed(r"\b"),
         b'\x0b' => Cow::Borrowed(r"\v"),
         b'\x0c' => Cow::Borrowed(r"\f"),
+        b'\n' => Cow::Borrowed(r"\n"),
         b'\\' => Cow::Borrowed(r"\\"),
         b'\r' => Cow::Borrowed(r"\r"),
         b'\t' => Cow::Borrowed(r"\t"),
@@ -545,15 +546,6 @@ impl ListLine {
         Ok(())
     }
 
-    /// Write the current list line with an embedded newline marker.
-    fn write_embedded_newline(&mut self, output: &mut OutputBuffer) -> UResult<()> {
-        self.buffer.push_str("$\n");
-        output.write_str(&self.buffer)?;
-        self.buffer.clear();
-        self.width = 0;
-        Ok(())
-    }
-
     /// Finish the list line if it has buffered output.
     fn finish(&mut self, output: &mut OutputBuffer) -> UResult<()> {
         if !self.buffer.is_empty() {
@@ -585,10 +577,6 @@ fn list(
     if !context.uutil_extensions || context.character_mode == CharacterMode::Byte {
         // List non-ASCII bytes in octal.
         for &byte in line.as_bytes() {
-            if byte == b'\n' {
-                list_line.write_embedded_newline(output)?;
-                continue;
-            }
             let out_str = readable_ascii_byte(byte);
             list_line.write_item(output, &out_str)?;
         }
@@ -603,10 +591,6 @@ fn list(
             .unwrap_err()
         })?;
         for ch in line.chars() {
-            if ch == '\n' {
-                list_line.write_embedded_newline(output)?;
-                continue;
-            }
             let out_str = readable_char(ch);
             list_line.write_item(output, &out_str)?;
         }
@@ -1052,7 +1036,7 @@ mod tests {
 
     #[test]
     fn test_readable_ascii_byte_named_escapes() {
-        assert_eq!(readable_ascii_byte(b'\n'), r"\012");
+        assert_eq!(readable_ascii_byte(b'\n'), r"\n");
         assert_eq!(readable_ascii_byte(b'\t'), r"\t");
         assert_eq!(readable_ascii_byte(b'\\'), r"\\");
     }

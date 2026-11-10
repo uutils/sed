@@ -478,18 +478,26 @@ fn test_ere_quantifier_without_preceding_atom() {
     }
 }
 
+/// Write a sed script to a temporary file. Tests pass it with `-f`, since on
+/// Windows an argument like `/\(*/p` would go through glob expansion first.
+fn script_file(script: &str) -> NamedTempFile {
+    let mut file = NamedTempFile::new().expect("create temporary sed script");
+    writeln!(file, "{script}").expect("write temporary sed script");
+    file
+}
+
+fn script_path(file: &NamedTempFile) -> &str {
+    file.path().to_str().expect("temporary path is UTF-8")
+}
+
 #[test]
 fn test_ere_quantifier_after_atom() {
     for script in [
         "/a**/p", "/a+?/p", "/()*/p", "/(a|)*/p", "/[a]*/p", "/a{1}*/p", "/\\(*/p", "/\\**/p",
     ] {
-        // Read the script from a file, since on Windows an argument like
-        // `/\(*/p` would go through glob expansion first.
-        let mut file = NamedTempFile::new().expect("create temporary sed script");
-        writeln!(file, "{script}").expect("write temporary sed script");
-        let path = file.path().to_str().expect("temporary path is UTF-8");
+        let file = script_file(script);
         new_ucmd!()
-            .args(&["-n", "-E", "-f", path])
+            .args(&["-n", "-E", "-f", script_path(&file)])
             .pipe_in("xa*b\n")
             .succeeds()
             .stdout_is("xa*b\n");
@@ -526,6 +534,24 @@ fn test_bre_star_without_preceding_atom() {
         .pipe_in("*a*b\nab||*\n")
         .succeeds()
         .stdout_is("*a*x\nax*\n");
+}
+
+#[test]
+fn test_bre_anchors_in_subexpression() {
+    for (script, expected) in [
+        ("s/\\(^a\\)/x/g", "xb\n"),
+        ("s/b\\|^a/x/g", "xx\n"),
+        ("s/x*\\(^a\\)/y/", "yb\n"),
+        ("s/\\(b$\\)/x/", "ax\n"),
+        ("s/a$\\|b$/x/g", "ax\n"),
+    ] {
+        let file = script_file(script);
+        new_ucmd!()
+            .args(&["-f", script_path(&file)])
+            .pipe_in("ab\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
 }
 
 #[test]
@@ -653,6 +679,22 @@ fn subst_multiline_flag_matches_embedded_line_end() {
         .pipe_in("foo\nbar\n")
         .succeeds()
         .stdout_is("foX\nbaX\n");
+}
+
+#[test]
+fn address_multiline_modifier() {
+    for (script, expected) in [
+        ("$!N;/^b$/Mp", "a\nb\n"),
+        ("$!N;/^b$/p", ""),
+        ("$!N;/^B/ I M p", "a\nb\n"),
+        ("/^b/M,/c$/Mp", "b\nc\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("a\nb\nc\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
 }
 
 ////////////////////////////////////////////////////////////
@@ -805,6 +847,81 @@ fn test_unknown_escape_is_the_bare_character() {
         .pipe_in("x\n")
         .succeeds()
         .stdout_is("aqc\n");
+}
+
+#[test]
+fn test_invalid_unicode_escape_does_not_panic() {
+    // \u and \U digits that are not a Unicode scalar value (a surrogate or
+    // a value above U+10FFFF) are not an escape: the letter stands for
+    // itself, as with too few digits.
+    for script in [r"s/\ud800/x/", r"s/\Udeadbeef/x/"] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is("a\n");
+    }
+    new_ucmd!()
+        .args(&["-e", r"s/\ud800/x/", "-e", r"s/\Udeadbeef/y/"])
+        .pipe_in("ud800 Udeadbeef\n")
+        .succeeds()
+        .stdout_is("x y\n");
+    // The replacement side goes through the same escape parsing.
+    for (script, expected) in [
+        (r"s/a/\ud800/", "ud800\n"),
+        (r"s/a/\Udeadbeef/", "Udeadbeef\n"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+    new_ucmd!()
+        .arg(r"y/a/\ud800/")
+        .pipe_in("a\n")
+        .fails()
+        .code_is(1)
+        .stderr_contains("transliteration strings are not the same length");
+}
+
+#[test]
+fn test_control_backslash_escape() {
+    // \c\\ is a single control-backslash (0x1c) in the regex, the
+    // replacement and y strings.
+    new_ucmd!()
+        .args(&["-e", r"s/b/\c\\/", "-e", r"s/\c\\/x/", "-e", r"y/a/\c\\/"])
+        .pipe_in("ab\x1c\n")
+        .succeeds()
+        .stdout_is("\x1cx\x1c\n");
+}
+
+#[test]
+fn test_control_backslash_recursive_escape() {
+    // GNU only allows \c\ when it is followed by a second backslash
+    for script in [r"s/b/\c\d/", r"s/\c\d/x/", r"y/a/\c\d/", r"a foo\c\d"] {
+        new_ucmd!()
+            .args(&[script])
+            .fails()
+            .code_is(1)
+            .stderr_contains(r"recursive escaping after \c not allowed");
+    }
+}
+
+#[test]
+fn subst_number_and_g_replace_from_that_match_on() {
+    for flags in ["2g", "g2"] {
+        new_ucmd!()
+            .arg(format!("s/a/b/{flags}"))
+            .pipe_in("aaaa\n")
+            .succeeds()
+            .stdout_is("abbb\n");
+    }
+    new_ucmd!()
+        .arg(r"s/\(a\)/<\1>/3g")
+        .pipe_in("aaaa\n")
+        .succeeds()
+        .stdout_is("aa<a><a>\n");
 }
 
 // Check appropriate selection and behavior of fast_Regex matcher
@@ -1151,6 +1268,49 @@ fn test_posix_keeps_gnu_character_escapes() {
             .succeeds()
             .stdout_is("Xb\n");
     }
+}
+
+#[test]
+fn test_posix_text_command_on_same_line() {
+    // GNU sed accepts the text right after `a\`, `i\` and `c\` under --posix too.
+    for (script, expected) in [
+        (r"a\bar", "foo\nbar\n"),
+        (r"i\(text", "(text\nfoo\n"),
+        (r"c\bar", "bar\n"),
+        (r"a\  bar", "foo\n  bar\n"),
+        (r"1a\b\tc", "foo\nb\tc\n"),
+        ("a\\bar\\\nbaz", "foo\nbar\nbaz\n"),
+    ] {
+        new_ucmd!()
+            .args(&["--posix", "-e", script])
+            .pipe_in("foo\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_posix_text_command_next_line() {
+    // The text on the following lines is read the same way as without --posix.
+    new_ucmd!()
+        .args(&["--posix", "-e", "a\\\n\\  b\\\nc\\x41"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("foo\n  b\ncA\n");
+}
+
+#[test]
+fn test_posix_text_command_errors() {
+    new_ucmd!()
+        .args(&["--posix", "-e", "a bar"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("expects \\ followed by text");
+    new_ucmd!()
+        .args(&["--posix", "-e", "a\\"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("incomplete command");
 }
 
 ////////////////////////////////////////////////////////////
@@ -1599,6 +1759,23 @@ fn diagnostics_count_columns_in_bytes_like_the_message() {
 }
 
 #[test]
+fn diagnostics_underline_the_second_number_flag() {
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["s/a/b/2g3"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:9: error: multiple number options to `s' command\n",
+            "   ╭─[ <script argument 1>:1:9 ]\n",
+            "   │\n",
+            " 1 │ s/a/b/2g3\n",
+            "   │         ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
 fn diagnostics_reach_errors_raised_after_the_line_was_read() {
     // Undefined labels are found after compilation; the gutter shows line 2.
     new_ucmd!()
@@ -1612,6 +1789,45 @@ fn diagnostics_reach_errors_raised_after_the_line_was_read() {
             "   │\n",
             " 2 │ b nowhere\n",
             "   │ ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_underline_the_invalid_back_reference() {
+    // The message is raised after the flags are read; the caret still
+    // points at the first `\3`, not past the end of the command.
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&[r"s/\(a\)/x\3\1\3/"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:1:10: error: invalid reference \\3 on `s' command's RHS\n",
+            "   ╭─[ <script argument 1>:1:10 ]\n",
+            "   │\n",
+            r" 1 │ s/\(a\)/x\3\1\3/",
+            "\n",
+            "   │          ─\n",
+            "───╯\n",
+        ));
+}
+
+#[test]
+fn diagnostics_underline_the_invalid_back_reference_on_a_later_line() {
+    // The replacement continues on line 2: the caret follows it there.
+    new_ucmd!()
+        .env("UUTILS_DIAG", "always")
+        .args(&["-e", "s/\\(a\\)/x\\\ny\\2/"])
+        .fails()
+        .code_is(1)
+        .stderr_is(concat!(
+            "sed: <script argument 1>:2:2: error: invalid reference \\2 on `s' command's RHS\n",
+            "   ╭─[ <script argument 1>:2:2 ]\n",
+            "   │\n",
+            r" 2 │ y\2/",
+            "\n",
+            "   │  ─\n",
             "───╯\n",
         ));
 }
@@ -2315,6 +2531,43 @@ fn write_single_file() -> std::io::Result<()> {
 }
 
 #[test]
+fn write_same_file_from_two_commands() -> std::io::Result<()> {
+    // Commands naming the same file share it, as in GNU sed.
+    let temp = NamedTempFile::new()?;
+    let path = temp.path().display();
+    let w = format!("w {path}");
+    let s = format!("s/a/X/w {path}");
+
+    new_ucmd!()
+        .args(&["-n", "-e", &w, "-e", &s])
+        .pipe_in("a\nb\nc\n")
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert_eq!(actual, "a\nX\nb\nc\n");
+
+    Ok(())
+}
+
+#[test]
+fn write_same_file_from_two_w_commands() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let w = format!("w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["-n", "-e", &w, "-e", &w])
+        .pipe_in("a\nb\n")
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert_eq!(actual, "a\na\nb\nb\n");
+
+    Ok(())
+}
+
+#[test]
 fn write_single_file_no_newline() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
     let cmd = format!("w {}", temp.path().display());
@@ -2624,6 +2877,38 @@ fn list_empty_line_without_newline() {
         .pipe_in("a")
         .succeeds()
         .stdout_is("$\n");
+}
+
+/// `l` shows a newline inside the pattern space as `\n`, as GNU sed does,
+/// and folds it like any other escape.
+#[test]
+fn list_embedded_newline() {
+    new_ucmd!()
+        .args(&["-n", "N;l"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\\nb$\n");
+    new_ucmd!()
+        .args(&["-n", "G;l"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\\n$\n");
+    new_ucmd!()
+        .args(&["-n", "s/b/\\n/;l"])
+        .pipe_in("abc\n")
+        .succeeds()
+        .stdout_is("a\\nc$\n");
+    new_ucmd!()
+        .args(&["-n", "N;l 3"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\\\n\\n\\\nb$\n");
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["--uutil-extensions", "-n", "N;l"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\\nb$\n");
 }
 
 ////////////////////////////////////////////////////////////
@@ -3752,4 +4037,22 @@ fn test_execute_command_output_is_copied_unchanged() {
         .pipe_in("a")
         .succeeds()
         .stdout_is("a\n");
+}
+
+/// Like GNU sed, `addr1,+N` allows blanks after the `+` and reads a missing
+/// `N` as 0.
+#[test]
+fn test_relative_range_blank_or_missing_number() {
+    for (script, expected) in [
+        ("2,+ 1d", "1\n4\n"),
+        ("2,+\t1d", "1\n4\n"),
+        ("2,+d", "1\n3\n4\n"),
+        ("2,+1d", "1\n4\n"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("1\n2\n3\n4\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
 }
