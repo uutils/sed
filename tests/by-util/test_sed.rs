@@ -1756,6 +1756,18 @@ fn test_append_next_at_end_keeps_missing_newline() -> std::io::Result<()> {
     fs::write(&path, "a\nb\nc")?;
     new_ucmd!().args(&["-i", "N"]).arg(&path).succeeds();
     assert_eq!(fs::read_to_string(&path)?, "a\nb\nc");
+
+    // With -s, a pending `N` is flushed at the end of each file.
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    fs::write(&first, "a\nb\nc\n")?;
+    fs::write(&second, "d")?;
+    new_ucmd!()
+        .args(&["-s", "N"])
+        .arg(&first)
+        .arg(&second)
+        .succeeds()
+        .stdout_is("a\nb\nc\nd");
     Ok(())
 }
 

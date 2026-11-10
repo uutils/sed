@@ -405,9 +405,12 @@ pub struct InputAction {
 pub enum NextLine {
     /// Replace the pattern space with the line (`n`)
     Replace,
-    /// Append the line, after a newline, to these contents (`N`).
-    /// The flag tells whether the contents ended with a newline.
-    Append(Vec<u8>, bool),
+    /// Append the line, after a newline, to these contents (`N`)
+    Append {
+        contents: Vec<u8>,
+        /// Whether the contents ended with a newline, used when no next line comes
+        has_newline: bool,
+    },
 }
 
 #[cfg(test)]
