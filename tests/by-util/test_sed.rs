@@ -4070,3 +4070,48 @@ fn test_relative_range_blank_or_missing_number() {
             .stdout_is(expected);
     }
 }
+
+#[test]
+fn test_hash_comment_after_substitute() {
+    new_ucmd!()
+        .args(&["s/a/A/#comment"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("A\n");
+}
+
+#[test]
+fn test_hash_comment_after_print() {
+    new_ucmd!()
+        .args(&["p#comment"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\na\n");
+}
+
+#[test]
+fn test_hash_comment_after_group() {
+    new_ucmd!()
+        .args(&["{p}#comment"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\na\n");
+}
+
+#[test]
+fn test_substitute_stops_flags_at_closing_brace() {
+    new_ucmd!()
+        .args(&["{s/a/A/}"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("A\n");
+}
+
+#[test]
+fn test_substitute_w_flag_keeps_hash_filename() {
+    new_ucmd!()
+        .args(&["s/a/A/w#c"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("A\n");
+}
