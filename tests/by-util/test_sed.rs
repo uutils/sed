@@ -191,6 +191,21 @@ fn test_missing_input_file_is_skipped() {
         .code_is(2)
         .stdout_is("2\n2\n")
         .stderr_is(MISSING_INPUT_ERROR);
+
+    // Standard input after a file is only opened when its turn comes,
+    // also when a missing file comes before it.
+    new_ucmd!()
+        .args(&["-n", "$p", "input/two-lines.txt", "-"])
+        .pipe_in("three\n")
+        .succeeds()
+        .stdout_is("three\n");
+    new_ucmd!()
+        .args(&["-n", "$p", "input/two-lines.txt", "input/missing", "-"])
+        .pipe_in("three\n")
+        .fails()
+        .code_is(2)
+        .stdout_is("three\n")
+        .stderr_is(MISSING_INPUT_ERROR);
 }
 
 #[test]

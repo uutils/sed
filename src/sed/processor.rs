@@ -1029,7 +1029,18 @@ impl InputFiles {
         if let Some(opened) = self.opened.take() {
             return Some(opened);
         }
-        while let Some(path) = self.paths.pop_front() {
+        self.open_next(false)
+    }
+
+    /// Open the next readable file, reporting and skipping the others.
+    /// With `stop_at_stdin`, return `None` when standard input comes next,
+    /// leaving it unopened.
+    fn open_next(&mut self, stop_at_stdin: bool) -> Option<(PathBuf, LineReader<'static>)> {
+        while let Some(path) = self.paths.front() {
+            if stop_at_stdin && path.as_os_str() == "-" {
+                return None;
+            }
+            let path = self.paths.pop_front()?;
             match LineReader::open(&path) {
                 Ok(reader) => return Some((path, reader)),
                 Err(e) => {
@@ -1048,16 +1059,9 @@ impl InputFiles {
     fn at_end(&mut self) -> bool {
         if self.opened.is_none() {
             // Standard input may be in use already, so don't open it early.
-            if self
-                .paths
-                .front()
-                .is_some_and(|path| path.as_os_str() == "-")
-            {
-                return false;
-            }
-            self.opened = self.next_file();
+            self.opened = self.open_next(true);
         }
-        self.opened.is_none()
+        self.opened.is_none() && self.paths.is_empty()
     }
 }
 
@@ -1140,6 +1144,26 @@ mod tests {
     use super::*;
     use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempfile;
+
+    #[test]
+    fn test_at_end_does_not_open_stdin_after_missing_file() {
+        let mut files = InputFiles::new(vec![
+            PathBuf::from("no/such/input/file"),
+            PathBuf::from("-"),
+        ]);
+        assert!(!files.at_end());
+        assert!(files.unreadable);
+        assert!(files.opened.is_none());
+        assert_eq!(files.paths, [PathBuf::from("-")]);
+    }
+
+    #[test]
+    fn test_at_end_after_missing_files() {
+        let mut files = InputFiles::new(vec![PathBuf::from("no/such/input/file")]);
+        assert!(files.at_end());
+        assert!(files.unreadable);
+        assert!(files.next_file().is_none());
+    }
 
     #[test]
     fn test_readable_ascii_byte_named_escapes() {
