@@ -239,21 +239,20 @@ pub fn parse_char_escape(
     Ok(decoded)
 }
 
-/// Return the bytes of `name` if it is a single character, the only collating
+/// Return true if `name` is a single character, the only collating
 /// element a `[.name.]` or `[=name=]` can name without locale collation data.
-fn single_collating_element(name: &[u8], character_mode: CharacterMode) -> Option<&[u8]> {
-    let is_single = match character_mode {
+fn is_single_collating_element(name: &[u8], character_mode: CharacterMode) -> bool {
+    match character_mode {
         CharacterMode::Byte => name.len() == 1,
         CharacterMode::Utf8 => str::from_utf8(name).is_ok_and(|s| s.chars().count() == 1),
-    };
-    is_single.then_some(name)
+    }
 }
 
 /// Add a character to a bracket expression as a literal member,
-/// escaping ASCII punctuation so that it can't be read as class syntax.
+/// escaping the characters that have a meaning inside a class.
 fn push_class_member(result: &mut Vec<u8>, member: &[u8]) {
     if let [b] = member
-        && b.is_ascii_punctuation()
+        && br"\[]^-&~|".contains(b)
     {
         result.push(b'\\');
     }
@@ -330,15 +329,14 @@ fn parse_character_class(
                             } else {
                                 // Without locale collation data, a collating symbol or
                                 // an equivalence class stands for its single character.
-                                let Some(member) = single_collating_element(&inner, character_mode)
-                                else {
+                                if !is_single_collating_element(&inner, character_mode) {
                                     return compilation_error(
                                         lines,
                                         line,
                                         "Invalid collation character",
                                     );
-                                };
-                                push_class_member(&mut result, member);
+                                }
+                                push_class_member(&mut result, &inner);
                             }
                             terminated = true;
                             break;
@@ -955,6 +953,7 @@ mod tests {
     #[case::equivalence_class("[[=a=]]", b"[a]")]
     #[case::collating_symbol("[[.a.]-[.c.]x]", b"[a-cx]")]
     #[case::collating_symbol_punctuation_is_escaped("[[.].][.-.][=^=]]", br"[\]\-\^]")]
+    #[case::collating_symbol_other_punctuation_is_not_escaped("[[.<.][=>=][.,.]]", b"[<>,]")]
     #[case::collating_symbol_multibyte_char("[[.é.]]", "[é]".as_bytes())]
     #[case::malformed_posix_like_pattern_treated_as_literal("[[x]yz]", br"[\[x]")]
     #[case::literal_open_bracket_in_character_class("[a[b]", br"[a\[b]")]
