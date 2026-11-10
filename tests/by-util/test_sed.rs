@@ -3799,33 +3799,83 @@ fn test_invalid_version() {
     new_ucmd!()
         .args(&["v4.a"])
         .fails()
-        .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
+        .stderr_is("sed: <script argument 1>:1:4: error: invalid version of sed\n");
 }
 
 #[test]
 fn test_valid_version() {
-    new_ucmd!().args(&["v4.9"]).succeeds();
+    new_ucmd!()
+        .args(&["v4.9"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n");
 }
 
 #[test]
 fn test_valid_only_major_version() {
-    // v4.0.0
-    new_ucmd!().args(&["v4"]).succeeds();
+    new_ucmd!()
+        .args(&["v4"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n");
 }
 
 #[test]
 fn test_invalid_only_major_version() {
-    // v999.0.0
+    // 999 is newer than the advertised 4.9 GNU version
     new_ucmd!()
         .args(&["v999"])
         .fails()
-        .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
+        .stderr_is("sed: <script argument 1>:1:5: error: expected newer version of sed\n");
 }
 
 #[test]
 fn test_default_version() {
-    // defaults to v4.9.0
-    new_ucmd!().args(&["v"]).succeeds();
+    // No argument is a GNU-extension assertion and succeeds.
+    new_ucmd!()
+        .args(&["v"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n");
+}
+
+#[test]
+fn test_version_older_components_succeed() {
+    // 3.99 and 4.8.99 are older than 4.9 even though a component is large.
+    for script in ["v3.99", "v4.8.99"] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is("a\n");
+    }
+}
+
+#[test]
+fn test_version_patch_on_current_is_newer() {
+    // GNU sed 4.9 advertises two components, so v4.9.0 is newer than 4.9.
+    new_ucmd!()
+        .args(&["v4.9.0"])
+        .fails()
+        .stderr_contains("expected newer version of sed");
+}
+
+#[test]
+fn test_version_stops_at_semicolon() {
+    new_ucmd!()
+        .args(&["v;s/a/A/"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("A\n");
+}
+
+#[test]
+fn test_version_accepts_addresses() {
+    new_ucmd!()
+        .args(&["1v"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n");
 }
 
 //--posix should reject GNU substitute flags i/I https://github.com/uutils/sed/issues/401

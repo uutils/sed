@@ -1452,69 +1452,86 @@ fn compile_text_command_posix(
 }
 
 // Handle v
+// The version check is done at compile time. Execution is a no-op.
+// GNU sed 4.9 advertises two version components, so a third component
+// (even 4.9.0) is treated as newer than 4.9.
 fn compile_version_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     _cmd: &mut Command,
     _context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
-    // Claim version partify with GNU sed 4.9
-    const GNU_MAJOR: u8 = 4;
-    const GNU_MINOR: u8 = 9;
-    const GNU_PATCH: u8 = 0;
+    const GNU_VERSION: [u32; 2] = [4, 9];
 
     line.advance();
     line.eat_spaces(); // Skip any leading whitespace.
 
-    let mut major = String::new();
-    let mut minor = String::new();
-    let mut patch = String::new();
-
-    let mut ver_semantic = 0;
+    let mut components: Vec<u32> = Vec::new();
+    let mut current = String::new();
+    let mut last_was_dot = false;
 
     while !line.eol() {
-        if line.current() == '.' {
-            ver_semantic += 1;
-            line.advance();
-        } else {
-            match ver_semantic {
-                0 => major.push(line.current()),
-                1 => minor.push(line.current()),
-                2 => patch.push(line.current()),
-                _ => return compilation_error(lines, line, "invalid version of sed"),
+        let c = line.current();
+        // The version argument ends at a command separator; leave it in place.
+        if matches!(c, ';' | '#' | '}') {
+            break;
+        }
+        if c == '.' {
+            if current.is_empty() {
+                // Leading or consecutive dots are empty components (GNU: `v.9`).
+                components.push(0);
+            } else {
+                match current.parse::<u32>() {
+                    Ok(n) => components.push(n),
+                    Err(_) => return compilation_error(lines, line, "invalid version of sed"),
+                }
+                current.clear();
             }
+            last_was_dot = true;
             line.advance();
+            continue;
+        }
+        if c.is_ascii_digit() {
+            current.push(c);
+            last_was_dot = false;
+            line.advance();
+            continue;
+        }
+        return compilation_error(lines, line, "invalid version of sed");
+    }
+
+    if !current.is_empty() {
+        match current.parse::<u32>() {
+            Ok(n) => components.push(n),
+            Err(_) => return compilation_error(lines, line, "invalid version of sed"),
+        }
+    } else if last_was_dot {
+        // A trailing dot is an extra empty component (GNU: `v4.9.` fails).
+        components.push(0);
+    }
+
+    // No argument, or only separators, is an extension assertion and succeeds.
+    if !components.is_empty() && version_is_newer_than(&components, &GNU_VERSION) {
+        return compilation_error(lines, line, "expected newer version of sed");
+    }
+
+    Ok(CommandHandling::Continue)
+}
+
+/// Return true if `requested` is newer than the implementation version.
+/// Equal shared components with extra requested components count as newer,
+/// matching GNU sed 4.9 (`v4.9` succeeds, `v4.9.0` does not).
+fn version_is_newer_than(requested: &[u32], current: &[u32]) -> bool {
+    let n = requested.len().min(current.len());
+    for i in 0..n {
+        if requested[i] > current[i] {
+            return true;
+        }
+        if requested[i] < current[i] {
+            return false;
         }
     }
-
-    if major.is_empty() {
-        major = GNU_MAJOR.to_string();
-        minor = GNU_MINOR.to_string();
-        patch = GNU_PATCH.to_string();
-    }
-
-    if minor.is_empty() {
-        minor.push('0');
-    }
-    if patch.is_empty() {
-        patch.push('0');
-    }
-
-    match major.parse::<u8>() {
-        Ok(major_int) => match minor.parse::<u8>() {
-            Ok(minor_int) => match patch.parse::<u8>() {
-                Ok(patch_int) => {
-                    if minor_int <= GNU_MINOR && major_int <= GNU_MAJOR && patch_int == GNU_PATCH {
-                        return Ok(CommandHandling::Continue);
-                    }
-                    compilation_error(lines, line, "expected newer version of sed")
-                }
-                Err(_) => compilation_error(lines, line, "invalid version of sed"),
-            },
-            Err(_) => compilation_error(lines, line, "invalid version of sed"),
-        },
-        Err(_) => compilation_error(lines, line, "invalid version of sed"),
-    }
+    requested.len() > current.len()
 }
 
 // Handles e
@@ -1743,7 +1760,7 @@ fn get_cmd_spec(
             handler: compile_trans_command,
         }),
         'v' if !posix => Ok(CommandSpec {
-            n_addr: 0,
+            n_addr: 2,
             handler: compile_version_command,
         }),
         _ => compilation_error(lines, line, format!("invalid command code `{cmd_code}'")),
