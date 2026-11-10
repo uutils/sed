@@ -996,6 +996,12 @@ pub fn process_all_files(
             context.line_number = 0;
             reset_latched_address_ranges(&mut context.range_commands);
 
+            if context.separate {
+                for reader in context.named_readers.values() {
+                    reader.borrow_mut().reset();
+                }
+            }
+
             // Reset hold space for separate file processing
             context.hold.content.clear();
             context.hold.has_newline = true;
