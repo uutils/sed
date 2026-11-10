@@ -3343,7 +3343,7 @@ fn test_empty_text_commands_fail() {
 
 #[test]
 fn test_script_parser_skips_only_space_and_tab() {
-    new_ucmd!().arg("p\r").pipe_in("a\n").fails().code_is(1);
+    new_ucmd!().arg("p\r").fails().code_is(1);
 
     new_ucmd!()
         .arg("1a\x0bfoo")
