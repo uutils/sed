@@ -890,9 +890,10 @@ fn test_invalid_unicode_escape_does_not_panic() {
             .succeeds()
             .stdout_is(expected);
     }
+    // The script fails to compile, so sed exits without reading any input;
+    // piping input in here would race with that and hit a broken pipe.
     new_ucmd!()
         .arg(r"y/a/\ud800/")
-        .pipe_in("a\n")
         .fails()
         .code_is(1)
         .stderr_contains("transliteration strings are not the same length");
