@@ -43,7 +43,9 @@ fn is_ascii_octal_digit(c: char) -> bool {
 /// radix (e.g. 8, 10, 16 for octal, decimal, and hex escapes).
 /// For values up to 3 ndigits is the maximum number of allowed digits,
 /// for values above 3 ndigits is the exact number of allowed digits.
-/// Return `None` if no valid character has been specified.
+/// Return `None` if no valid character has been specified, including digits
+/// that do not form a Unicode scalar value (a surrogate or a value above
+/// U+10FFFF); the digits are then left unconsumed.
 fn parse_numeric_escape(
     line: &mut ScriptCharProvider,
     is_allowed_char: fn(char) -> bool,
@@ -70,14 +72,15 @@ fn parse_numeric_escape(
         return None;
     }
 
+    let ndigits_read = valid_chars.len();
     let char_string: String = valid_chars.into_iter().collect();
-    match u32::from_str_radix(&char_string, radix)
+    let decoded = u32::from_str_radix(&char_string, radix)
         .ok()
-        .and_then(char::from_u32)
-    {
-        Some(decoded) => Some(decoded),
-        None => panic!("Unable to decode numeric character escape."),
+        .and_then(char::from_u32);
+    if decoded.is_none() {
+        line.retreat(ndigits_read);
     }
+    decoded
 }
 
 /// Transforms the specified character into the corresponding ASCII
@@ -984,6 +987,21 @@ mod tests {
     #[test]
     fn test_short_unicode_escape_valid() {
         assert_eq!(escape_result_with_current("u2665;"), (Some('♥'), Some(';')));
+    }
+
+    #[test]
+    fn test_unicode_escape_not_a_scalar_value() {
+        // Surrogates and values above U+10FFFF are not escapes; the letter
+        // stands for itself and the digits are left in place.
+        assert_eq!(escape_result_with_current("ud800"), (Some('u'), Some('d')));
+        assert_eq!(
+            escape_result_with_current("Udeadbeef"),
+            (Some('U'), Some('d'))
+        );
+        assert_eq!(
+            escape_result_with_current("U00110000"),
+            (Some('U'), Some('0'))
+        );
     }
 
     #[test]

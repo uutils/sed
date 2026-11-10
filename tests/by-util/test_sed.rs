@@ -505,6 +505,51 @@ fn test_ere_quantifier_after_atom() {
 }
 
 #[test]
+fn test_quantifier_after_quantifier_stays_greedy() {
+    for (args, input, expected) in [
+        (&["-E", "s/b+?/X/"][..], "abbc\n", "Xabbc\n"),
+        (&["-E", "s/b+?/X/g"], "abbc\n", "XaXcX\n"),
+        (&["-E", "s/ab??/X/"], "abbc\n", "Xbc\n"),
+        (&["-E", "s/ab+?/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/ab+???/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/a(b)+?/X\\1/"], "abbc\n", "Xbc\n"),
+        (&["-E", "s/a[b]+?/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/b+?/X/"], "bbc\n", "Xc\n"),
+        (&["-E", "s/b+?/X/I"], "BBc\n", "Xc\n"),
+        (&["-E", "s/b+?/X/gM"], "bbc\n", "XcX\n"),
+        (&["-E", "s/ab*+b/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/(a)b*+b\\1/X/"], "abba\n", "X\n"),
+        (&["s/ab\\+\\?/X/"], "abbc\n", "Xc\n"),
+        (&["s/a\\(b\\)*\\?b\\1/X/"], "abbb\n", "X\n"),
+        (&["-n", "/ab\\+\\?c/p"], "abbc\n", "abbc\n"),
+        // A literal ? or + is still one.
+        (&["-E", "s/a\\??/X/"], "a?bc\n", "Xbc\n"),
+        (&["-E", "s/a[?+]+/X/"], "a?+c\n", "Xc\n"),
+        (&["s/b?+/X/"], "ab?+c\n", "aXc\n"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_quantifier_after_quantifier_byte_mode() {
+    // With LC_ALL=C the \xa9 byte is a character of its own, so a\xa9+?
+    // only makes the \xa9 part optional and still matches a lone a.
+    for (input, expected) in [(&b"ab\n"[..], &b"Xb\n"[..]), (b"a\xa9\xa9b\n", b"Xb\n")] {
+        new_ucmd!()
+            .env("LC_ALL", "C")
+            .args(&["-E", "s/a\\xa9+?/X/"])
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is_bytes(expected);
+    }
+}
+
+#[test]
 fn test_bre_anchors_in_subexpression() {
     for (script, expected) in [
         ("s/\\(^a\\)/x/g", "xb\n"),
@@ -877,6 +922,42 @@ fn test_trailing_backslash_c_in_delimited_string_does_not_panic() {
             .code_is(1)
             .stderr_contains(message);
     }
+}
+
+#[test]
+fn test_invalid_unicode_escape_does_not_panic() {
+    // \u and \U digits that are not a Unicode scalar value (a surrogate or
+    // a value above U+10FFFF) are not an escape: the letter stands for
+    // itself, as with too few digits.
+    for script in [r"s/\ud800/x/", r"s/\Udeadbeef/x/"] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is("a\n");
+    }
+    new_ucmd!()
+        .args(&["-e", r"s/\ud800/x/", "-e", r"s/\Udeadbeef/y/"])
+        .pipe_in("ud800 Udeadbeef\n")
+        .succeeds()
+        .stdout_is("x y\n");
+    // The replacement side goes through the same escape parsing.
+    for (script, expected) in [
+        (r"s/a/\ud800/", "ud800\n"),
+        (r"s/a/\Udeadbeef/", "Udeadbeef\n"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+    new_ucmd!()
+        .arg(r"y/a/\ud800/")
+        .pipe_in("a\n")
+        .fails()
+        .code_is(1)
+        .stderr_contains("transliteration strings are not the same length");
 }
 
 #[test]
@@ -1262,6 +1343,49 @@ fn test_posix_keeps_gnu_character_escapes() {
             .succeeds()
             .stdout_is("Xb\n");
     }
+}
+
+#[test]
+fn test_posix_text_command_on_same_line() {
+    // GNU sed accepts the text right after `a\`, `i\` and `c\` under --posix too.
+    for (script, expected) in [
+        (r"a\bar", "foo\nbar\n"),
+        (r"i\(text", "(text\nfoo\n"),
+        (r"c\bar", "bar\n"),
+        (r"a\  bar", "foo\n  bar\n"),
+        (r"1a\b\tc", "foo\nb\tc\n"),
+        ("a\\bar\\\nbaz", "foo\nbar\nbaz\n"),
+    ] {
+        new_ucmd!()
+            .args(&["--posix", "-e", script])
+            .pipe_in("foo\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_posix_text_command_next_line() {
+    // The text on the following lines is read the same way as without --posix.
+    new_ucmd!()
+        .args(&["--posix", "-e", "a\\\n\\  b\\\nc\\x41"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("foo\n  b\ncA\n");
+}
+
+#[test]
+fn test_posix_text_command_errors() {
+    new_ucmd!()
+        .args(&["--posix", "-e", "a bar"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("expects \\ followed by text");
+    new_ucmd!()
+        .args(&["--posix", "-e", "a\\"])
+        .fails()
+        .code_is(1)
+        .stderr_contains("incomplete command");
 }
 
 ////////////////////////////////////////////////////////////
@@ -2477,6 +2601,43 @@ fn write_single_file() -> std::io::Result<()> {
 
     let expected = fs::read_to_string("tests/fixtures/sed/output/write_single_file")?;
     assert_eq!(actual, expected, "Output did not match fixture");
+
+    Ok(())
+}
+
+#[test]
+fn write_same_file_from_two_commands() -> std::io::Result<()> {
+    // Commands naming the same file share it, as in GNU sed.
+    let temp = NamedTempFile::new()?;
+    let path = temp.path().display();
+    let w = format!("w {path}");
+    let s = format!("s/a/X/w {path}");
+
+    new_ucmd!()
+        .args(&["-n", "-e", &w, "-e", &s])
+        .pipe_in("a\nb\nc\n")
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert_eq!(actual, "a\nX\nb\nc\n");
+
+    Ok(())
+}
+
+#[test]
+fn write_same_file_from_two_w_commands() -> std::io::Result<()> {
+    let temp = NamedTempFile::new()?;
+    let w = format!("w {}", temp.path().display());
+
+    new_ucmd!()
+        .args(&["-n", "-e", &w, "-e", &w])
+        .pipe_in("a\nb\n")
+        .succeeds();
+
+    let mut actual = String::new();
+    temp.reopen()?.read_to_string(&mut actual)?;
+    assert_eq!(actual, "a\na\nb\nb\n");
 
     Ok(())
 }

@@ -691,6 +691,141 @@ fn bre_to_ere(pattern: &[u8]) -> Vec<u8> {
     result
 }
 
+/// Keep a quantifier that follows another quantifier greedy.
+/// In POSIX regexes `a+?` repeats `a+` zero or one times and `a*+` repeats
+/// `a*` one or more times. The regex engines read a `?` or `+` there as a
+/// lazy or possessive modifier, so put the repeated part in a group first,
+/// as in `(?:a+)?`. In byte mode every byte is a character of its own.
+fn group_stacked_quantifiers(pattern: &[u8], character_mode: CharacterMode) -> Vec<u8> {
+    let mut result = Vec::with_capacity(pattern.len());
+    let mut pos = 0;
+    // Where the last thing that can be repeated starts in `result`.
+    let mut atom_start: Option<usize> = None;
+    let mut group_starts = Vec::new();
+    let mut after_quantifier = false;
+    while pos < pattern.len() {
+        let c = pattern[pos];
+        let interval_len = if c == b'{' {
+            interval_length(&pattern[pos..])
+        } else {
+            None
+        };
+        let quantifier_len = match c {
+            b'*' | b'+' | b'?' => Some(1),
+            b'{' => interval_len,
+            _ => None,
+        };
+        if let (Some(len), Some(start)) = (quantifier_len, atom_start) {
+            if after_quantifier {
+                result.splice(start..start, b"(?:".iter().copied());
+                result.push(b')');
+            }
+            result.extend_from_slice(&pattern[pos..pos + len]);
+            pos += len;
+            after_quantifier = true;
+            continue;
+        }
+        after_quantifier = false;
+        match c {
+            b'\\' => {
+                atom_start = Some(result.len());
+                result.push(c);
+                pos += 1;
+                if let Some(&next) = pattern.get(pos) {
+                    result.push(next);
+                    pos += 1;
+                }
+            }
+            b'[' => {
+                atom_start = Some(result.len());
+                let len = bracket_length(&pattern[pos..]);
+                result.extend_from_slice(&pattern[pos..pos + len]);
+                pos += len;
+            }
+            b'(' => {
+                group_starts.push(result.len());
+                atom_start = None;
+                result.push(c);
+                pos += 1;
+                // Copy the `?:` of a non-capturing group as it is.
+                if pattern[pos..].starts_with(b"?:") {
+                    result.extend_from_slice(b"?:");
+                    pos += 2;
+                }
+            }
+            b')' => {
+                atom_start = group_starts.pop();
+                result.push(c);
+                pos += 1;
+            }
+            b'|' | b'^' | b'$' => {
+                atom_start = None;
+                result.push(c);
+                pos += 1;
+            }
+            // The rest of a multi-byte UTF-8 character.
+            0x80..=0xbf if character_mode == CharacterMode::Utf8 => {
+                result.push(c);
+                pos += 1;
+            }
+            _ => {
+                atom_start = Some(result.len());
+                result.push(c);
+                pos += 1;
+            }
+        }
+    }
+    result
+}
+
+/// Return the length of the `{m,n}` interval at the start of `pattern`,
+/// or None if it isn't one.
+fn interval_length(pattern: &[u8]) -> Option<usize> {
+    let mut len = 1;
+    let mut seen_comma = false;
+    while let Some(&b) = pattern.get(len) {
+        match b {
+            b'0'..=b'9' => {}
+            b',' if !seen_comma => seen_comma = true,
+            b'}' if len > 1 => return Some(len + 1),
+            _ => return None,
+        }
+        len += 1;
+    }
+    None
+}
+
+/// Return the length of the bracket expression at the start of `pattern`.
+/// A `]` right after the opening `[` or `[^` is part of the set, and so is
+/// anything inside `[:`, `[.` or `[=`.
+fn bracket_length(pattern: &[u8]) -> usize {
+    let mut pos = 1;
+    if pattern.get(pos) == Some(&b'^') {
+        pos += 1;
+    }
+    if pattern.get(pos) == Some(&b']') {
+        pos += 1;
+    }
+    while pos < pattern.len() {
+        let b = pattern[pos];
+        pos += 1;
+        if b == b'[' && matches!(pattern.get(pos), Some(b':' | b'.' | b'=')) {
+            let kind = pattern[pos];
+            pos += 1;
+            while pos < pattern.len() {
+                if pattern[pos] == kind && pattern.get(pos + 1) == Some(&b']') {
+                    pos += 2;
+                    break;
+                }
+                pos += 1;
+            }
+        } else if b == b']' {
+            break;
+        }
+    }
+    pos
+}
+
 /// Compile the provided regular expression string into a corresponding engine.
 /// An empty pattern results in None, which means that the last RE employed
 /// at runtime will be used.
@@ -713,6 +848,7 @@ fn compile_regex(
     } else {
         bre_to_ere(pattern)
     };
+    let pattern = group_stacked_quantifiers(&pattern, context.character_mode);
 
     // Add any required modifiers.
     let mut modifiers = Vec::new();
@@ -905,7 +1041,7 @@ fn compile_subst_command(
     let mut subst = Box::new(Substitution::default());
 
     subst.replacement = compile_replacement(lines, line, context.character_mode)?;
-    compile_subst_flags(lines, line, &mut subst, context.posix, context.sandbox)?;
+    compile_subst_flags(lines, line, &mut subst, context)?;
 
     if pattern.is_empty() && (subst.ignore_case || subst.multiline) {
         return compilation_error(
@@ -998,8 +1134,7 @@ pub fn compile_subst_flags(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     subst: &mut Substitution,
-    posix: bool,
-    sandbox: bool,
+    context: &mut ProcessingContext,
 ) -> UResult<()> {
     let mut seen_number = false;
 
@@ -1035,7 +1170,7 @@ pub fn compile_subst_flags(
             }
 
             'i' | 'I' => {
-                if posix {
+                if context.posix {
                     return compilation_error(lines, line, ERR_UNKNOWN_OPTION_TO_S);
                 }
                 subst.ignore_case = true;
@@ -1043,7 +1178,7 @@ pub fn compile_subst_flags(
             }
 
             'm' | 'M' => {
-                if posix {
+                if context.posix {
                     return compilation_error(lines, line, ERR_UNKNOWN_OPTION_TO_S);
                 }
                 subst.multiline = true;
@@ -1051,7 +1186,7 @@ pub fn compile_subst_flags(
             }
 
             'e' => {
-                if posix || sandbox {
+                if context.posix || context.sandbox {
                     return compilation_error(
                         lines,
                         line,
@@ -1092,12 +1227,12 @@ pub fn compile_subst_flags(
             }
 
             'w' => {
-                if sandbox {
+                if context.sandbox {
                     return compilation_error(lines, line, ERR_SANDBOX);
                 }
                 let location = ScriptLocation::at_position(lines, line);
                 let path = read_file_path(lines, line)?;
-                subst.write_file = Some(NamedWriter::new(path, location)?);
+                subst.write_file = Some(named_writer(context, path, location)?);
                 return Ok(()); // 'w' is the last flag allowed
             }
 
@@ -1212,8 +1347,23 @@ fn compile_write_file_command(
     }
     let location = ScriptLocation::at_position(lines, line);
     let path = read_file_path(lines, line)?;
-    cmd.data = CommandData::NamedWriter(NamedWriter::new(path, location)?);
+    cmd.data = CommandData::NamedWriter(named_writer(context, path, location)?);
     Ok(CommandHandling::Continue)
+}
+
+/// Return the writer for path, creating (and truncating) the file only the
+/// first time a script names it.
+fn named_writer(
+    context: &mut ProcessingContext,
+    path: PathBuf,
+    location: ScriptLocation,
+) -> UResult<Rc<RefCell<NamedWriter>>> {
+    if let Some(writer) = context.named_writers.get(&path) {
+        return Ok(Rc::clone(writer));
+    }
+    let writer = NamedWriter::new(path.clone(), location)?;
+    context.named_writers.insert(path, Rc::clone(&writer));
+    Ok(writer)
 }
 
 // Handles {
@@ -1319,11 +1469,23 @@ fn compile_text_command(
 ) -> UResult<CommandHandling> {
     line.advance(); // Skip the command character.
     line.eat_spaces(); // Skip any leading whitespace.
-    if context.posix {
-        compile_text_command_posix(lines, line, cmd, context)
-    } else {
-        compile_text_command_gnu(lines, line, cmd, context)
+    // --posix needs the \ before the text.
+    if context.posix && (line.eol() || line.current() != '\\') {
+        return compilation_error(
+            lines,
+            line,
+            format!("command `{}' expects \\ followed by text", cmd.code),
+        );
     }
+
+    compile_text_command_gnu(lines, line, cmd, context)?;
+
+    // With --posix, a \ at the end of the script leaves the command without any text.
+    if context.posix && matches!(&cmd.data, CommandData::Text(text) if text.is_empty()) {
+        compilation_error(lines, line, "incomplete command")?;
+    }
+
+    Ok(CommandHandling::Continue)
 }
 
 /// Compile commands that take text as an argument (GNU syntax).
@@ -1406,57 +1568,6 @@ fn compile_text_command_gnu(
             line.advance();
         }
     }
-    cmd.data = CommandData::Text(Rc::from(text));
-    Ok(CommandHandling::Continue)
-}
-
-/// Compile commands that take text as an argument (POSIX syntax).
-// Handles a, c, i; after the command and initial whitespace have been consumed.
-// According to POSIX, these commands expect \ followed by text.
-fn compile_text_command_posix(
-    lines: &mut ScriptLineProvider,
-    line: &mut ScriptCharProvider,
-    cmd: &mut Command,
-    _context: &mut ProcessingContext,
-) -> UResult<CommandHandling> {
-    if line.eol() || line.current() != '\\' {
-        return compilation_error(
-            lines,
-            line,
-            format!("command `{}' expects \\ followed by text", cmd.code),
-        );
-    }
-
-    line.advance(); // Skip \.
-    line.eat_spaces(); // Skip any whitespace at the end of \.
-    if !line.eol() {
-        return compilation_error(
-            lines,
-            line,
-            format!(
-                "extra characters after \\ at the end of `{}' command",
-                cmd.code
-            ),
-        );
-    }
-
-    let mut text = Vec::new();
-    while let Some(line) = lines.next_line()? {
-        if line.ends_with(b"\\") {
-            // Line ends with \ to escape \n; remove the trailing \.
-            text.extend_from_slice(&line[..line.len() - 1]);
-            text.push(b'\n');
-        } else {
-            text.extend_from_slice(&line);
-            text.push(b'\n');
-            break;
-        }
-    }
-
-    if text.is_empty() {
-        compilation_error(lines, line, "incomplete command")?;
-    }
-
     cmd.data = CommandData::Text(Rc::from(text));
     Ok(CommandHandling::Continue)
 }
@@ -2678,7 +2789,7 @@ mod tests {
         let (lines, mut chars) = make_providers("g");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert_eq!(subst.occurrence, 1);
         assert!(subst.global);
     }
@@ -2688,7 +2799,7 @@ mod tests {
         let (lines, mut chars) = make_providers("p");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.print_flag);
     }
 
@@ -2697,7 +2808,7 @@ mod tests {
         let (lines, mut chars) = make_providers("I");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.ignore_case);
     }
 
@@ -2706,7 +2817,7 @@ mod tests {
         let (lines, mut chars) = make_providers("i");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.ignore_case);
     }
 
@@ -2715,7 +2826,7 @@ mod tests {
         let (lines, mut chars) = make_providers("M");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.multiline);
     }
 
@@ -2724,7 +2835,7 @@ mod tests {
         let (lines, mut chars) = make_providers("m");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.multiline);
     }
 
@@ -2733,7 +2844,7 @@ mod tests {
         let (lines, mut chars) = make_providers("3");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert_eq!(subst.occurrence, 3);
     }
 
@@ -2743,7 +2854,7 @@ mod tests {
             let (lines, mut chars) = make_providers(flags);
             let mut subst = Substitution::default();
 
-            compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+            compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
             assert_eq!(subst.occurrence, 3);
             assert!(subst.global);
         }
@@ -2754,7 +2865,7 @@ mod tests {
         let (lines, mut chars) = make_providers("gpg");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
         assert!(
             err.to_string()
                 .contains(":3: error: multiple `g' options to `s' command")
@@ -2766,7 +2877,7 @@ mod tests {
         let (lines, mut chars) = make_providers("2g3");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
         assert!(
             err.to_string()
                 .contains(":3: error: multiple number options to `s' command")
@@ -2778,7 +2889,7 @@ mod tests {
         let (lines, mut chars) = make_providers("w ");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
         assert!(err.to_string().contains("missing file path"));
     }
 
@@ -2789,7 +2900,7 @@ mod tests {
         let (lines, mut chars) = make_providers(&format!("w {}", out.display()));
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert_eq!(
             subst.write_file.as_ref().map(|w| w.borrow().path.clone()),
             Some(out)
@@ -2801,7 +2912,16 @@ mod tests {
         let (lines, mut chars) = make_providers("w out.txt");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, true).unwrap_err();
+        let err = compile_subst_flags(
+            &lines,
+            &mut chars,
+            &mut subst,
+            &mut ProcessingContext {
+                sandbox: true,
+                ..ctx()
+            },
+        )
+        .unwrap_err();
         assert!(err.to_string().contains(ERR_SANDBOX));
     }
 
@@ -2810,7 +2930,7 @@ mod tests {
         let (lines, mut chars) = make_providers("e");
         let mut subst = Substitution::default();
 
-        compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap();
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.execute);
     }
 
@@ -2819,7 +2939,16 @@ mod tests {
         let (lines, mut chars) = make_providers("e");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, true, false).unwrap_err();
+        let err = compile_subst_flags(
+            &lines,
+            &mut chars,
+            &mut subst,
+            &mut ProcessingContext {
+                posix: true,
+                ..ctx()
+            },
+        )
+        .unwrap_err();
         assert!(
             err.to_string()
                 .contains("not allowed with --posix or --sandbox")
@@ -2831,7 +2960,16 @@ mod tests {
         let (lines, mut chars) = make_providers("e");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, true).unwrap_err();
+        let err = compile_subst_flags(
+            &lines,
+            &mut chars,
+            &mut subst,
+            &mut ProcessingContext {
+                sandbox: true,
+                ..ctx()
+            },
+        )
+        .unwrap_err();
         assert!(
             err.to_string()
                 .contains("not allowed with --posix or --sandbox")
@@ -2843,7 +2981,7 @@ mod tests {
         let (lines, mut chars) = make_providers("z");
         let mut subst = Substitution::default();
 
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, false, false).unwrap_err();
+        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
         assert!(err.to_string().contains("invalid substitute flag"));
     }
 
@@ -2949,6 +3087,59 @@ mod tests {
             }
             _ => panic!("Expected CommandData::Transliteration"),
         }
+    }
+
+    // group_stacked_quantifiers
+    fn group_stacked_quantifiers_string(pattern: &str) -> String {
+        String::from_utf8(group_stacked_quantifiers(
+            pattern.as_bytes(),
+            CharacterMode::Utf8,
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn test_group_stacked_quantifiers() {
+        assert_eq!(group_stacked_quantifiers_string("ab+?"), "a(?:b+)?");
+        assert_eq!(group_stacked_quantifiers_string("ab*+c"), "a(?:b*)+c");
+        assert_eq!(group_stacked_quantifiers_string("a{2}??"), "(?:(?:a{2})?)?");
+        assert_eq!(group_stacked_quantifiers_string("(ab)*?"), "(?:(ab)*)?");
+        assert_eq!(group_stacked_quantifiers_string("x[ab]+?"), "x(?:[ab]+)?");
+        assert_eq!(group_stacked_quantifiers_string(r"x\.+?"), r"x(?:\.+)?");
+        assert_eq!(group_stacked_quantifiers_string("xé+?"), "x(?:é+)?");
+    }
+
+    #[test]
+    fn test_group_stacked_quantifiers_byte_mode() {
+        // In byte mode 0xa9 is a character of its own, not part of the a.
+        assert_eq!(
+            group_stacked_quantifiers(b"a\xa9+?", CharacterMode::Byte),
+            b"a(?:\xa9+)?"
+        );
+        assert_eq!(
+            group_stacked_quantifiers(b"\xc3\xa9+?", CharacterMode::Byte),
+            b"\xc3(?:\xa9+)?"
+        );
+        assert_eq!(
+            group_stacked_quantifiers(b"\xc3\xa9+?", CharacterMode::Utf8),
+            b"(?:\xc3\xa9+)?"
+        );
+    }
+
+    #[test]
+    fn test_group_stacked_quantifiers_leaves_the_rest() {
+        assert_eq!(group_stacked_quantifiers_string("a+b?c{1,2}"), "a+b?c{1,2}");
+        assert_eq!(group_stacked_quantifiers_string(r"a\*?\++"), r"a\*?\++");
+        assert_eq!(group_stacked_quantifiers_string("[]+?]"), "[]+?]");
+        assert_eq!(
+            group_stacked_quantifiers_string("[[:alpha:]+?]"),
+            "[[:alpha:]+?]"
+        );
+        assert_eq!(
+            group_stacked_quantifiers_string(r"(a)(?:\1)?"),
+            r"(a)(?:\1)?"
+        );
+        assert_eq!(group_stacked_quantifiers_string("a{b}?"), "a{b}?");
     }
 
     // bre_to_ere
@@ -3549,7 +3740,8 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_text_command_posix_spaces_single_line() {
+    fn test_compile_text_command_posix_space_after_backslash() {
+        // Like GNU sed, the space after the \ is the text.
         let mut chars = make_char_provider("a \\ ");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
@@ -3561,7 +3753,7 @@ mod tests {
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b"line1\n");
+                assert_eq!(text.as_ref(), b" \n");
             }
             _ => panic!("Expected CommandData::Text"),
         }
@@ -3722,7 +3914,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_text_command_posix_with_trailing_chars() {
+    fn test_compile_text_command_posix_text_on_same_line() {
         let mut chars = make_char_provider("a \\ foo");
         let mut lines = make_line_provider(&["line1", "line2"]);
         let mut cmd = Command::default();
@@ -3731,10 +3923,13 @@ mod tests {
             ..Default::default()
         };
 
-        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("extra characters after \\"));
+        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
+        match &cmd.data {
+            CommandData::Text(text) => {
+                assert_eq!(text.as_ref(), b" foo\n");
+            }
+            _ => panic!("Expected CommandData::Text"),
+        }
     }
 
     // read_file_path
