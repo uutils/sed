@@ -831,6 +831,17 @@ fn test_unknown_regex_escape_is_literal() {
             .succeeds()
             .stdout_is(expected);
     }
+
+    new_ucmd!()
+        .args(&["-E", r"s/\A/X/"])
+        .pipe_in("xAy\n")
+        .succeeds()
+        .stdout_is("xXy\n");
+    new_ucmd!()
+        .args(&["-n", r"/\D/p"])
+        .pipe_in("a\nD\n")
+        .succeeds()
+        .stdout_is("D\n");
 }
 
 #[test]

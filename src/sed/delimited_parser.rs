@@ -465,10 +465,10 @@ pub fn parse_regex_for_mode(
                 } else {
                     // Unknown letter and zero escapes are literal in sed, even
                     // when the regex engine gives them another meaning.
-                    if !(line.current().is_ascii_alphanumeric()
-                        && !is_gnu_regex_escape(line.current(), regex_mode)
-                        && !matches!(line.current(), '1'..='9'))
-                    {
+                    let c = line.current();
+                    let literal = c == '0'
+                        || (c.is_ascii_alphabetic() && !is_gnu_regex_escape(c, regex_mode));
+                    if !literal {
                         result.push(b'\\');
                     }
                     result.push(line.current_byte());
