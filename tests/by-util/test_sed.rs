@@ -3513,6 +3513,21 @@ fn test_range_numeric_start_skipped_by_d() {
 }
 
 #[test]
+fn test_step_end_range_with_skipped_end() {
+    for (script, expected) in [
+        ("3d;2,~3p", "2\n4\n"),
+        ("3,4d;2,~3p", "2\n5\n"),
+        ("3,~3p", "3\n4\n5\n6\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
 fn test_step_non_numeric() {
     for (script, column) in [("1~/x/p", 6), ("1,~/x/p", 7)] {
         new_ucmd!()
