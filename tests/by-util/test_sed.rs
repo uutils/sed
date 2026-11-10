@@ -805,22 +805,25 @@ fn test_bracket_literal_open_bracket() {
 fn test_bracket_collating_symbol_and_equivalence_class() {
     // Without locale collation data [.c.] and [=c=] stand for the single character c.
     for (script, expected) in [
-        (r"s/[[.a.]]/X/g", r".=X]\^-c[&~|9z"),
-        (r"s/[[=a=]]/X/g", r".=X]\^-c[&~|9z"),
-        (r"s/[[.].]]/X/g", r".=aX\^-c[&~|9z"),
-        (r"s/[[=]=]]/X/g", r".=aX\^-c[&~|9z"),
-        (r"s/[[.-.]]/X/g", r".=a]\^Xc[&~|9z"),
-        (r"s/[[.\.]]/X/g", r".=a]X^-c[&~|9z"),
-        (r"s/[[.^.][.[.]]/X/g", r".=a]\X-cX&~|9z"),
-        (r"s/[[.&.][.~.][.|.]]/X/g", r".=a]\^-c[XXX9z"),
-        (r"s/[^[.a.]]/X/g", "XXaXXXXXXXXXXX"),
-        (r"s/[[.a.]-[.c.]]/X/g", r".=X]\^-X[&~|9z"),
-        (r"s/[b-[.d.]9]/X/g", r".=a]\^-X[&~|Xz"),
-        (r"s/[a[.-.]z]/X/g", r".=X]\^Xc[&~|9X"),
+        (r"s/[[.a.]]/X/g", r".=X]\^-c[&~|9z<>"),
+        (r"s/[[=a=]]/X/g", r".=X]\^-c[&~|9z<>"),
+        (r"s/[[.].]]/X/g", r".=aX\^-c[&~|9z<>"),
+        (r"s/[[=]=]]/X/g", r".=aX\^-c[&~|9z<>"),
+        (r"s/[[.-.]]/X/g", r".=a]\^Xc[&~|9z<>"),
+        (r"s/[[.\.]]/X/g", r".=a]X^-c[&~|9z<>"),
+        (r"s/[[.^.][.[.]]/X/g", r".=a]\X-cX&~|9z<>"),
+        (r"s/[[.&.][.~.][.|.]]/X/g", r".=a]\^-c[XXX9z<>"),
+        (r"s/[^[.a.]]/X/g", "XXaXXXXXXXXXXXXX"),
+        (r"s/[[.a.]-[.c.]]/X/g", r".=X]\^-X[&~|9z<>"),
+        (r"s/[b-[.d.]9]/X/g", r".=a]\^-X[&~|Xz<>"),
+        (r"s/[a[.-.]z]/X/g", r".=X]\^Xc[&~|9X<>"),
+        (r"s/[[.<.]]/X/g", r".=a]\^-c[&~|9zX>"),
+        (r"s/[[=>=]]/X/g", r".=a]\^-c[&~|9z<X"),
+        (r"s/[[.<.][=>=]]/X/g", r".=a]\^-c[&~|9zXX"),
     ] {
         new_ucmd!()
             .args(&["-e", script])
-            .pipe_in(".=a]\\^-c[&~|9z\n")
+            .pipe_in(".=a]\\^-c[&~|9z<>\n")
             .succeeds()
             .stdout_is(format!("{expected}\n"));
     }
