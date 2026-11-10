@@ -3342,6 +3342,17 @@ fn test_empty_text_commands_fail() {
 }
 
 #[test]
+fn test_script_parser_skips_only_space_and_tab() {
+    new_ucmd!().arg("p\r").pipe_in("a\n").fails().code_is(1);
+
+    new_ucmd!()
+        .arg("1a\x0bfoo")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n\x0bfoo\n");
+}
+
+#[test]
 fn test_addr0_non_posix() {
     new_ucmd!()
         .args(&["--posix", "0,/foo/p"])
