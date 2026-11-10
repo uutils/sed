@@ -1065,12 +1065,11 @@ fn test_subst_e_flag_combined_with_g() {
 
 #[test]
 fn test_subst_repeated_p_flag_is_rejected() {
-    // GNU sed rejects a repeated `p` flag instead of silently accepting it.
     new_ucmd!()
         .arg("s/a/b/pp")
         .fails()
         .code_is(1)
-        .stderr_contains("multiple `p' options to `s' command");
+        .stderr_is("sed: <script argument 1>:1:8: error: multiple `p' options to `s' command\n");
 }
 
 #[cfg(unix)]
