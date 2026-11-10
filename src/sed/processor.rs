@@ -1002,7 +1002,10 @@ pub fn process_all_files(
         }
 
         context.input_name = path;
-        process_file(commands.clone(), &mut reader, output, context)?;
+        if let Err(error) = process_file(commands.clone(), &mut reader, output, context) {
+            output.flush()?;
+            return Err(error);
+        }
 
         // Handle any N command remains.
         if context.last_file
