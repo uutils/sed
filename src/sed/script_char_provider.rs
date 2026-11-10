@@ -133,7 +133,7 @@ mod tests {
         provider.eat_spaces();
         assert_eq!(provider.current(), '\n');
 
-        for byte in [b'\r', b'\x0b', b'\x0c', b'\x85', b'\xa0'] {
+        for &byte in b"\r\x0b\x0c\x85\xa0" {
             let mut provider = ScriptCharProvider::new([b' ', b'\t', byte]);
             provider.eat_spaces();
             assert_eq!(provider.current_byte(), byte);
