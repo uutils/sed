@@ -111,11 +111,7 @@ fn applies(
                     // Inclusive end on the first line reaching a multiple of step.
                     // If that multiple was skipped (e.g. by `d`, a branch, or a block),
                     // the range ends on the next line evaluated.
-                    let end_line = if *step == 0 {
-                        start
-                    } else {
-                        ((start / step) + 1) * step
-                    };
+                    let end_line = ((start / step) + 1) * step;
                     if linenum >= end_line {
                         command.start_line = None;
                         context.last_address = true;
