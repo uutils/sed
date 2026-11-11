@@ -4069,3 +4069,53 @@ fn test_relative_range_blank_or_missing_number() {
             .stdout_is(expected);
     }
 }
+
+#[test]
+fn test_numeric_range_not_restarted_by_branch() {
+    // A range whose numeric start and end are the same line is selected
+    // only once, even when a backward branch re-runs the command on it.
+    for script in [
+        ":a;2,+0{s/x/y/;ta}",
+        ":a;2,2{s/x/y/;ta}",
+        ":a;2,0{s/x/y/;ta}",
+        ":a;2,~0{s/x/y/;ta}",
+        ":a;2,1{s/x/y/;ta}",
+        ":a;2,${s/x/y/;ta}",
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\nxxx\n")
+            .succeeds()
+            .stdout_is("a\nyxx\n");
+    }
+}
+
+#[test]
+fn test_numeric_range_regex_end_not_restarted_by_branch() {
+    // Closed on line 2 by the regex, the range must not start again there
+    // (or on line 3).
+    new_ucmd!()
+        .arg(":a;2,/x/{s/x/y/;ta}")
+        .pipe_in("a\nxxx\nxx\n")
+        .succeeds()
+        .stdout_is("a\nyyx\nxx\n");
+}
+
+#[test]
+fn test_numeric_range_branch_terminates() {
+    new_ucmd!()
+        .arg(":y;2,+0by")
+        .pipe_in("1\n2\n3\n")
+        .timeout(std::time::Duration::from_secs(5))
+        .succeeds()
+        .stdout_is("1\n2\n3\n");
+}
+
+#[test]
+fn test_numeric_range_not_restarted_by_d_restart() {
+    new_ucmd!()
+        .arg("2,+0{N;D}")
+        .pipe_in("a\nb\nc\nd\n")
+        .succeeds()
+        .stdout_is("a\nc\nd\n");
+}
