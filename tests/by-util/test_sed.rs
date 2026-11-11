@@ -1679,6 +1679,7 @@ fn test_change_command_prints_text_at_range_end() {
         ("2,4c\\X", "1\nX\n5\n6\n"),
         ("2,+2c\\X", "1\nX\n5\n6\n"),
         ("2,~4c\\X", "1\nX\n5\n6\n"),
+        ("4,~4c\\X", "1\n2\n3\n"),
         ("2,4!c\\X", "X\n2\n3\n4\nX\nX\n"),
         ("5,8c\\X", "1\n2\n3\n4\n"),
         ("/2/,/3/c\\X\n6,8c\\Y", "1\nX\n4\n5\n"),
@@ -1698,6 +1699,16 @@ fn test_range_with_line_end_restarts_on_next_line() {
         .pipe_in("a\na\na\na\nb\n")
         .succeeds()
         .stdout_is("b\n");
+    new_ucmd!()
+        .arg("/a/,+1d")
+        .pipe_in("a\na\na\na\nb\n")
+        .succeeds()
+        .stdout_is("b\n");
+    new_ucmd!()
+        .arg("/a/,+1c\\X")
+        .pipe_in("a\na\na\na\nb\n")
+        .succeeds()
+        .stdout_is("X\nX\nb\n");
 }
 
 #[test]
