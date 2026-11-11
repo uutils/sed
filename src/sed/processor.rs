@@ -406,9 +406,11 @@ fn substitute(
 
         // Write to file if needed.
         if let Some(ref writer) = sub.write_file {
-            writer
-                .borrow_mut()
-                .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
+            writer.borrow_mut().write_line_bytes(
+                pattern.as_bytes(),
+                pattern.is_newline_terminated(),
+                context.unbuffered_named_files,
+            )?;
         }
         context.substitution_made = true;
     }
@@ -879,9 +881,11 @@ fn process_file(
                 'w' => {
                     // Append the pattern space to the specified file.
                     let writer = extract_variant!(command, NamedWriter);
-                    writer
-                        .borrow_mut()
-                        .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
+                    writer.borrow_mut().write_line_bytes(
+                        pattern.as_bytes(),
+                        pattern.is_newline_terminated(),
+                        context.unbuffered_named_files,
+                    )?;
                 }
                 'W' => {
                     // Append only the first line of the pattern space.
@@ -896,6 +900,7 @@ fn process_file(
                     writer.borrow_mut().write_line_bytes(
                         first_line,
                         !found_newline && pattern.is_newline_terminated(),
+                        context.unbuffered_named_files,
                     )?;
                 }
                 'x' => {
@@ -1033,6 +1038,31 @@ mod tests {
     use super::*;
     use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempfile;
+
+    #[test]
+    fn test_terminal_output_does_not_flush_named_file_without_unbuffered_flag() {
+        let input = tempfile::NamedTempFile::new().unwrap();
+        let named = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(input.path(), b"a\n").unwrap();
+        let writer =
+            named_writer::NamedWriter::new(named.path().to_path_buf(), ScriptLocation::default())
+                .unwrap();
+        let command = Rc::new(RefCell::new(Command {
+            code: 'w',
+            data: CommandData::NamedWriter(writer),
+            ..Command::default()
+        }));
+        let mut output = OutputBuffer::new(Box::new(tempfile().unwrap()));
+        let mut reader = LineReader::open(&input.path().to_path_buf()).unwrap();
+        let mut context = ProcessingContext {
+            unbuffered: true, // Simulate the terminal-detected stdout setting.
+            quiet: true,
+            ..ProcessingContext::default()
+        };
+
+        process_file(Some(command), &mut reader, &mut output, &mut context).unwrap();
+        assert_eq!(std::fs::read(named.path()).unwrap(), b"");
+    }
 
     #[test]
     fn test_readable_ascii_byte_named_escapes() {

@@ -55,18 +55,25 @@ impl NamedWriter {
         Ok(writer)
     }
 
-    /// Write String to the file, possibly with a newline, returning errors.
-    pub fn write_line(&mut self, line: &str, newline: bool) -> UResult<()> {
-        self.write_line_bytes(line.as_bytes(), newline)
-    }
-
     /// Write bytes to the file, possibly with a newline, returning errors.
-    pub fn write_line_bytes(&mut self, line: &[u8], newline: bool) -> UResult<()> {
+    pub fn write_line_bytes(
+        &mut self,
+        line: &[u8],
+        newline: bool,
+        unbuffered: bool,
+    ) -> UResult<()> {
         self.writer
             .write_all(line)
             .and_then(|()| {
                 if newline {
                     self.writer.write_all(b"\n")
+                } else {
+                    Ok(())
+                }
+            })
+            .and_then(|()| {
+                if unbuffered {
+                    self.writer.flush()
                 } else {
                     Ok(())
                 }
@@ -117,7 +124,7 @@ mod tests {
 
         writer
             .borrow_mut()
-            .write_line_bytes(b"a\xE9", true)
+            .write_line_bytes(b"a\xE9", true, false)
             .unwrap();
         writer.borrow_mut().flush().unwrap();
 
@@ -132,7 +139,7 @@ mod tests {
 
         writer
             .borrow_mut()
-            .write_line_bytes(b"a\xE9", false)
+            .write_line_bytes(b"a\xE9", false, false)
             .unwrap();
         writer.borrow_mut().flush().unwrap();
 

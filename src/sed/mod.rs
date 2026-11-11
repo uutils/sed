@@ -370,6 +370,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
         separate: matches.get_flag("separate") || matches.contains_id("in-place"),
         sandbox: matches.get_flag("sandbox"),
         unbuffered: matches.get_flag("unbuffered"),
+        unbuffered_named_files: matches.get_flag("unbuffered"),
         null_data: matches.get_flag("null-data"),
         uutil_extensions: matches.get_flag("uutil-extensions"),
 
