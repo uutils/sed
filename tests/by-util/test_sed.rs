@@ -17,6 +17,8 @@ use assert_fs::fixture::{FileWriteStr, PathChild};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use uutests::new_ucmd;
+use uutests::util::TestScenario;
+use uutests::util_name;
 
 ////////////////////////////////////////////////////////////
 // Test application's invocation
@@ -3946,46 +3948,32 @@ fn test_relative_range_blank_or_missing_number() {
 }
 
 #[test]
-fn test_hash_comment_after_substitute() {
-    new_ucmd!()
-        .args(&["s/a/A/#comment"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is("A\n");
-}
-
-#[test]
-fn test_hash_comment_after_print() {
-    new_ucmd!()
-        .args(&["p#comment"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is("a\na\n");
-}
-
-#[test]
-fn test_hash_comment_after_group() {
-    new_ucmd!()
-        .args(&["{p}#comment"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is("a\na\n");
-}
-
-#[test]
-fn test_substitute_stops_flags_at_closing_brace() {
-    new_ucmd!()
-        .args(&["{s/a/A/}"])
-        .pipe_in("a\n")
-        .succeeds()
-        .stdout_is("A\n");
+fn test_hash_comment_after_command() {
+    for (script, expected) in [
+        ("s/a/A/#comment", "A\n"),
+        ("s/a/A/g#comment", "A\n"),
+        ("s/a/A/ #comment", "A\n"),
+        ("y/a/A/#c", "A\n"),
+        ("p#comment", "a\na\n"),
+        ("{p}#comment", "a\na\n"),
+        ("{s/a/A/}", "A\n"),
+    ] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
 }
 
 #[test]
 fn test_substitute_w_flag_keeps_hash_filename() {
-    new_ucmd!()
+    let scene = TestScenario::new(util_name!());
+    scene
+        .ucmd()
         .args(&["s/a/A/w#c"])
         .pipe_in("a\n")
         .succeeds()
         .stdout_is("A\n");
+    assert_eq!(scene.fixtures.read("#c"), "A\n");
 }
