@@ -2594,6 +2594,35 @@ fn write_dev_stdout_is_sed_output() {
             .succeeds()
             .stdout_is(expected);
     }
+    // With -n, and with a last line that has no newline.
+    for (args, input, expected) in [
+        (&["-n", "s/a/X/w /dev/stdout"][..], "a\nb\n", "X\n"),
+        (&["w /dev/stdout"][..], "a", "aa"),
+        (&["w /dev/stdout"][..], "a\nb", "a\na\nbb"),
+        (&["-n", "w /dev/stdout"][..], "a\nb", "a\nb"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn write_dev_stdout_with_in_place() -> std::io::Result<()> {
+    // With -i, /dev/stdout is still the terminal, not the edited file.
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
+    std::fs::write(&path, "a\nb\n")?;
+
+    new_ucmd!()
+        .args(&["-i", "s/a/X/w /dev/stdout", path.to_str().unwrap()])
+        .succeeds()
+        .stdout_is("X\n");
+
+    assert_eq!(std::fs::read_to_string(&path)?, "X\nb\n");
+    Ok(())
 }
 
 #[test]
