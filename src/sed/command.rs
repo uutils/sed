@@ -106,13 +106,13 @@ pub struct ByteSpace {
 #[derive(Debug)]
 /// Types of address specifications that precede commands
 pub enum Address {
-    Re(Option<Rc<Regex>>), // Line that matches (optional) regex
-    Line(usize),           // Specific line
-    RelLine(usize),        // Relative line
-    Last,                  // Last line
-    StepMatch(usize),      // Lines matching specified step from first
-    Step(usize, usize),    // first~step starting a range: first, first+step, ...
-    StepEnd(usize),        // Range ending at specified step from first
+    Re(Option<Rc<Regex>>),   // Line that matches (optional) regex
+    Line(usize),             // Specific line
+    RelLine(usize),          // Relative line
+    Last,                    // Last line
+    StepMatch(usize),        // Lines matching specified step from first
+    StepStart(usize, usize), // first~step starting a range: first, first+step, ...
+    StepEnd(usize),          // Range ending at specified step from first
 }
 
 #[derive(Debug)]

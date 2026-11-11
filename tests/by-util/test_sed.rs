@@ -3240,6 +3240,7 @@ fn test_step_match_starts_range() {
         ("2~3,/7/p", "2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n"),
         ("1~0,3p", "1\n2\n3\n"),
         ("3~2,1p", "3\n5\n7\n9\n11\n"),
+        ("1d;1~0,3p", "2\n3\n"),
     ] {
         new_ucmd!()
             .args(&["-n", script])
@@ -3247,6 +3248,13 @@ fn test_step_match_starts_range() {
             .succeeds()
             .stdout_is(expected);
     }
+    // Unlike `0,/x/`, `0~3,/x/` starts on line 3, so a match on line 1
+    // does not end it.
+    new_ucmd!()
+        .args(&["-n", "0~3,/x/p"])
+        .pipe_in("x\n2\n3\n4\nx\n6\n7\n")
+        .succeeds()
+        .stdout_is("3\n4\nx\n6\n7\n");
 }
 
 #[test]
