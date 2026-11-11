@@ -1458,7 +1458,7 @@ fn compile_text_command_posix(
 fn compile_version_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
-    _cmd: &mut Command,
+    cmd: &mut Command,
     _context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     const GNU_VERSION: [u32; 2] = [4, 9];
@@ -1466,72 +1466,44 @@ fn compile_version_command(
     line.advance();
     line.eat_spaces(); // Skip any leading whitespace.
 
-    let mut components: Vec<u32> = Vec::new();
-    let mut current = String::new();
-    let mut last_was_dot = false;
-
+    // Collect the version argument; it ends at whitespace or a command ending.
+    let mut raw = String::new();
     while !line.eol() {
         let c = line.current();
-        // The version argument ends at a command separator; leave it in place.
-        if matches!(c, ';' | '#' | '}') {
+        if c.is_whitespace() || matches!(c, ';' | '#' | '}') {
             break;
         }
-        if c == '.' {
-            if current.is_empty() {
-                // Leading or consecutive dots are empty components (GNU: `v.9`).
-                components.push(0);
-            } else {
-                match current.parse::<u32>() {
-                    Ok(n) => components.push(n),
-                    Err(_) => return compilation_error(lines, line, "invalid version of sed"),
-                }
-                current.clear();
-            }
-            last_was_dot = true;
-            line.advance();
-            continue;
-        }
-        if c.is_ascii_digit() {
-            current.push(c);
-            last_was_dot = false;
-            line.advance();
-            continue;
-        }
-        return compilation_error(lines, line, "invalid version of sed");
+        raw.push(c);
+        line.advance();
     }
 
-    if !current.is_empty() {
-        match current.parse::<u32>() {
-            Ok(n) => components.push(n),
-            Err(_) => return compilation_error(lines, line, "invalid version of sed"),
-        }
-    } else if last_was_dot {
-        // A trailing dot is an extra empty component (GNU: `v4.9.` fails).
-        components.push(0);
+    line.eat_spaces();
+    // `#` starts a comment; leave it in place so it can be parsed next.
+    if line.eol() || line.current() != '#' {
+        parse_command_ending(lines, line, cmd)?;
     }
 
     // No argument, or only separators, is an extension assertion and succeeds.
-    if !components.is_empty() && version_is_newer_than(&components, &GNU_VERSION) {
-        return compilation_error(lines, line, "expected newer version of sed");
+    if !raw.is_empty() {
+        // Split on '.'; leading, trailing or consecutive dots are 0 (GNU: `v.9`, `v4.9.`).
+        let mut components = Vec::new();
+        for part in raw.split('.') {
+            if part.is_empty() {
+                components.push(0);
+            } else {
+                match part.parse::<u32>() {
+                    Ok(n) => components.push(n),
+                    Err(_) => return compilation_error(lines, line, "invalid version of sed"),
+                }
+            }
+        }
+        // Slices compare lexicographically, and a longer equal prefix is greater.
+        if components.as_slice() > &GNU_VERSION[..] {
+            return compilation_error(lines, line, "expected newer version of sed");
+        }
     }
 
     Ok(CommandHandling::Continue)
-}
-
-/// Return true if `requested` is newer than the implementation version.
-/// Equal shared components with extra requested components count as newer,
-/// matching GNU sed 4.9 (`v4.9` succeeds, `v4.9.0` does not).
-fn version_is_newer_than(requested: &[u32], current: &[u32]) -> bool {
-    let n = requested.len().min(current.len());
-    for i in 0..n {
-        if requested[i] > current[i] {
-            return true;
-        }
-        if requested[i] < current[i] {
-            return false;
-        }
-    }
-    requested.len() > current.len()
 }
 
 // Handles e

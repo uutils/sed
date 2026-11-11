@@ -3799,7 +3799,7 @@ fn test_invalid_version() {
     new_ucmd!()
         .args(&["v4.a"])
         .fails()
-        .stderr_is("sed: <script argument 1>:1:4: error: invalid version of sed\n");
+        .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
 }
 
 #[test]
@@ -3876,6 +3876,31 @@ fn test_version_accepts_addresses() {
         .pipe_in("a\n")
         .succeeds()
         .stdout_is("a\n");
+}
+
+#[test]
+fn test_version_stops_at_brace_hash_and_blank_before_semicolon() {
+    for script in ["1{v4.9}", "1{v4.9 }", "v4.9#c"] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is("a\n");
+    }
+
+    new_ucmd!()
+        .args(&["v4.9 ;s/a/A/"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("A\n");
+}
+
+#[test]
+fn test_version_component_overflows_u32() {
+    new_ucmd!()
+        .args(&["v4294967296"])
+        .fails()
+        .stderr_contains("invalid version of sed");
 }
 
 //--posix should reject GNU substitute flags i/I https://github.com/uutils/sed/issues/401
