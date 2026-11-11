@@ -173,14 +173,16 @@ fn applies(
 }
 
 /// Write line, possibly with a newline, to the file of a `w` command or flag.
-/// `/dev/stdout` is sed's own output, so the lines keep their order there.
+/// `/dev/stdout` is sed's own output, so the lines keep their order there,
+/// unless that output is the temporary file of `-i`.
 fn write_to_file(
     writer: &Rc<RefCell<NamedWriter>>,
     output: &mut OutputBuffer,
+    in_place: bool,
     line: &[u8],
     newline: bool,
 ) -> UResult<()> {
-    if !writer.borrow().is_stdout() {
+    if in_place || !writer.borrow().is_stdout() {
         return writer.borrow_mut().write_line_bytes(line, newline);
     }
     output.write_raw(line)?;
@@ -427,6 +429,7 @@ fn substitute(
             write_to_file(
                 writer,
                 output,
+                context.in_place,
                 pattern.as_bytes(),
                 pattern.is_newline_terminated(),
             )?;
@@ -910,6 +913,7 @@ fn process_file(
                     write_to_file(
                         writer,
                         output,
+                        context.in_place,
                         pattern.as_bytes(),
                         pattern.is_newline_terminated(),
                     )?;
@@ -927,6 +931,7 @@ fn process_file(
                     write_to_file(
                         writer,
                         output,
+                        context.in_place,
                         first_line,
                         !found_newline && pattern.is_newline_terminated(),
                     )?;
