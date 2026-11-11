@@ -1009,25 +1009,32 @@ fn test_posix_keeps_posix_regex_constructs() {
             .stdout_is("Xb\n");
     }
 }
+
 #[test]
 fn test_buffer_start_and_end_anchors() {
     // \` and \' match only at the start and end of the pattern space,
-    // also with the M flag.
+    // also with the M flag, in both BRE and ERE.
+    for mode in [None, Some("-E")] {
+        for (script, input, expected) in [
+            (r"s/\`./X/g", "ab\ncd\n", "Xb\nXd\n"),
+            (r"N;s/\`/>/Mg;s/\'/</Mg", "ab\ncd\n", ">ab\ncd<\n"),
+            (r"s/\`a/X/;s/a\'/Y/", "ab\nca\n", "Xb\ncY\n"),
+        ] {
+            let mut ucmd = new_ucmd!();
+            if let Some(flag) = mode {
+                ucmd.arg(flag);
+            }
+            ucmd.args(&["-e", script])
+                .pipe_in(input)
+                .succeeds()
+                .stdout_is(expected);
+        }
+    }
     new_ucmd!()
-        .args(&["-e", r"s/\`./X/g"])
-        .pipe_in("ab\ncd\n")
-        .succeeds()
-        .stdout_is("Xb\nXd\n");
-    new_ucmd!()
-        .args(&["-e", r"N;s/\`/>/Mg;s/\'/</Mg"])
-        .pipe_in("ab\ncd\n")
-        .succeeds()
-        .stdout_is(">ab\ncd<\n");
-    new_ucmd!()
-        .args(&["-e", r"s/\`a/X/;s/a\'/Y/"])
+        .args(&["-E", "-e", r"s/\`(a|c)/X/;s/(a|b)\'/Y/"])
         .pipe_in("ab\nca\n")
         .succeeds()
-        .stdout_is("Xb\ncY\n");
+        .stdout_is("XY\nXY\n");
 }
 
 #[test]
