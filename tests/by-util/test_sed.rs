@@ -10,6 +10,8 @@
 
 use std::fs;
 use std::io::{Read, Write};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use assert_fs::fixture::{FileWriteStr, PathChild};
@@ -2495,6 +2497,37 @@ fn write_first_line_no_newline() -> std::io::Result<()> {
     assert_eq!(actual, "abc");
 
     Ok(())
+}
+
+#[test]
+fn test_unbuffered_flushes_named_files_before_eof() {
+    for script in ["w", "W", "s/a/A/w"] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("output");
+        let command = format!("{script} {}", path.display());
+        let mut child = new_ucmd!()
+            .args(&["-u", "-n", &command])
+            .set_stdin(Stdio::piped())
+            .run_no_wait();
+        child.write_in("a\n");
+
+        let expected: &[u8] = if script.starts_with('s') {
+            b"A\n"
+        } else {
+            b"a\n"
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut observed = Vec::new();
+        while Instant::now() < deadline {
+            observed = fs::read(&path).unwrap_or_default();
+            if observed == expected {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        child.kill();
+        assert_eq!(observed, expected, "{script} did not flush before EOF");
+    }
 }
 
 #[test]
