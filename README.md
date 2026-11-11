@@ -47,7 +47,7 @@ cargo binstall sed
 
 #### Homebrew
 
-If you use [Homebrew](https://brew.sh), installation is straightforward:
+If you use [Homebrew](https://brew.sh), install it with:
 
 ```bash
 brew install uutils-sed
@@ -55,7 +55,7 @@ brew install uutils-sed
 
 ### Building from source
 
-For other platforms, ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).
+Ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).
 
 Clone the repository and build the project using Cargo:
 
@@ -104,11 +104,12 @@ cargo test
 ```
 
 ## Extensions and incompatibilities
-[docs/src/extensions.md](docs/src/extensions.md) lists the GNU, BSD, and new extensions that sed supports, noting where it differs from GNU sed.”
+[docs/src/extensions.md](docs/src/extensions.md) lists the GNU, BSD, and new extensions that sed supports, noting where it differs from GNU sed.
 
 ## GNU test suite compatibility
 
 The graph below tracks the number of GNU tests that uutils passes over time.
+
 ![Evolution over time](https://github.com/uutils/sed-tracking/blob/main/gnu-results.svg?raw=true)
 
 
