@@ -17,6 +17,8 @@ use assert_fs::fixture::{FileWriteStr, PathChild};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use uutests::new_ucmd;
+use uutests::util::TestScenario;
+use uutests::util_name;
 
 ////////////////////////////////////////////////////////////
 // Test application's invocation
@@ -890,9 +892,10 @@ fn test_invalid_unicode_escape_does_not_panic() {
             .succeeds()
             .stdout_is(expected);
     }
+    // The script fails to compile, so sed exits without reading any input;
+    // piping input in here would race with that and hit a broken pipe.
     new_ucmd!()
         .arg(r"y/a/\ud800/")
-        .pipe_in("a\n")
         .fails()
         .code_is(1)
         .stderr_contains("transliteration strings are not the same length");
@@ -4052,26 +4055,21 @@ fn test_execute_command_output_is_copied_unchanged() {
         .stdout_is("a\n");
 }
 
-/// `}` and a comment may follow a command directly, as in GNU sed.
+/// Like GNU sed, blanks may come between `y` and a following `;`, `}` or comment.
 #[test]
-fn test_brace_or_comment_after_command() {
+fn test_blanks_after_y_command() {
     new_ucmd!()
-        .args(&["-n", "1{s/o/0/p}"])
+        .args(&["-n", "y/f/F/ # comment\np"])
         .pipe_in("foo\n")
         .succeeds()
-        .stdout_is("f0o\n");
+        .stdout_is("Foo\n");
     new_ucmd!()
-        .arg("{s/o/0/g }")
+        .args(&["-n", "y/o/0/ ;p"])
         .pipe_in("foo\n")
         .succeeds()
         .stdout_is("f00\n");
     new_ucmd!()
-        .args(&["-n", "s/o/0/p # comment\np # comment\ny/f/F/ # comment\np"])
-        .pipe_in("foo\n")
-        .succeeds()
-        .stdout_is("f0o\nf0o\nF0o\n");
-    new_ucmd!()
-        .args(&["-n", "y/o/0/ ;p"])
+        .args(&["-n", "{y/o/0/ };p"])
         .pipe_in("foo\n")
         .succeeds()
         .stdout_is("f00\n");
@@ -4093,4 +4091,35 @@ fn test_relative_range_blank_or_missing_number() {
             .succeeds()
             .stdout_is(expected);
     }
+}
+
+#[test]
+fn test_hash_comment_after_command() {
+    for (script, expected) in [
+        ("s/a/A/#comment", "A\n"),
+        ("s/a/A/g#comment", "A\n"),
+        ("s/a/A/ #comment", "A\n"),
+        ("y/a/A/#c", "A\n"),
+        ("p#comment", "a\na\n"),
+        ("{p}#comment", "a\na\n"),
+        ("{s/a/A/}", "A\n"),
+    ] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_substitute_w_flag_keeps_hash_filename() {
+    let scene = TestScenario::new(util_name!());
+    scene
+        .ucmd()
+        .args(&["s/a/A/w#c"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("A\n");
+    assert_eq!(scene.fixtures.read("#c"), "A\n");
 }
