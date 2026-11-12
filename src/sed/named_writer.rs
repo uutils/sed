@@ -12,8 +12,8 @@ use crate::sed::error_handling::{ScriptLocation, runtime_error};
 
 use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::io::{BufWriter, Stdout, Write, stdout};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use uucore::display::Quotable;
@@ -25,34 +25,62 @@ thread_local! {
 }
 
 #[derive(Debug)]
+/// Where a `NamedWriter` sends its lines
+enum Sink {
+    File(BufWriter<File>),
+    /// `/dev/stdout`, which GNU sed treats as its standard output rather than
+    /// a file to open (see `is_stdout`).
+    Stdout(Stdout),
+}
+
+#[derive(Debug)]
 /// Writer that tracks its file name for better error messages
 pub struct NamedWriter {
     pub path: PathBuf,
-    writer: BufWriter<File>,
+    writer: Sink,
     location: ScriptLocation,
 }
 
 impl NamedWriter {
     /// Create a new writer, truncate the file, and register it for flushing.
     pub fn new(path: PathBuf, location: ScriptLocation) -> UResult<Rc<RefCell<Self>>> {
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&path)
-            .map_err(|e| {
-                runtime_error::<()>(&location, format!("creating file {}: {}", path.quote(), e))
-                    .unwrap_err()
-            })?;
+        let sink = if path == Path::new("/dev/stdout") {
+            // Not opened, so a redirected stdout is not truncated.
+            Sink::Stdout(stdout())
+        } else {
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .map_err(|e| {
+                    runtime_error::<()>(&location, format!("creating file {}: {}", path.quote(), e))
+                        .unwrap_err()
+                })?;
+            Sink::File(BufWriter::new(file))
+        };
 
         let writer = Rc::new(RefCell::new(NamedWriter {
             path,
-            writer: BufWriter::new(file),
+            writer: sink,
             location,
         }));
 
         FLUSH_LIST.with(|list| list.borrow_mut().push(Rc::clone(&writer)));
         Ok(writer)
+    }
+
+    /// Return true if this is `/dev/stdout`, which GNU sed treats as its own
+    /// standard output rather than a file to open.
+    pub fn is_stdout(&self) -> bool {
+        matches!(self.writer, Sink::Stdout(_))
+    }
+
+    fn writer(&mut self) -> &mut dyn Write {
+        match &mut self.writer {
+            Sink::File(file) => file,
+            Sink::Stdout(stdout) => stdout,
+        }
     }
 
     /// Write String to the file, possibly with a newline, returning errors.
@@ -62,11 +90,12 @@ impl NamedWriter {
 
     /// Write bytes to the file, possibly with a newline, returning errors.
     pub fn write_line_bytes(&mut self, line: &[u8], newline: bool) -> UResult<()> {
-        self.writer
+        let writer = self.writer();
+        writer
             .write_all(line)
             .and_then(|()| {
                 if newline {
-                    self.writer.write_all(b"\n")
+                    writer.write_all(b"\n")
                 } else {
                     Ok(())
                 }
@@ -82,7 +111,7 @@ impl NamedWriter {
 
     /// Flush the writer, returning a descriptive error.
     pub fn flush(&mut self) -> UResult<()> {
-        self.writer.flush().map_err(|e| {
+        self.writer().flush().map_err(|e| {
             runtime_error::<()>(
                 &self.location,
                 format!("writing to file {}: {}", self.path.quote(), e),

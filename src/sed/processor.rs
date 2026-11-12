@@ -17,7 +17,7 @@ use crate::sed::error_handling::{ScriptLocation, input_runtime_error};
 use crate::sed::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::sed::fast_regex::Regex;
 use crate::sed::in_place::InPlace;
-use crate::sed::named_writer;
+use crate::sed::named_writer::{self, NamedWriter};
 
 use memchr::memchr;
 use std::borrow::Cow;
@@ -170,6 +170,26 @@ fn applies(
     } else {
         result
     }
+}
+
+/// Write line, possibly with a newline, to the file of a `w` command or flag.
+/// `/dev/stdout` is sed's own output, so the lines keep their order there,
+/// unless that output is the temporary file of `-i`.
+fn write_to_file(
+    writer: &Rc<RefCell<NamedWriter>>,
+    output: &mut OutputBuffer,
+    in_place: bool,
+    line: &[u8],
+    newline: bool,
+) -> UResult<()> {
+    if in_place || !writer.borrow().is_stdout() {
+        return writer.borrow_mut().write_line_bytes(line, newline);
+    }
+    output.write_raw(line)?;
+    if newline {
+        output.write_raw(b"\n")?;
+    }
+    Ok(())
 }
 
 /// Write the specified chunk to the output for a given processing context.
@@ -406,9 +426,13 @@ fn substitute(
 
         // Write to file if needed.
         if let Some(ref writer) = sub.write_file {
-            writer
-                .borrow_mut()
-                .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
+            write_to_file(
+                writer,
+                output,
+                context.in_place,
+                pattern.as_bytes(),
+                pattern.is_newline_terminated(),
+            )?;
         }
         context.substitution_made = true;
     }
@@ -646,7 +670,11 @@ fn process_file(
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
                 // Continue processing the `N` or `n` command.
-                if let NextLine::Append(mut combined_lines) = action.next_line {
+                if let NextLine::Append {
+                    contents: mut combined_lines,
+                    ..
+                } = action.next_line
+                {
                     combined_lines.push(b'\n');
                     combined_lines.extend_from_slice(pattern.as_bytes());
 
@@ -791,7 +819,10 @@ fn process_file(
                     // to perform when the next line is read.
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
-                        next_line: NextLine::Append(pattern.as_bytes().to_vec()),
+                        next_line: NextLine::Append {
+                            contents: pattern.as_bytes().to_vec(),
+                            has_newline: pattern.is_newline_terminated(),
+                        },
                     });
                     continue 'lines;
                 }
@@ -879,9 +910,13 @@ fn process_file(
                 'w' => {
                     // Append the pattern space to the specified file.
                     let writer = extract_variant!(command, NamedWriter);
-                    writer
-                        .borrow_mut()
-                        .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
+                    write_to_file(
+                        writer,
+                        output,
+                        context.in_place,
+                        pattern.as_bytes(),
+                        pattern.is_newline_terminated(),
+                    )?;
                 }
                 'W' => {
                     // Append only the first line of the pattern space.
@@ -893,7 +928,10 @@ fn process_file(
                             Some(pos) => (&pattern_bytes[..=pos], true),
                             None => (pattern_bytes, false),
                         };
-                    writer.borrow_mut().write_line_bytes(
+                    write_to_file(
+                        writer,
+                        output,
+                        context.in_place,
                         first_line,
                         !found_newline && pattern.is_newline_terminated(),
                     )?;
@@ -950,11 +988,13 @@ fn process_file(
     // Take them even with -n, so that they do not carry over to the next file.
     if context.separate
         && let Some(action) = context.input_action.take()
-        && let NextLine::Append(mut pending) = action.next_line
+        && let NextLine::Append {
+            contents: pending,
+            has_newline,
+        } = action.next_line
         && !context.quiet
     {
-        pending.push(b'\n');
-        output.write_bytes(&pending)?;
+        output.write_line(&pending, has_newline)?;
         if context.unbuffered {
             output.flush()?;
         }
@@ -1009,10 +1049,12 @@ pub fn process_all_files(
             && !context.separate
             && !context.quiet
             && let Some(action) = context.input_action.take()
-            && let NextLine::Append(mut pending) = action.next_line
+            && let NextLine::Append {
+                contents: pending,
+                has_newline,
+            } = action.next_line
         {
-            pending.push(b'\n');
-            output.write_bytes(&pending)?;
+            output.write_line(&pending, has_newline)?;
         }
 
         in_place.end()?;
