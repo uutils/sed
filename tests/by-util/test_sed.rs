@@ -151,6 +151,109 @@ fn test_multiple_input_files() {
         .stdout_is_fixture("output/multiple_input_files");
 }
 
+const MISSING_INPUT_ERROR: &str =
+    "sed: error opening input file 'input/missing': No such file or directory\n";
+
+#[test]
+fn test_missing_input_file_is_skipped() {
+    new_ucmd!()
+        .args(&["p", "input/missing", "input/two-lines.txt"])
+        .fails()
+        .code_is(2)
+        .stdout_is("line one\nline one\nline two\nline two\n")
+        .stderr_is(MISSING_INPUT_ERROR);
+
+    // The last line is in the last file that can be read.
+    new_ucmd!()
+        .args(&["-n", "$=", "input/two-lines.txt", "input/missing"])
+        .fails()
+        .code_is(2)
+        .stdout_is("2\n")
+        .stderr_is(MISSING_INPUT_ERROR);
+
+    // The status stays 2 even when q gives one.
+    new_ucmd!()
+        .args(&["1q5", "input/missing", "input/two-lines.txt"])
+        .fails()
+        .code_is(2)
+        .stdout_is("line one\n")
+        .stderr_is(MISSING_INPUT_ERROR);
+
+    // With -s each file has its own last line.
+    new_ucmd!()
+        .args(&[
+            "-s",
+            "-n",
+            "$=",
+            "input/two-lines.txt",
+            "input/missing",
+            "input/two-lines.txt",
+        ])
+        .fails()
+        .code_is(2)
+        .stdout_is("2\n2\n")
+        .stderr_is(MISSING_INPUT_ERROR);
+
+    // Standard input after a file is only opened when its turn comes,
+    // also when a missing file comes before it.
+    new_ucmd!()
+        .args(&["-n", "$p", "input/two-lines.txt", "-"])
+        .pipe_in("three\n")
+        .succeeds()
+        .stdout_is("three\n");
+    new_ucmd!()
+        .args(&["-n", "$p", "input/two-lines.txt", "input/missing", "-"])
+        .pipe_in("three\n")
+        .fails()
+        .code_is(2)
+        .stdout_is("three\n")
+        .stderr_is(MISSING_INPUT_ERROR);
+}
+
+#[test]
+fn test_missing_input_file_in_place() -> std::io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    std::fs::write(dir.path().join("input"), "hello, world\n")?;
+
+    new_ucmd!()
+        .current_dir(dir.path())
+        .args(&["-i", "s/world/universe/", "missing", "input"])
+        .fails()
+        .code_is(2)
+        .no_stdout()
+        .stderr_is("sed: error opening input file 'missing': No such file or directory\n");
+
+    let actual = std::fs::read_to_string(dir.path().join("input"))?;
+    assert_eq!(actual, "hello, universe\n");
+    Ok(())
+}
+
+// Finding the last line opens the next file only once, so a writer
+// on a fifo still gets its data through.
+#[cfg(unix)]
+#[test]
+fn test_last_line_before_fifo_input() -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = tempfile::tempdir()?;
+    let fifo = dir.path().join("fifo");
+    let c_path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: c_path is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+
+    let writer = {
+        let fifo = fifo.clone();
+        std::thread::spawn(move || std::fs::write(fifo, "three\nfour\n"))
+    };
+
+    new_ucmd!()
+        .args(&["-n", "$p", "input/two-lines.txt", fifo.to_str().unwrap()])
+        .succeeds()
+        .stdout_is("four\n");
+
+    writer.join().unwrap()
+}
+
 #[test]
 fn test_delete_stdin() {
     for fixture in INPUT_FILES {

@@ -22,12 +22,15 @@ use crate::sed::named_writer::{self, NamedWriter};
 use memchr::memchr;
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::ffi::OsStr;
+use std::fmt;
 use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 use std::rc::Rc;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, set_exit_code};
+use uucore::show_error;
 
 /// Return the specified command variant or panic.
 // Example: let path = extract_variant!(command, Path);
@@ -65,7 +68,7 @@ fn match_address(
         // The FreeBSD version checked for subsequent empty files, but this
         // can lead to destructive reads (e.g. from named pipes),
         // and is probably an overkill.
-        Address::Last => Ok(reader.last_line()? && (context.last_file || context.separate)),
+        Address::Last => Ok(reader.last_line()? && (context.separate || is_last_file(context))),
 
         _ => panic!("invalid address type in match_address"),
     }
@@ -1015,6 +1018,87 @@ fn reset_latched_address_ranges(range_commands: &mut [Rc<RefCell<Command>>]) {
     }
 }
 
+/// The input files that are still to be read.
+/// Each one is opened only once, when it is needed.
+#[derive(Default)]
+pub struct InputFiles {
+    paths: VecDeque<PathBuf>,
+    /// The next file, when finding out whether more input follows opened it.
+    opened: Option<(PathBuf, LineReader<'static>)>,
+    /// True if some file couldn't be opened.
+    unreadable: bool,
+}
+
+impl fmt::Debug for InputFiles {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InputFiles")
+            .field("paths", &self.paths)
+            .field("opened", &self.opened.as_ref().map(|(path, _)| path))
+            .field("unreadable", &self.unreadable)
+            .finish()
+    }
+}
+
+impl InputFiles {
+    fn new(paths: Vec<PathBuf>) -> Self {
+        Self {
+            paths: paths.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Open the next file that can be opened. Like GNU sed, report
+    /// the ones that can't and go on with the rest.
+    fn next_file(&mut self) -> Option<(PathBuf, LineReader<'static>)> {
+        if let Some(opened) = self.opened.take() {
+            return Some(opened);
+        }
+        self.open_next(false)
+    }
+
+    /// Open the next readable file, reporting and skipping the others.
+    /// With `stop_at_stdin`, return `None` when standard input comes next,
+    /// leaving it unopened.
+    fn open_next(&mut self, stop_at_stdin: bool) -> Option<(PathBuf, LineReader<'static>)> {
+        while let Some(path) = self.paths.front() {
+            if stop_at_stdin && path.as_os_str() == "-" {
+                return None;
+            }
+            let path = self.paths.pop_front()?;
+            match LineReader::open(&path) {
+                Ok(reader) => return Some((path, reader)),
+                Err(e) => {
+                    let err =
+                        e.map_err_context(|| format!("error opening input file {}", path.quote()));
+                    show_error!("{err}");
+                    self.unreadable = true;
+                }
+            }
+        }
+        None
+    }
+
+    /// Return true if no file is left to read. This opens the next file
+    /// early, and keeps it for when its turn comes.
+    fn at_end(&mut self) -> bool {
+        if self.opened.is_none() {
+            // Standard input may be in use already, so don't open it early.
+            self.opened = self.open_next(true);
+        }
+        self.opened.is_none() && self.paths.is_empty()
+    }
+}
+
+/// Return true if the current file is the last one with input.
+/// The files after it are only opened when this is asked.
+fn is_last_file(context: &ProcessingContext) -> bool {
+    context.last_file
+        || context
+            .input_files
+            .as_ref()
+            .is_some_and(|files| files.borrow_mut().at_end())
+}
+
 /// Process all input files
 pub fn process_all_files(
     commands: Option<Rc<RefCell<Command>>>,
@@ -1024,15 +1108,19 @@ pub fn process_all_files(
     context.unbuffered = context.unbuffered || io::stdout().is_terminal();
 
     let mut in_place = InPlace::new(context.clone());
-    let last_file_index = files.len() - 1;
+    let files = Rc::new(RefCell::new(InputFiles::new(files)));
+    context.input_files = Some(files.clone());
+    let mut first = true;
 
-    for (index, path) in files.into_iter().enumerate() {
-        context.last_file = index == last_file_index;
-        let mut reader = LineReader::open(&path)
-            .map_err_context(|| format!("error opening input file {}", path.quote()))?;
+    loop {
+        let next = files.borrow_mut().next_file();
+        let Some((path, mut reader)) = next else {
+            break;
+        };
+        context.last_file = files.borrow().paths.is_empty();
         let output = in_place.begin(&path)?;
 
-        if context.separate || index == 0 {
+        if context.separate || first {
             context.line_number = 0;
             reset_latched_address_ranges(&mut context.range_commands);
 
@@ -1040,14 +1128,16 @@ pub fn process_all_files(
             context.hold.content.clear();
             context.hold.has_newline = true;
         }
+        first = false;
 
         context.input_name = path;
         process_file(commands.clone(), &mut reader, output, context)?;
 
         // Handle any N command remains.
-        if context.last_file
-            && !context.separate
+        if !context.separate
             && !context.quiet
+            && context.input_action.is_some()
+            && is_last_file(context)
             && let Some(action) = context.input_action.take()
             && let NextLine::Append {
                 contents: pending,
@@ -1067,6 +1157,11 @@ pub fn process_all_files(
     // Flush all output files
     named_writer::flush_all()?;
 
+    // GNU sed exits with 2 when an input file couldn't be read, even after q.
+    if files.borrow().unreadable {
+        set_exit_code(2);
+    }
+
     Ok(())
 }
 
@@ -1075,6 +1170,26 @@ mod tests {
     use super::*;
     use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempfile;
+
+    #[test]
+    fn test_at_end_does_not_open_stdin_after_missing_file() {
+        let mut files = InputFiles::new(vec![
+            PathBuf::from("no/such/input/file"),
+            PathBuf::from("-"),
+        ]);
+        assert!(!files.at_end());
+        assert!(files.unreadable);
+        assert!(files.opened.is_none());
+        assert_eq!(files.paths, [PathBuf::from("-")]);
+    }
+
+    #[test]
+    fn test_at_end_after_missing_files() {
+        let mut files = InputFiles::new(vec![PathBuf::from("no/such/input/file")]);
+        assert!(files.at_end());
+        assert!(files.unreadable);
+        assert!(files.next_file().is_none());
+    }
 
     #[test]
     fn test_readable_ascii_byte_named_escapes() {
