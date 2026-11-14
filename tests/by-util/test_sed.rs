@@ -865,6 +865,68 @@ fn test_unknown_escape_is_the_bare_character() {
 }
 
 #[test]
+fn test_trailing_backslash_c_does_not_panic() {
+    // A \c at the end of the text takes the newline that ends it, giving
+    // control-newline ('J') and no trailing newline.
+    for script in ["a\\hello\\c", "a hello\\c"] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is("a\nhelloJ");
+    }
+    // The text ends there; the next script line is a new command.
+    new_ucmd!()
+        .arg("a hello\\c\n1d")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("helloJb\nhelloJ");
+    new_ucmd!()
+        .args(&["-e", "a hello\\c", "-e", "p"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\na\nhelloJ");
+
+    // GNU sed ends `i` and `c` text with a newline instead.
+    for code in ['i', 'c'] {
+        for script in [format!("{code}\\hello\\c"), format!("{code} hello\\c")] {
+            let expected = if code == 'i' { "hello\na\n" } else { "hello\n" };
+            new_ucmd!()
+                .arg(&script)
+                .pipe_in("a\n")
+                .succeeds()
+                .stdout_is(expected);
+        }
+    }
+    new_ucmd!()
+        .arg("i hello\\c\n1d")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("hello\nhello\nb\n");
+    new_ucmd!()
+        .arg("c hello\\c\n$d")
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("hello\nhello\n");
+}
+
+#[test]
+fn test_trailing_backslash_c_in_delimited_string_does_not_panic() {
+    // The script fails to compile, so sed exits without reading any input;
+    // piping input in here would race with that and hit a broken pipe.
+    for (script, message) in [
+        ("s/a\\c\n/x/", "unterminated regular expression"),
+        ("y/a/\\c\n/", "unterminated transliteration string"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .fails()
+            .code_is(1)
+            .stderr_contains(message);
+    }
+}
+
+#[test]
 fn test_invalid_unicode_escape_does_not_panic() {
     // \u and \U digits that are not a Unicode scalar value (a surrogate or
     // a value above U+10FFFF) are not an escape: the letter stands for
