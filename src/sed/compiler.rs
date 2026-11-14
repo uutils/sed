@@ -1126,6 +1126,7 @@ fn compile_trans_command(
     cmd.data = CommandData::Transliteration(transliteration);
 
     line.advance(); // move past last delimiter
+    line.eat_spaces();
     parse_command_ending(lines, line, cmd)?;
     Ok(CommandHandling::Continue)
 }

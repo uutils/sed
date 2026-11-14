@@ -4148,6 +4148,26 @@ fn test_execute_command_output_is_copied_unchanged() {
         .stdout_is("a\n");
 }
 
+/// Like GNU sed, blanks may come between `y` and a following `;`, `}` or comment.
+#[test]
+fn test_blanks_after_y_command() {
+    new_ucmd!()
+        .args(&["-n", "y/f/F/ # comment\np"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("Foo\n");
+    new_ucmd!()
+        .args(&["-n", "y/o/0/ ;p"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("f00\n");
+    new_ucmd!()
+        .args(&["-n", "{y/o/0/ };p"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("f00\n");
+}
+
 /// Like GNU sed, `addr1,+N` allows blanks after the `+` and reads a missing
 /// `N` as 0.
 #[test]
