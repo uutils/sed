@@ -1147,6 +1147,15 @@ fn test_subst_e_flag_combined_with_g() {
     new_ucmd!().arg("s/x/echo y/ge").pipe_in("x\n").succeeds();
 }
 
+#[test]
+fn test_subst_repeated_p_flag_is_rejected() {
+    new_ucmd!()
+        .arg("s/a/b/pp")
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:8: error: multiple `p' options to `s' command\n");
+}
+
 #[cfg(unix)]
 #[test]
 fn test_subst_flags_ep_execute_then_print() {
