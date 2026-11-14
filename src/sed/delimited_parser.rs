@@ -234,6 +234,26 @@ pub fn parse_char_escape(
     Ok(decoded)
 }
 
+/// Return true if `name` is a single character, the only collating
+/// element a `[.name.]` or `[=name=]` can name without locale collation data.
+fn is_single_collating_element(name: &[u8], character_mode: CharacterMode) -> bool {
+    match character_mode {
+        CharacterMode::Byte => name.len() == 1,
+        CharacterMode::Utf8 => str::from_utf8(name).is_ok_and(|s| s.chars().count() == 1),
+    }
+}
+
+/// Add a character to a bracket expression as a literal member,
+/// escaping the characters that have a meaning inside a class.
+fn push_class_member(result: &mut Vec<u8>, member: &[u8]) {
+    if let [b] = member
+        && br"\[]^-&~|".contains(b)
+    {
+        result.push(b'\\');
+    }
+    result.extend_from_slice(member);
+}
+
 /// Parse a POSIX RE character class returning it as bytes.
 /// This functionality is needed to avoid terminating delimited
 /// sequences when a delimiter appears within a character class.
@@ -288,9 +308,6 @@ fn parse_character_class(
             if marker == ':' || marker == '.' || marker == '=' {
                 line.advance();
 
-                result.push(b'[');
-                result.push(marker as u8);
-
                 let mut inner = Vec::new();
                 let mut terminated = false;
 
@@ -300,14 +317,40 @@ fn parse_character_class(
                         line.advance();
                         if !line.eol() && line.current() == ']' {
                             line.advance();
-                            result.extend_from_slice(&inner);
-                            result.push(marker as u8);
-                            result.push(b']');
+                            if marker == ':' {
+                                result.extend_from_slice(b"[:");
+                                result.extend_from_slice(&inner);
+                                result.extend_from_slice(b":]");
+                            } else {
+                                // Without locale collation data, a collating symbol or
+                                // an equivalence class stands for its single character.
+                                if !is_single_collating_element(&inner, character_mode) {
+                                    return compilation_error(
+                                        lines,
+                                        line,
+                                        "Invalid collation character",
+                                    );
+                                }
+                                push_class_member(&mut result, &inner);
+                            }
                             terminated = true;
                             break;
                         }
                         // False alarm, just part of the inner name
                         inner.push(marker as u8);
+                    } else if c == '\\' && marker != ':' && !posix {
+                        // Like elsewhere in the bracket expression, a character
+                        // escape names the character it stands for.
+                        line.advance();
+                        let decoded = if line.eol() {
+                            None
+                        } else {
+                            parse_char_escape(lines, line)?
+                        };
+                        match decoded {
+                            Some(decoded) => push_script_char(&mut inner, decoded, character_mode),
+                            None => inner.push(b'\\'),
+                        }
                     } else {
                         inner.push(line.current_byte());
                         line.advance();
@@ -1118,15 +1161,54 @@ mod tests {
         let mut line = char_provider_from("[[=a=]]");
         let lines = test_lines();
         let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[[=a=]]");
+        assert_eq!(result, b"[a]");
     }
 
     #[test]
     fn test_collating_symbol() {
-        let mut line = char_provider_from("[[.ch.]]");
+        let mut line = char_provider_from("[[.a.]-[.c.]x]");
         let lines = test_lines();
         let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[[.ch.]]");
+        assert_eq!(result, b"[a-cx]");
+    }
+
+    #[test]
+    fn test_collating_symbol_punctuation_is_escaped() {
+        let mut line = char_provider_from("[[.].][.-.][=^=]]");
+        let lines = test_lines();
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
+        assert_eq!(result, br"[\]\-\^]");
+    }
+
+    #[test]
+    fn test_collating_symbol_other_punctuation_is_not_escaped() {
+        let mut line = char_provider_from("[[.<.][=>=][.,.]]");
+        let lines = test_lines();
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
+        assert_eq!(result, b"[<>,]");
+    }
+
+    #[test]
+    fn test_collating_symbol_multibyte_char() {
+        let mut line = char_provider_from("[[.é.]]");
+        let lines = test_lines();
+        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
+        assert_eq!(result, "[é]".as_bytes());
+
+        let mut line = char_provider_from("[[.é.]]");
+        let err = parse_character_class(&lines, &mut line, CharacterMode::Byte, false).unwrap_err();
+        assert!(err.to_string().contains("Invalid collation character"));
+    }
+
+    #[test]
+    fn test_collating_symbol_more_than_one_char_errors() {
+        for class in ["[[.ch.]]", "[[..]]", "[[=ab=]]", "[[==]]"] {
+            let mut line = char_provider_from(class);
+            let lines = test_lines();
+            let err =
+                parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap_err();
+            assert!(err.to_string().contains("Invalid collation character"));
+        }
     }
 
     #[test]
