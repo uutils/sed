@@ -856,6 +856,21 @@ fn test_word_boundaries_without_other_regex_characters() {
 }
 
 #[test]
+fn test_escaped_anchors_in_literal_pattern() {
+    // \^ and \$ match a literal ^ and $, not the start or end of the line.
+    new_ucmd!()
+        .args(&["-e", r"s/\^/X/", "-e", r"s/\$/Y/"])
+        .pipe_in("a^b$c\n")
+        .succeeds()
+        .stdout_is("aXbYc\n");
+    new_ucmd!()
+        .args(&["-E", "-e", r"s/^a\$/X/", "-e", r"s/b\\$/Y/"])
+        .pipe_in("a$b\\\na\n")
+        .succeeds()
+        .stdout_is("XY\na\n");
+}
+
+#[test]
 fn test_unknown_escape_is_the_bare_character() {
     new_ucmd!()
         .args(&["-e", r"s/x/a\qc/"])
