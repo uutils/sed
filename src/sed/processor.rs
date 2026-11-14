@@ -1042,7 +1042,12 @@ pub fn process_all_files(
         }
 
         context.input_name = path;
-        process_file(commands.clone(), &mut reader, output, context)?;
+        if let Err(error) = process_file(commands.clone(), &mut reader, output, context) {
+            // Keep the processing error even if either best-effort flush fails.
+            let _ = output.flush();
+            let _ = named_writer::flush_all();
+            return Err(error);
+        }
 
         // Handle any N command remains.
         if context.last_file
@@ -1075,6 +1080,26 @@ mod tests {
     use super::*;
     use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempfile;
+
+    #[test]
+    fn test_named_output_flushed_on_runtime_error() -> std::io::Result<()> {
+        use tempfile::NamedTempFile;
+
+        let input = NamedTempFile::new()?;
+        let output = NamedTempFile::new()?;
+        std::fs::write(input.path(), "a\nb\nc\n")?;
+        let script = format!("3s//X/\nw {}", output.path().display());
+        let args = [
+            "sed".into(),
+            script.into(),
+            input.path().as_os_str().to_owned(),
+        ];
+
+        assert_eq!(crate::sed::uumain(args.into_iter()), 2);
+        // Check before this test thread exits and drops the buffered writer.
+        assert_eq!(std::fs::read(output.path())?, b"a\nb\n");
+        Ok(())
+    }
 
     #[test]
     fn test_readable_ascii_byte_named_escapes() {

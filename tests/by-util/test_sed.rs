@@ -3859,6 +3859,33 @@ fn test_missing_substitute_re() {
 }
 
 #[test]
+fn test_output_kept_on_runtime_error() -> std::io::Result<()> {
+    let input = NamedTempFile::new()?;
+    fs::write(input.path(), "a\nb\nc\n")?;
+
+    new_ucmd!()
+        .args(&["3s//X/", input.path().to_str().unwrap()])
+        .fails()
+        .stdout_is("a\nb\n");
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_runtime_error_preserved_when_named_output_flush_fails() -> std::io::Result<()> {
+    let input = NamedTempFile::new()?;
+    fs::write(input.path(), "a\nb\nc\n")?;
+
+    new_ucmd!()
+        .args(&["3s//X/\nw /dev/full", input.path().to_str().unwrap()])
+        .fails()
+        .stderr_contains("no previous regular expression");
+
+    Ok(())
+}
+
+#[test]
 fn test_missing_address_re() {
     new_ucmd!()
         .args(&["l\np;//s/foo/bar/", LINES1])
