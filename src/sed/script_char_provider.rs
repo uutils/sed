@@ -61,9 +61,9 @@ impl ScriptCharProvider {
         self.pos >= self.line.len()
     }
 
-    /// Advances the position past any whitespace characters.
+    /// Advances past script blanks (space and tab).
     pub fn eat_spaces(&mut self) {
-        while self.pos < self.line.len() && self.current().is_whitespace() {
+        while self.pos < self.line.len() && matches!(self.current_byte(), b' ' | b'\t') {
             self.advance();
         }
     }
@@ -131,7 +131,13 @@ mod tests {
     fn test_eat_spaces_mixed() {
         let mut provider = ScriptCharProvider::new("  \t\nabc");
         provider.eat_spaces();
-        assert_eq!(provider.current(), 'a');
+        assert_eq!(provider.current(), '\n');
+
+        for &byte in b"\r\x0b\x0c\x85\xa0" {
+            let mut provider = ScriptCharProvider::new([b' ', b'\t', byte]);
+            provider.eat_spaces();
+            assert_eq!(provider.current_byte(), byte);
+        }
     }
 
     #[test]

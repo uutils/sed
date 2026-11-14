@@ -3599,6 +3599,36 @@ fn test_empty_text_commands_fail() {
 }
 
 #[test]
+fn test_script_parser_skips_only_space_and_tab() {
+    new_ucmd!().arg("p\r").fails().code_is(1).stderr_is(
+        "sed: <script argument 1>:1:2: error: extra characters at the end of the p command\n",
+    );
+
+    new_ucmd!()
+        .arg("1a\x0bfoo")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n\x0bfoo\n");
+}
+
+#[test]
+fn test_crlf_script_file_does_not_skip_carriage_return() -> std::io::Result<()> {
+    let mut script = NamedTempFile::new()?;
+    script.write_all(b"p\r\n")?;
+    let script_path = script.path().to_str().unwrap();
+
+    new_ucmd!()
+        .args(&["-f", script_path])
+        .fails()
+        .code_is(1)
+        .stderr_is(format!(
+            "sed: {script_path}:1:2: error: extra characters at the end of the p command\n"
+        ));
+
+    Ok(())
+}
+
+#[test]
 fn test_addr0_non_posix() {
     new_ucmd!()
         .args(&["--posix", "0,/foo/p"])
