@@ -1564,69 +1564,58 @@ fn compile_text_command_gnu(
 }
 
 // Handle v
+// The version check is done at compile time. Execution is a no-op.
+// GNU sed 4.9 advertises two version components, so a third component
+// (even 4.9.0) is treated as newer than 4.9.
 fn compile_version_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
-    _cmd: &mut Command,
+    cmd: &mut Command,
     _context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
-    // Claim version partify with GNU sed 4.9
-    const GNU_MAJOR: u8 = 4;
-    const GNU_MINOR: u8 = 9;
-    const GNU_PATCH: u8 = 0;
+    const GNU_VERSION: [u32; 2] = [4, 9];
 
     line.advance();
     line.eat_spaces(); // Skip any leading whitespace.
 
-    let mut major = String::new();
-    let mut minor = String::new();
-    let mut patch = String::new();
-
-    let mut ver_semantic = 0;
-
+    // Collect the version argument; it ends at whitespace or a command ending.
+    let mut raw = String::new();
     while !line.eol() {
-        if line.current() == '.' {
-            ver_semantic += 1;
-            line.advance();
-        } else {
-            match ver_semantic {
-                0 => major.push(line.current()),
-                1 => minor.push(line.current()),
-                2 => patch.push(line.current()),
-                _ => return compilation_error(lines, line, "invalid version of sed"),
+        let c = line.current();
+        if c.is_whitespace() || matches!(c, ';' | '#' | '}') {
+            break;
+        }
+        raw.push(c);
+        line.advance();
+    }
+
+    line.eat_spaces();
+    // `#` starts a comment; leave it in place so it can be parsed next.
+    if line.eol() || line.current() != '#' {
+        parse_command_ending(lines, line, cmd)?;
+    }
+
+    // No argument, or only separators, is an extension assertion and succeeds.
+    if !raw.is_empty() {
+        // Split on '.'; leading, trailing or consecutive dots are 0 (GNU: `v.9`, `v4.9.`).
+        let mut components = Vec::new();
+        for part in raw.split('.') {
+            if part.is_empty() {
+                components.push(0);
+            } else {
+                match part.parse::<u32>() {
+                    Ok(n) => components.push(n),
+                    Err(_) => return compilation_error(lines, line, "invalid version of sed"),
+                }
             }
-            line.advance();
+        }
+        // Slices compare lexicographically, and a longer equal prefix is greater.
+        if components.as_slice() > &GNU_VERSION[..] {
+            return compilation_error(lines, line, "expected newer version of sed");
         }
     }
 
-    if major.is_empty() {
-        major = GNU_MAJOR.to_string();
-        minor = GNU_MINOR.to_string();
-        patch = GNU_PATCH.to_string();
-    }
-
-    if minor.is_empty() {
-        minor.push('0');
-    }
-    if patch.is_empty() {
-        patch.push('0');
-    }
-
-    match major.parse::<u8>() {
-        Ok(major_int) => match minor.parse::<u8>() {
-            Ok(minor_int) => match patch.parse::<u8>() {
-                Ok(patch_int) => {
-                    if minor_int <= GNU_MINOR && major_int <= GNU_MAJOR && patch_int == GNU_PATCH {
-                        return Ok(CommandHandling::Continue);
-                    }
-                    compilation_error(lines, line, "expected newer version of sed")
-                }
-                Err(_) => compilation_error(lines, line, "invalid version of sed"),
-            },
-            Err(_) => compilation_error(lines, line, "invalid version of sed"),
-        },
-        Err(_) => compilation_error(lines, line, "invalid version of sed"),
-    }
+    Ok(CommandHandling::Continue)
 }
 
 // Handles e
@@ -1855,7 +1844,7 @@ fn get_cmd_spec(
             handler: compile_trans_command,
         }),
         'v' if !posix => Ok(CommandSpec {
-            n_addr: 0,
+            n_addr: 2,
             handler: compile_version_command,
         }),
         _ => compilation_error(lines, line, format!("invalid command code `{cmd_code}'")),
