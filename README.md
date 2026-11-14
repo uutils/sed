@@ -29,17 +29,33 @@ Further work aims to:
 
 ## Installation and Use
 
+### Direct download (Linux)
+
 We provide a Linux x86_64 binary archive from the main branch at
 https://github.com/uutils/sed/releases/tag/latest-commit .
 
+### Using a package manager
+
+#### Cargo Binstall
+
 If you have [cargo-binstall](https://github.com/cargo-bins/cargo-binstall),
-the released binaries can be installed directly with:
+install the binaries directly with:
 
 ```bash
 cargo binstall sed
 ```
 
-For other platforms, ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).
+#### Homebrew
+
+If you use [Homebrew](https://brew.sh), install it with:
+
+```bash
+brew install uutils-sed
+```
+
+### Building from source
+
+Ensure you have Rust installed on your system. You can install Rust through [rustup](https://rustup.rs/).
 
 Clone the repository and build the project using Cargo:
 
@@ -50,7 +66,7 @@ cargo build --release
 cargo run --release
 ```
 
-The binary is named `sed` in `target/release/sed`.
+The resulting binary is `sed`, located in `target/release/sed`.
 
 You can also try *sed* on the web
 through the [uutils Playground](https://uutils.org//playground/)
@@ -88,16 +104,15 @@ cargo test
 ```
 
 ## Extensions and incompatibilities
-The GNU, BSD and new extensions _sed_ supports, and where it differs from GNU
-_sed_, are listed in [docs/src/extensions.md](docs/src/extensions.md).
+[docs/src/extensions.md](docs/src/extensions.md) lists the GNU, BSD, and new extensions that sed supports, noting where it differs from GNU sed.
 
 ## GNU test suite compatibility
 
-Below is the evolution of how many GNU tests uutils passes.
+The graph below tracks the number of GNU tests that uutils passes over time.
 
 ![Evolution over time](https://github.com/uutils/sed-tracking/blob/main/gnu-results.svg?raw=true)
 
 
 ## License
 
-sed is licensed under the MIT License - see the `LICENSE` file for details
+The MIT license - see the `LICENSE` file for details
