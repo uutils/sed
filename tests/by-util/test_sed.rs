@@ -2839,6 +2839,41 @@ fn read_one_line_stops_when_file_shorter_than_input() -> std::io::Result<()> {
 }
 
 #[test]
+fn read_one_line_restarts_for_separate_input_files() -> std::io::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let header = directory.path().join("header");
+    let first = directory.path().join("first");
+    let second = directory.path().join("second");
+    fs::write(&header, "h1\nh2\n")?;
+    fs::write(&first, "a\n")?;
+    fs::write(&second, "b\n")?;
+
+    let command = format!("1R {}", header.display());
+    new_ucmd!()
+        .args(&[
+            "-s",
+            &command,
+            first.to_str().unwrap(),
+            second.to_str().unwrap(),
+        ])
+        .succeeds()
+        .stdout_is("a\nh1\nb\nh1\n");
+
+    new_ucmd!()
+        .args(&[
+            "-i",
+            &command,
+            first.to_str().unwrap(),
+            second.to_str().unwrap(),
+        ])
+        .succeeds();
+    assert_eq!(fs::read_to_string(&first)?, "a\nh1\n");
+    assert_eq!(fs::read_to_string(&second)?, "b\nh1\n");
+
+    Ok(())
+}
+
+#[test]
 fn read_one_line_preserves_last_line_without_newline() -> std::io::Result<()> {
     let temp = NamedTempFile::new()?;
     // Final line has no trailing newline.
