@@ -865,6 +865,33 @@ fn test_unknown_escape_is_the_bare_character() {
 }
 
 #[test]
+fn test_unknown_regex_escape_is_literal() {
+    for (script, input, expected) in [
+        (r"s/\D/X/", "aDb1\n", "aXb1\n"),
+        (r"s/\A/X/", "xAy\n", "xXy\n"),
+        (r"s/\0/X/", "x0y\n", "xXy\n"),
+        (r"s/\p/X/", "xpy\n", "xXy\n"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+
+    new_ucmd!()
+        .args(&["-E", r"s/\A/X/"])
+        .pipe_in("xAy\n")
+        .succeeds()
+        .stdout_is("xXy\n");
+    new_ucmd!()
+        .args(&["-n", r"/\D/p"])
+        .pipe_in("a\nD\n")
+        .succeeds()
+        .stdout_is("D\n");
+}
+
+#[test]
 fn test_invalid_unicode_escape_does_not_panic() {
     // \u and \U digits that are not a Unicode scalar value (a surrogate or
     // a value above U+10FFFF) are not an escape: the letter stands for
