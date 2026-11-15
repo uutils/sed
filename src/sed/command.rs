@@ -73,6 +73,9 @@ pub struct ProcessingContext {
     /// Shared `R` readers keyed by file path, so that all `R` commands naming
     /// the same file advance a single cursor, matching GNU sed.
     pub named_readers: HashMap<PathBuf, Rc<RefCell<NamedReader>>>,
+    /// Shared `w` writers keyed by file path, so that all `w` commands and
+    /// `s///w` flags naming the same file append to one stream, as GNU sed does.
+    pub named_writers: HashMap<PathBuf, Rc<RefCell<NamedWriter>>>,
     /// Commands with a (latchable and resetable) address range
     pub range_commands: Vec<Rc<RefCell<Command>>>,
     /// True if a substitution was made as specified in the t command
@@ -410,7 +413,11 @@ pub enum NextLine {
     /// Replace the pattern space with the line (`n`)
     Replace,
     /// Append the line, after a newline, to these contents (`N`)
-    Append(Vec<u8>),
+    Append {
+        contents: Vec<u8>,
+        /// Whether the contents ended with a newline, used when no next line comes
+        has_newline: bool,
+    },
 }
 
 #[cfg(test)]
