@@ -3647,10 +3647,10 @@ fn test_version_followed_by_command() {
 
 #[test]
 fn test_version_compared_part_by_part() {
-    for version in ["v4.2.2", "v3.10", "v1.2.3.4"] {
+    for version in ["v4.9", "v4.2.2", "v3.10", "v1.2.3.4"] {
         new_ucmd!().args(&[version]).succeeds();
     }
-    for version in ["v4.9.0", "v4.9.1", "v5"] {
+    for version in ["v4.9.0", "v4.9.1", "v4.10", "v5"] {
         new_ucmd!()
             .args(&[version])
             .fails()

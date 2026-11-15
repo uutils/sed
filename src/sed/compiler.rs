@@ -1459,10 +1459,6 @@ fn compile_version_command(
         }
     }
 
-    line.eat_spaces();
-    if !line.eol() && line.current() == ';' {
-        line.advance();
-    }
     Ok(CommandHandling::Continue)
 }
 
