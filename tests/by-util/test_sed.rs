@@ -3355,20 +3355,33 @@ fn test_script_parser_skips_only_space_and_tab() {
 }
 
 #[test]
-fn test_crlf_script_file_does_not_skip_carriage_return() -> std::io::Result<()> {
+fn test_crlf_script_file_uses_line_ending() -> std::io::Result<()> {
     let mut script = NamedTempFile::new()?;
-    script.write_all(b"p\r\n")?;
+    script.write_all(b"s/./X/\r\n")?;
     let script_path = script.path().to_str().unwrap();
 
     new_ucmd!()
         .args(&["-f", script_path])
-        .fails()
-        .code_is(1)
-        .stderr_is(format!(
-            "sed: {script_path}:1:2: error: extra characters at the end of the p command\n"
-        ));
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("X\n");
 
     Ok(())
+}
+
+#[test]
+fn test_substitution_followed_by_group_end_or_comment() {
+    new_ucmd!()
+        .arg("3{s/./x/}")
+        .pipe_in("a\na\na\n")
+        .succeeds()
+        .stdout_is("a\na\nx\n");
+
+    new_ucmd!()
+        .arg("s/./x/# comment")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("x\n");
 }
 
 #[test]

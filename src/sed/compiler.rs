@@ -1101,7 +1101,14 @@ pub fn compile_subst_flags(
                 return Ok(()); // 'w' is the last flag allowed
             }
 
-            ';' | '\n' => break,
+            ';' | '\n' | '}' => break,
+
+            '#' => {
+                while !line.eol() {
+                    line.advance();
+                }
+                break;
+            }
 
             other => {
                 return compilation_error(
