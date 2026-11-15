@@ -17,6 +17,8 @@ use assert_fs::fixture::{FileWriteStr, PathChild};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use uutests::new_ucmd;
+use uutests::util::TestScenario;
+use uutests::util_name;
 
 ////////////////////////////////////////////////////////////
 // Test application's invocation
@@ -505,6 +507,51 @@ fn test_ere_quantifier_after_atom() {
 }
 
 #[test]
+fn test_quantifier_after_quantifier_stays_greedy() {
+    for (args, input, expected) in [
+        (&["-E", "s/b+?/X/"][..], "abbc\n", "Xabbc\n"),
+        (&["-E", "s/b+?/X/g"], "abbc\n", "XaXcX\n"),
+        (&["-E", "s/ab??/X/"], "abbc\n", "Xbc\n"),
+        (&["-E", "s/ab+?/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/ab+???/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/a(b)+?/X\\1/"], "abbc\n", "Xbc\n"),
+        (&["-E", "s/a[b]+?/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/b+?/X/"], "bbc\n", "Xc\n"),
+        (&["-E", "s/b+?/X/I"], "BBc\n", "Xc\n"),
+        (&["-E", "s/b+?/X/gM"], "bbc\n", "XcX\n"),
+        (&["-E", "s/ab*+b/X/"], "abbc\n", "Xc\n"),
+        (&["-E", "s/(a)b*+b\\1/X/"], "abba\n", "X\n"),
+        (&["s/ab\\+\\?/X/"], "abbc\n", "Xc\n"),
+        (&["s/a\\(b\\)*\\?b\\1/X/"], "abbb\n", "X\n"),
+        (&["-n", "/ab\\+\\?c/p"], "abbc\n", "abbc\n"),
+        // A literal ? or + is still one.
+        (&["-E", "s/a\\??/X/"], "a?bc\n", "Xbc\n"),
+        (&["-E", "s/a[?+]+/X/"], "a?+c\n", "Xc\n"),
+        (&["s/b?+/X/"], "ab?+c\n", "aXc\n"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_quantifier_after_quantifier_byte_mode() {
+    // With LC_ALL=C the \xa9 byte is a character of its own, so a\xa9+?
+    // only makes the \xa9 part optional and still matches a lone a.
+    for (input, expected) in [(&b"ab\n"[..], &b"Xb\n"[..]), (b"a\xa9\xa9b\n", b"Xb\n")] {
+        new_ucmd!()
+            .env("LC_ALL", "C")
+            .args(&["-E", "s/a\\xa9+?/X/"])
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is_bytes(expected);
+    }
+}
+
+#[test]
 fn test_bre_anchors_in_subexpression() {
     for (script, expected) in [
         ("s/\\(^a\\)/x/g", "xb\n"),
@@ -872,9 +919,10 @@ fn test_invalid_unicode_escape_does_not_panic() {
             .succeeds()
             .stdout_is(expected);
     }
+    // The script fails to compile, so sed exits without reading any input;
+    // piping input in here would race with that and hit a broken pipe.
     new_ucmd!()
         .arg(r"y/a/\ud800/")
-        .pipe_in("a\n")
         .fails()
         .code_is(1)
         .stderr_contains("transliteration strings are not the same length");
@@ -1251,6 +1299,33 @@ fn test_posix_keeps_posix_regex_constructs() {
             .succeeds()
             .stdout_is("Xb\n");
     }
+}
+
+#[test]
+fn test_buffer_start_and_end_anchors() {
+    // \` and \' match only at the start and end of the pattern space,
+    // also with the M flag, in both BRE and ERE.
+    for mode in [None, Some("-E")] {
+        for (script, input, expected) in [
+            (r"s/\`./X/g", "ab\ncd\n", "Xb\nXd\n"),
+            (r"N;s/\`/>/Mg;s/\'/</Mg", "ab\ncd\n", ">ab\ncd<\n"),
+            (r"s/\`a/X/;s/a\'/Y/", "ab\nca\n", "Xb\ncY\n"),
+        ] {
+            let mut ucmd = new_ucmd!();
+            if let Some(flag) = mode {
+                ucmd.arg(flag);
+            }
+            ucmd.args(&["-e", script])
+                .pipe_in(input)
+                .succeeds()
+                .stdout_is(expected);
+        }
+    }
+    new_ucmd!()
+        .args(&["-E", "-e", r"s/\`(a|c)/X/;s/(a|b)\'/Y/"])
+        .pipe_in("ab\nca\n")
+        .succeeds()
+        .stdout_is("XY\nXY\n");
 }
 
 #[test]
@@ -1966,6 +2041,54 @@ fn test_next_reads_across_files_unless_separate() {
         .stdout_is("a\nline one\nXline two\n");
 }
 
+/// When `N` finds no next line it prints the pattern space without adding
+/// the newline the last line lacks, as GNU sed does.
+#[test]
+fn test_append_next_at_end_keeps_missing_newline() -> std::io::Result<()> {
+    for script in ["N", "N;P;D", "N;N;N"] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\nb\nc")
+            .succeeds()
+            .stdout_is("a\nb\nc");
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a\nb\nc\n")
+            .succeeds()
+            .stdout_is("a\nb\nc\n");
+    }
+    new_ucmd!()
+        .args(&["-s", "N"])
+        .pipe_in("a\nb\nc")
+        .succeeds()
+        .stdout_is("a\nb\nc");
+    // A newline that was there before `N` is still written.
+    new_ucmd!()
+        .arg("G;N")
+        .pipe_in("a\nb\nc")
+        .succeeds()
+        .stdout_is("a\n\nb\nc\n\n");
+
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
+    fs::write(&path, "a\nb\nc")?;
+    new_ucmd!().args(&["-i", "N"]).arg(&path).succeeds();
+    assert_eq!(fs::read_to_string(&path)?, "a\nb\nc");
+
+    // With -s, a pending `N` is flushed at the end of each file.
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    fs::write(&first, "a\nb\nc\n")?;
+    fs::write(&second, "d")?;
+    new_ucmd!()
+        .args(&["-s", "N"])
+        .arg(&first)
+        .arg(&second)
+        .succeeds()
+        .stdout_is("a\nb\nc\nd");
+    Ok(())
+}
+
 #[test]
 fn test_quit_exit_code() {
     new_ucmd!()
@@ -2022,7 +2145,7 @@ fn test_uppercase_delete_prevents_automatic_printing() {
         .args(&["-e", "N", "-e", "D"])
         .pipe_in("line1\nline2\nline3")
         .succeeds()
-        .stdout_is("line3\n");
+        .stdout_is("line3");
 }
 
 ////////////////////////////////////////////////////////////
@@ -2559,6 +2682,51 @@ fn write_same_file_from_two_w_commands() -> std::io::Result<()> {
     temp.reopen()?.read_to_string(&mut actual)?;
     assert_eq!(actual, "a\na\nb\nb\n");
 
+    Ok(())
+}
+
+#[test]
+fn write_dev_stdout_is_sed_output() {
+    // GNU sed writes /dev/stdout through its own output, in order.
+    for (script, expected) in [
+        ("w /dev/stdout", "a\na\nb\nb\n"),
+        ("W /dev/stdout", "a\na\nb\nb\n"),
+        ("s/a/X/w /dev/stdout", "X\nX\nb\n"),
+    ] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("a\nb\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+    // With -n, and with a last line that has no newline.
+    for (args, input, expected) in [
+        (&["-n", "s/a/X/w /dev/stdout"][..], "a\nb\n", "X\n"),
+        (&["w /dev/stdout"][..], "a", "aa"),
+        (&["w /dev/stdout"][..], "a\nb", "a\na\nbb"),
+        (&["-n", "w /dev/stdout"][..], "a\nb", "a\nb"),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn write_dev_stdout_with_in_place() -> std::io::Result<()> {
+    // With -i, /dev/stdout is still the terminal, not the edited file.
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
+    std::fs::write(&path, "a\nb\n")?;
+
+    new_ucmd!()
+        .args(&["-i", "s/a/X/w /dev/stdout", path.to_str().unwrap()])
+        .succeeds()
+        .stdout_is("X\n");
+
+    assert_eq!(std::fs::read_to_string(&path)?, "X\nb\n");
     Ok(())
 }
 
@@ -4034,6 +4202,26 @@ fn test_execute_command_output_is_copied_unchanged() {
         .stdout_is("a\n");
 }
 
+/// Like GNU sed, blanks may come between `y` and a following `;`, `}` or comment.
+#[test]
+fn test_blanks_after_y_command() {
+    new_ucmd!()
+        .args(&["-n", "y/f/F/ # comment\np"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("Foo\n");
+    new_ucmd!()
+        .args(&["-n", "y/o/0/ ;p"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("f00\n");
+    new_ucmd!()
+        .args(&["-n", "{y/o/0/ };p"])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is("f00\n");
+}
+
 /// Like GNU sed, `addr1,+N` allows blanks after the `+` and reads a missing
 /// `N` as 0.
 #[test]
@@ -4050,4 +4238,35 @@ fn test_relative_range_blank_or_missing_number() {
             .succeeds()
             .stdout_is(expected);
     }
+}
+
+#[test]
+fn test_hash_comment_after_command() {
+    for (script, expected) in [
+        ("s/a/A/#comment", "A\n"),
+        ("s/a/A/g#comment", "A\n"),
+        ("s/a/A/ #comment", "A\n"),
+        ("y/a/A/#c", "A\n"),
+        ("p#comment", "a\na\n"),
+        ("{p}#comment", "a\na\n"),
+        ("{s/a/A/}", "A\n"),
+    ] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_substitute_w_flag_keeps_hash_filename() {
+    let scene = TestScenario::new(util_name!());
+    scene
+        .ucmd()
+        .args(&["s/a/A/w#c"])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("A\n");
+    assert_eq!(scene.fixtures.read("#c"), "A\n");
 }

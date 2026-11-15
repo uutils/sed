@@ -413,7 +413,11 @@ pub enum NextLine {
     /// Replace the pattern space with the line (`n`)
     Replace,
     /// Append the line, after a newline, to these contents (`N`)
-    Append(Vec<u8>),
+    Append {
+        contents: Vec<u8>,
+        /// Whether the contents ended with a newline, used when no next line comes
+        has_newline: bool,
+    },
 }
 
 #[cfg(test)]
