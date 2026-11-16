@@ -567,7 +567,8 @@ fn parse_command_ending(
         return Ok(());
     }
 
-    if !line.eol() && line.current() == '}' {
+    if !line.eol() && (line.current() == '}' || line.current() == '#') {
+        // Leave `}` or `#` in place so the next command or a comment can see it.
         return Ok(());
     }
 
@@ -1125,6 +1126,7 @@ fn compile_trans_command(
     cmd.data = CommandData::Transliteration(transliteration);
 
     line.advance(); // move past last delimiter
+    line.eat_spaces();
     parse_command_ending(lines, line, cmd)?;
     Ok(CommandHandling::Continue)
 }
@@ -1236,7 +1238,7 @@ pub fn compile_subst_flags(
                 return Ok(()); // 'w' is the last flag allowed
             }
 
-            ';' | '\n' => break,
+            ';' | '\n' | '#' | '}' => break,
 
             other => {
                 return compilation_error(
@@ -1938,6 +1940,18 @@ mod tests {
             err.to_string()
                 .contains("extra characters at the end of the p command")
         );
+    }
+
+    #[test]
+    fn test_parse_command_ending_accepts_hash_comment() {
+        let (lines, mut chars) = make_providers("#comment");
+        let mut cmd = Command {
+            code: 'p',
+            ..Default::default()
+        };
+
+        parse_command_ending(&lines, &mut chars, &mut cmd).unwrap();
+        assert_eq!(chars.current(), '#');
     }
 
     #[test]
