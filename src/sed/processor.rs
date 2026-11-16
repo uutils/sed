@@ -137,15 +137,15 @@ fn applies(
             };
             if starts {
                 command.range_started = true;
-                // A `$` end on the last line closes the range where it starts,
-                // so revisiting the line can't select it again.
-                let ends_here = matches!(addr2, Address::Last)
-                    && match_address(addr2, reader, pattern, context, &command.location)?;
                 match addr2 {
                     Address::Line(n) if linenum >= *n => {
                         context.last_address = true;
                     }
-                    Address::Last if ends_here => {
+                    // A `$` end on the last line closes the range where it
+                    // starts, so revisiting the line can't select it again.
+                    Address::Last
+                        if match_address(addr2, reader, pattern, context, &command.location)? =>
+                    {
                         context.last_address = true;
                     }
                     Address::RelLine(0) | Address::StepMatch(0) | Address::StepEnd(0) => {
