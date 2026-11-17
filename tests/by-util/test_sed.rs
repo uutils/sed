@@ -4558,3 +4558,25 @@ fn test_lone_lead_byte_delimiter() {
         .succeeds()
         .stdout_only("y\n");
 }
+
+#[test]
+fn test_escaped_anchor_characters_are_literal() {
+    // `\^` and `\$` match the characters `^` and `$`, also at the start or the
+    // end of the regex, where the unescaped forms are anchors.
+    for (script, expected) in [
+        (r"s/\^/X/", "aXb$c\\\nab\n"),
+        (r"s/\$/X/", "a^bXc\\\nab\n"),
+        (r"s/\^a/X/", "a^b$c\\\nab\n"),
+        (r"s/b\$/X/", "a^Xc\\\nab\n"),
+        (r"s/\\$/X/", "a^b$cX\nab\n"),
+        (r"s/^a/X/", "X^b$c\\\nXb\n"),
+        (r"s/b$/X/", "a^b$c\\\naX\n"),
+        (r"s/\^\$/X/", "a^b$c\\\nab\n"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("a^b$c\\\nab\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
