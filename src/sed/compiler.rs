@@ -517,25 +517,25 @@ fn compile_address(
             // missing number as 0 (`2,+ 1` and `2,+`).
             line.advance();
             line.eat_spaces();
-            let number = parse_number(lines, line, false)?.unwrap_or(0);
+            let number = parse_line_number(lines, line, false)?.unwrap_or(0);
             Ok(Address::RelLine(number))
         }
         c if c.is_ascii_digit() => {
-            let number = parse_number(lines, line, true)?.unwrap();
+            let number = parse_line_number(lines, line, true)?.unwrap();
             Ok(Address::Line(number))
         }
         _ => compilation_error(lines, line, "expected context address"),
     }
 }
 
-/// Parse and return the decimal number at the current line position.
+/// Read the decimal digits at the current line position.
 /// Advance the line to first non-digit or EOL.
 /// Issue an error if the number is required.
-fn parse_number(
+fn read_digits(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     required: bool,
-) -> UResult<Option<usize>> {
+) -> UResult<Option<String>> {
     let mut num_str = String::new();
 
     while !line.eol() && line.current().is_ascii_digit() {
@@ -549,12 +549,36 @@ fn parse_number(
         }
         return Ok(None);
     }
+    Ok(Some(num_str))
+}
 
+/// Parse and return the decimal number at the current line position.
+/// Advance the line to first non-digit or EOL.
+/// Issue an error if the number is required.
+fn parse_number(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    required: bool,
+) -> UResult<Option<usize>> {
+    let Some(num_str) = read_digits(lines, line, required)? else {
+        return Ok(None);
+    };
     num_str
         .parse::<usize>()
         .map_err(|_| format!("invalid number '{num_str}'"))
         .map_err(|msg| compilation_error::<usize>(lines, line, msg).unwrap_err())
         .map(Some)
+}
+
+/// Like [`parse_number`], for a line number or count in an address.
+/// Like GNU sed, accept a number too large for `usize`: no input line can
+/// reach it, so read it as `usize::MAX`.
+fn parse_line_number(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    required: bool,
+) -> UResult<Option<usize>> {
+    Ok(read_digits(lines, line, required)?.map(|n| n.parse().unwrap_or(usize::MAX)))
 }
 
 /// Parse the end of a command, failing with an error on extra characters.
