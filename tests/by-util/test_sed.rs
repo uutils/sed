@@ -1310,6 +1310,21 @@ fn test_posix_missing_group_expands_to_empty() {
 }
 
 #[test]
+fn test_empty_regex_address_rejects_modifiers() {
+    for script in ["//I,2p", "/k/p;//Mp", "\\,,Ip"] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .fails_with_code(1)
+            .stderr_contains("cannot specify modifiers on an empty regular expression");
+    }
+    new_ucmd!()
+        .args(&["-n", "/K/Ip;//p"])
+        .pipe_in("k\nl\n")
+        .succeeds()
+        .stdout_is("k\nk\n");
+}
+
+#[test]
 fn test_posix_disables_gnu_character_classes() {
     new_ucmd!()
         .args(&["--posix", "-e", r"/\w/d"])
