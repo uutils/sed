@@ -4320,3 +4320,32 @@ fn test_numeric_range_not_restarted_by_d_restart() {
         .succeeds()
         .stdout_is("a\nc\nd\n");
 }
+
+#[test]
+fn test_step_address_counts_from_its_first_line() {
+    // Line 1 never reaches `1~2` (deleted, or joined by N), yet the step
+    // still counts from line 1: lines 3, 5, ... are selected, not line 2.
+    for (script, expected) in [
+        ("1d;1~2s/^/>/", "c\n>d\ne\n"),
+        ("/b/d;1~2s/^/>/", "c\n>d\ne\n"),
+        ("N;1~2s/^/>/", "b\nc\nd\ne\n"),
+        ("1~2s/^/>/", ">b\nc\n>d\ne\n"),
+        ("0~2s/^/>/", "b\n>c\nd\n>e\n"),
+        ("3~0s/^/>/", "b\nc\n>d\ne\n"),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in("b\nc\nd\ne\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
+fn test_step_address_change_prints_text_for_each_line() {
+    new_ucmd!()
+        .arg("1~2c\\\nX")
+        .pipe_in("a\nb\nc\nd\ne\n")
+        .succeeds()
+        .stdout_is("X\nb\nX\nd\nX\n");
+}
