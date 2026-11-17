@@ -13,7 +13,7 @@ use crate::sed::command::{
     ProcessingContext, Transliteration,
 };
 use crate::sed::delimited_parser::os_string_from_bytes;
-use crate::sed::error_handling::{ScriptLocation, input_runtime_error};
+use crate::sed::error_handling::{ScriptLocation, input_runtime_error, semantic_error};
 use crate::sed::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::sed::fast_regex::Regex;
 use crate::sed::in_place::InPlace;
@@ -235,7 +235,7 @@ fn re_or_saved_re<'a>(
         // We already have one: just borrow it.
         Ok(saved_re)
     } else {
-        input_runtime_error(location, context, "no previous regular expression")
+        semantic_error(location, "no previous regular expression")
     }
 }
 
