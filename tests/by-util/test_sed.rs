@@ -4403,3 +4403,29 @@ fn test_lone_lead_byte_delimiter() {
         .succeeds()
         .stdout_only("y\n");
 }
+
+#[test]
+fn test_empty_match_respects_utf8_boundaries() {
+    // `é` is two bytes; the empty matches of `[0-9]*` are before and after
+    // it, never between its bytes.
+    for (script, expected) in [
+        ("s/[0-9]*/N/g", "N\u{e9}N\n"),
+        ("s/[0-9]*/N/2", "\u{e9}N\n"),
+        ("s/[0-9]*/N/3", "\u{e9}\n"),
+    ] {
+        new_ucmd!()
+            .env("LC_ALL", "C.UTF-8")
+            .arg(script)
+            .pipe_in("\u{e9}\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+
+    // In the C locale each byte is a character, so both gaps count.
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .arg("s/[0-9]*/N/g")
+        .pipe_in("\u{e9}\n")
+        .succeeds()
+        .stdout_is_bytes(b"N\xc3N\xa9N\n");
+}
