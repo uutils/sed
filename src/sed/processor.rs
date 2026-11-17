@@ -1123,6 +1123,29 @@ mod tests {
     use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempfile;
 
+    #[test]
+    fn test_is_inside_utf8_char() {
+        // `é` (2 bytes), `€` (3 bytes), `😀` (4 bytes)
+        let text = "a\u{e9}\u{20ac}\u{1f600}".as_bytes();
+        let inside: Vec<usize> = (0..=text.len())
+            .filter(|&pos| is_inside_utf8_char(text, pos))
+            .collect();
+        assert_eq!(inside, [2, 4, 5, 7, 8, 9]);
+
+        // A continuation byte with no lead byte is a character of its own.
+        assert!(!is_inside_utf8_char(b"a\xa9", 1));
+        // So is one after a byte that never starts a sequence.
+        assert!(!is_inside_utf8_char(b"\xc0\xa9", 1));
+        assert!(!is_inside_utf8_char(b"\xff\xa9", 1));
+        // A lead byte whose sequence is cut short or malformed is not a character.
+        assert!(!is_inside_utf8_char(b"\xe2\x82", 1));
+        assert!(!is_inside_utf8_char(b"\xe0\x80\x80", 1));
+        // Past the lead byte's sequence the offset is a boundary again.
+        assert!(!is_inside_utf8_char(b"\xc3\xa9\xa9", 2));
+        // More continuation bytes than any sequence has.
+        assert!(!is_inside_utf8_char(b"a\x80\x80\x80\x80", 4));
+    }
+
     #[rstest]
     #[case::named_escape_newline(b'\n', r"\n")]
     #[case::named_escape_tab(b'\t', r"\t")]
