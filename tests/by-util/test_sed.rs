@@ -1290,6 +1290,26 @@ fn test_posix_l_takes_one_address() {
 }
 
 #[test]
+fn test_posix_missing_group_expands_to_empty() {
+    new_ucmd!()
+        .args(&["--posix", "-E", "s/(m)n/[\\1|\\3]/"])
+        .pipe_in("lmno\n")
+        .succeeds()
+        .stdout_is("l[m|]o\n");
+    // Also when the RE is only known at run time.
+    new_ucmd!()
+        .args(&["--posix", "/qr/s//<\\2>/"])
+        .pipe_in("pqrs\n")
+        .succeeds()
+        .stdout_is("p<>s\n");
+
+    new_ucmd!()
+        .args(&["-E", "s/(m)n/[\\1|\\3]/"])
+        .fails_with_code(1)
+        .stderr_contains("invalid reference \\3");
+}
+
+#[test]
 fn test_posix_disables_gnu_character_classes() {
     new_ucmd!()
         .args(&["--posix", "-e", r"/\w/d"])
