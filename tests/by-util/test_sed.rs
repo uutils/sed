@@ -4320,3 +4320,22 @@ fn test_numeric_range_not_restarted_by_d_restart() {
         .succeeds()
         .stdout_is("a\nc\nd\n");
 }
+
+#[test]
+fn test_empty_last_line_without_newline_is_still_a_line() {
+    // The last line lacks its newline and becomes empty. Printing it writes
+    // nothing, but the output around it is still separated into lines.
+    for (script, input, expected) in [
+        ("s/ab//p", "ab", "\n"),
+        ("p;s/x//", "x", "x\n"),
+        ("s/x//;p", "a\nx", "a\na\n\n"),
+        ("s/x//", "x", ""),
+        ("$!d;s/x//", "a\nx", ""),
+    ] {
+        new_ucmd!()
+            .arg(script)
+            .pipe_in(input)
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
