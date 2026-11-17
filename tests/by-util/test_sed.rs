@@ -3908,8 +3908,8 @@ fn test_missing_substitute_re() {
     new_ucmd!()
         .args(&["l;s//foo/", LINES1])
         .fails()
-        .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: 'input/lines1':1 error: no previous regular expression\n");
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:3: error: no previous regular expression\n");
 }
 
 #[test]
@@ -3917,8 +3917,19 @@ fn test_missing_address_re() {
     new_ucmd!()
         .args(&["l\np;//s/foo/bar/", LINES1])
         .fails()
-        .code_is(2)
-        .stderr_is("sed: <script argument 1>:2:3: 'input/lines1':1 error: no previous regular expression\n");
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:2:3: error: no previous regular expression\n");
+}
+
+#[test]
+fn test_missing_negated_address_re() {
+    new_ucmd!()
+        .args(&["//!d"])
+        .pipe_in("e\nf\n")
+        .fails()
+        .code_is(1)
+        .no_stdout()
+        .stderr_contains("no previous regular expression");
 }
 
 ////////////////////////////////////////////////////////////
