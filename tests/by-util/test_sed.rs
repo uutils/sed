@@ -4331,3 +4331,29 @@ fn test_numeric_range_not_restarted_by_d_restart() {
         .succeeds()
         .stdout_is("a\nc\nd\n");
 }
+
+#[test]
+fn test_posix_n_on_last_line_quits_without_printing() {
+    // GNU prints the pattern space when N finds no next line; POSIX doesn't.
+    new_ucmd!()
+        .arg("N;s/\\n/,/")
+        .pipe_in("a\nb\nc\n")
+        .succeeds()
+        .stdout_is("a,b\nc\n");
+    new_ucmd!()
+        .args(&["--posix", "N;s/\\n/,/"])
+        .pipe_in("a\nb\nc\n")
+        .succeeds()
+        .stdout_is("a,b\n");
+}
+
+#[test]
+fn test_posix_n_on_last_line_of_each_separate_file() {
+    let scene = TestScenario::new(util_name!());
+    scene.fixtures.write("f", "a\nb\nc\n");
+    scene
+        .ucmd()
+        .args(&["--posix", "-s", "N;s/\\n/,/", "f", "f"])
+        .succeeds()
+        .stdout_is("a,b\na,b\n");
+}

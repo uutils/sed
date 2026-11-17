@@ -997,6 +997,7 @@ fn process_file(
 
     // Handle any n or N command remains.
     // Take them even with -n, so that they do not carry over to the next file.
+    // POSIX `N` with no next line quits without printing; GNU prints.
     if context.separate
         && let Some(action) = context.input_action.take()
         && let NextLine::Append {
@@ -1004,6 +1005,7 @@ fn process_file(
             has_newline,
         } = action.next_line
         && !context.quiet
+        && !context.posix
     {
         output.write_line(&pending, has_newline)?;
         if context.unbuffered {
@@ -1059,6 +1061,7 @@ pub fn process_all_files(
         if context.last_file
             && !context.separate
             && !context.quiet
+            && !context.posix
             && let Some(action) = context.input_action.take()
             && let NextLine::Append {
                 contents: pending,
