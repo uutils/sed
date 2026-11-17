@@ -95,29 +95,28 @@ pub struct LiteralMatcher {
 }
 
 impl LiteralMatcher {
-    /// Construct a new matcher based on a needle possible with anchors.
-    pub fn new(needle: impl AsRef<[u8]>) -> Self {
-        let needle_bytes = needle.as_ref();
-        if needle_bytes[0] == b'^' && needle_bytes[needle_bytes.len() - 1] == b'$' {
-            LiteralMatcher {
-                match_type: AnchoredMatch::Both,
-                needle: needle_bytes[1..needle_bytes.len() - 1].into(),
-            }
-        } else if needle_bytes[0] == b'^' {
-            LiteralMatcher {
-                match_type: AnchoredMatch::Begin,
-                needle: needle_bytes[1..needle_bytes.len()].into(),
-            }
-        } else if needle_bytes[needle_bytes.len() - 1] == b'$' {
-            LiteralMatcher {
-                match_type: AnchoredMatch::End,
-                needle: needle_bytes[0..needle_bytes.len() - 1].into(),
-            }
-        } else {
-            LiteralMatcher {
-                match_type: AnchoredMatch::Free,
-                needle: needle_bytes.into(),
-            }
+    /// Construct a new matcher from a literal pattern, possibly with anchors.
+    ///
+    /// The anchors are read before the escapes are removed: a leading `^` and a
+    /// trailing `$` anchor the match, while `\^` and `\$` match those characters.
+    pub fn new(pattern: impl AsRef<[u8]>) -> Self {
+        let pattern = pattern.as_ref();
+        let begin = pattern.first() == Some(&b'^');
+        let rest = if begin { &pattern[1..] } else { pattern };
+        // A `$` preceded by an odd number of backslashes is escaped.
+        let end = rest.split_last().is_some_and(|(&last, before)| {
+            last == b'$' && before.iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 0
+        });
+        let inner = if end { &rest[..rest.len() - 1] } else { rest };
+        let match_type = match (begin, end) {
+            (true, true) => AnchoredMatch::Both,
+            (true, false) => AnchoredMatch::Begin,
+            (false, true) => AnchoredMatch::End,
+            (false, false) => AnchoredMatch::Free,
+        };
+        LiteralMatcher {
+            match_type,
+            needle: remove_escapes(inner).into(),
         }
     }
 
@@ -298,7 +297,6 @@ impl Regex {
                 ))
             }
         } else {
-            let pattern = remove_escapes(pattern);
             Ok(Self::Literal(LiteralMatcher::new(pattern)))
         }
     }
