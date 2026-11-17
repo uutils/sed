@@ -4420,3 +4420,39 @@ fn test_posix_n_on_last_line_of_each_separate_file() {
         .succeeds()
         .stdout_is("a,b\na,b\n");
 }
+
+#[test]
+fn test_multibyte_delimiter_rejected() {
+    for script in ["s€x€y€", "y€x€y€", "\\€x€d"] {
+        new_ucmd!()
+            .env("LC_ALL", "C.UTF-8")
+            .arg(script)
+            .pipe_in("x\n")
+            .ignore_stdin_write_error()
+            .fails_with_code(1)
+            .stderr_contains("delimiter character is not a single-byte character");
+    }
+}
+
+#[test]
+fn test_lone_lead_byte_delimiter() {
+    let scene = TestScenario::new(util_name!());
+    // 0xE2 starts a 3-byte UTF-8 sequence.
+    scene.fixtures.write_bytes("prog", b"s\xe2x\xe2y\xe2\n");
+    scene
+        .ucmd()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", "prog"])
+        .pipe_in("x\n")
+        .ignore_stdin_write_error()
+        .fails_with_code(1)
+        .stderr_contains("delimiter character is not a single-byte character");
+    // Any byte is a delimiter in the C locale.
+    scene
+        .ucmd()
+        .env("LC_ALL", "C")
+        .args(&["-f", "prog"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_only("y\n");
+}
