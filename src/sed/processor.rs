@@ -317,6 +317,31 @@ fn execute_pattern_as_shell_command(
     Ok(())
 }
 
+/// Whether byte offset `pos` of `text` falls inside a valid multi-byte UTF-8
+/// character, rather than on a character boundary.
+fn is_inside_utf8_char(text: &[u8], pos: usize) -> bool {
+    let is_continuation = |b: u8| (0x80..=0xbf).contains(&b);
+    if pos >= text.len() || !is_continuation(text[pos]) {
+        return false;
+    }
+    let Some(start) = (1..=3.min(pos))
+        .map(|back| pos - back)
+        .find(|&i| !is_continuation(text[i]))
+    else {
+        return false;
+    };
+    let len = match text[start] {
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return false,
+    };
+    pos < start + len
+        && text
+            .get(start..start + len)
+            .is_some_and(|c| std::str::from_utf8(c).is_ok())
+}
+
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
@@ -331,6 +356,7 @@ fn substitute(
     let mut result = Vec::new();
     let mut replaced = false;
     let text = pattern.as_bytes();
+    let utf8 = context.character_mode == CharacterMode::Utf8;
 
     let regex = re_or_saved_re(sub.regex.as_ref(), context, &command.location)?;
 
@@ -382,9 +408,14 @@ fn substitute(
                         Ok(caps) => caps,
                         Err(e) => break 'captures Err(e),
                     };
-                    count += 1;
-
                     let m = caps.get(0)?.unwrap();
+
+                    // The byte engine also reports empty matches between the
+                    // bytes of a character; in a UTF-8 locale they don't count.
+                    if utf8 && m.start() == m.end() && is_inside_utf8_char(text, m.start()) {
+                        continue;
+                    }
+                    count += 1;
 
                     // Always write the unmatched text before this match.
                     result.extend_from_slice(&text[last_end..m.start()]);
