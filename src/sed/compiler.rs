@@ -1063,10 +1063,13 @@ fn compile_subst_command(
     )?
     .map(Rc::new);
 
+    subst.replacement.missing_groups_are_empty = context.posix;
+
     // Catch invalid group references at compile time, if possible.
     // `compile_replacement` records a location for every `\N` it reads,
     // so the location is only absent when there is no group reference.
     if let Some(regex) = &subst.regex
+        && !subst.replacement.missing_groups_are_empty
         && let Some(location) = &subst.replacement.max_group_location
         && subst.replacement.max_group_number > regex.captures_len() - 1
     {
