@@ -503,6 +503,15 @@ fn compile_address(
                 line.advance();
             }
 
+            // An empty regex reuses the last one, so it can't take modifiers.
+            if re.is_empty() && (icase || multiline) {
+                return compilation_error(
+                    lines,
+                    line,
+                    "cannot specify modifiers on an empty regular expression",
+                );
+            }
+
             Ok(Address::Re(
                 compile_regex(lines, line, &re, context, icase, multiline)?.map(Rc::new),
             ))
