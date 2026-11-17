@@ -698,6 +698,9 @@ fn process_file(
                 commands.clone()
             };
 
+        // Set by `c`, `d` and `D`, which end the cycle without printing.
+        let mut deleted = false;
+
         // Loop over script commands.
         while let Some(command_rc) = current.take() {
             let mut command = command_rc.borrow_mut();
@@ -744,11 +747,13 @@ fn process_file(
                         let text = extract_variant!(command, Text);
                         output.write_bytes(text.as_ref())?;
                     }
+                    deleted = true;
                     break;
                 }
                 'd' => {
                     // Delete the pattern space and start the next cycle.
                     pattern.clear();
+                    deleted = true;
                     break;
                 }
                 'D' => {
@@ -761,6 +766,7 @@ fn process_file(
                     }
                     // Same as d
                     pattern.clear();
+                    deleted = true;
                     break;
                 }
                 'e' => match &command.data {
@@ -982,7 +988,7 @@ fn process_file(
             current.clone_from(&command.next);
         }
 
-        if !context.quiet {
+        if !context.quiet && !deleted {
             write_chunk(output, context, &pattern)?;
         }
 
