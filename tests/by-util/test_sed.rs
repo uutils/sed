@@ -1262,6 +1262,34 @@ fn test_posix_disables_gnu_bre_operators() {
 }
 
 #[test]
+fn test_q_takes_one_address() {
+    for script in ["2,3q", "2,3Q"] {
+        new_ucmd!()
+            .args(&[script])
+            .fails_with_code(1)
+            .stderr_contains("expects up to 1 address(es), found 2");
+    }
+    new_ucmd!()
+        .args(&["2q"])
+        .pipe_in("k\nl\nm\n")
+        .succeeds()
+        .stdout_is("k\nl\n");
+}
+
+#[test]
+fn test_posix_l_takes_one_address() {
+    new_ucmd!()
+        .args(&["--posix", "-n", "2,3l"])
+        .fails_with_code(1)
+        .stderr_contains("command l expects up to 1 address(es), found 2");
+    new_ucmd!()
+        .args(&["-n", "2,3l"])
+        .pipe_in("k\nl\nm\n")
+        .succeeds()
+        .stdout_is("l$\nm$\n");
+}
+
+#[test]
 fn test_posix_disables_gnu_character_classes() {
     new_ucmd!()
         .args(&["--posix", "-e", r"/\w/d"])

@@ -1806,11 +1806,11 @@ fn get_cmd_spec(
             handler: compile_empty_command,
         }),
         'l' => Ok(CommandSpec {
-            n_addr: 2,
+            n_addr: if posix { 1 } else { 2 },
             handler: compile_number_command,
         }),
         'q' => Ok(CommandSpec {
-            n_addr: if posix { 1 } else { 2 },
+            n_addr: 1,
             handler: compile_number_command,
         }),
         // Q is a GNU extension
