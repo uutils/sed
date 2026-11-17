@@ -84,6 +84,17 @@ fn applies(
     let result = if command.addr1.is_none() && command.addr2.is_none() {
         // No address
         Ok(true)
+    } else if let (Some(Address::Line(first)), Some(Address::StepMatch(step))) =
+        (&command.addr1, &command.addr2)
+    {
+        // `first~step` selects line `first` and every `step`th line after it.
+        // It depends only on the line number, so unlike a range it must not
+        // start late when line `first` never reached this command.
+        Ok(if *step == 0 {
+            linenum == *first
+        } else {
+            linenum >= *first && (linenum - *first).is_multiple_of(*step)
+        })
     } else if let Some(addr2) = &command.addr2 {
         // Two addresses
         if let Some(start) = command.start_line {
@@ -739,7 +750,12 @@ fn process_file(
                     // At range end replace pattern space with text and
                     // start the next cycle.
                     pattern.clear();
-                    if command.addr2.is_none() || context.last_address || reader.last_line()? {
+                    // `first~step` selects single lines, so each one gets the text.
+                    if command.addr2.is_none()
+                        || matches!(command.addr2, Some(Address::StepMatch(_)))
+                        || context.last_address
+                        || reader.last_line()?
+                    {
                         let text = extract_variant!(command, Text);
                         output.write_bytes(text.as_ref())?;
                     }
