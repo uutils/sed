@@ -317,6 +317,31 @@ fn execute_pattern_as_shell_command(
     Ok(())
 }
 
+/// Whether byte offset `pos` of `text` falls inside a valid multi-byte UTF-8
+/// character, rather than on a character boundary.
+fn is_inside_utf8_char(text: &[u8], pos: usize) -> bool {
+    let is_continuation = |b: u8| (0x80..=0xbf).contains(&b);
+    if pos >= text.len() || !is_continuation(text[pos]) {
+        return false;
+    }
+    let Some(start) = (1..=3.min(pos))
+        .map(|back| pos - back)
+        .find(|&i| !is_continuation(text[i]))
+    else {
+        return false;
+    };
+    let len = match text[start] {
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return false,
+    };
+    pos < start + len
+        && text
+            .get(start..start + len)
+            .is_some_and(|c| std::str::from_utf8(c).is_ok())
+}
+
 /// Perform the specified RE replacement in the provided pattern space.
 fn substitute(
     pattern: &mut IOChunk,
@@ -331,6 +356,7 @@ fn substitute(
     let mut result = Vec::new();
     let mut replaced = false;
     let text = pattern.as_bytes();
+    let utf8 = context.character_mode == CharacterMode::Utf8;
 
     let regex = re_or_saved_re(sub.regex.as_ref(), context, &command.location)?;
 
@@ -382,9 +408,14 @@ fn substitute(
                         Ok(caps) => caps,
                         Err(e) => break 'captures Err(e),
                     };
-                    count += 1;
-
                     let m = caps.get(0)?.unwrap();
+
+                    // The byte engine also reports empty matches between the
+                    // bytes of a character; in a UTF-8 locale they don't count.
+                    if utf8 && m.start() == m.end() && is_inside_utf8_char(text, m.start()) {
+                        continue;
+                    }
+                    count += 1;
 
                     // Always write the unmatched text before this match.
                     result.extend_from_slice(&text[last_end..m.start()]);
@@ -1086,6 +1117,29 @@ mod tests {
     use super::*;
     use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempfile;
+
+    #[test]
+    fn test_is_inside_utf8_char() {
+        // `é` (2 bytes), `€` (3 bytes), `😀` (4 bytes)
+        let text = "a\u{e9}\u{20ac}\u{1f600}".as_bytes();
+        let inside: Vec<usize> = (0..=text.len())
+            .filter(|&pos| is_inside_utf8_char(text, pos))
+            .collect();
+        assert_eq!(inside, [2, 4, 5, 7, 8, 9]);
+
+        // A continuation byte with no lead byte is a character of its own.
+        assert!(!is_inside_utf8_char(b"a\xa9", 1));
+        // So is one after a byte that never starts a sequence.
+        assert!(!is_inside_utf8_char(b"\xc0\xa9", 1));
+        assert!(!is_inside_utf8_char(b"\xff\xa9", 1));
+        // A lead byte whose sequence is cut short or malformed is not a character.
+        assert!(!is_inside_utf8_char(b"\xe2\x82", 1));
+        assert!(!is_inside_utf8_char(b"\xe0\x80\x80", 1));
+        // Past the lead byte's sequence the offset is a boundary again.
+        assert!(!is_inside_utf8_char(b"\xc3\xa9\xa9", 2));
+        // More continuation bytes than any sequence has.
+        assert!(!is_inside_utf8_char(b"a\x80\x80\x80\x80", 4));
+    }
 
     #[test]
     fn test_readable_ascii_byte_named_escapes() {
