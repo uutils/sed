@@ -1290,6 +1290,31 @@ fn test_posix_l_takes_one_address() {
 }
 
 #[test]
+fn test_line_address_beyond_usize() {
+    let huge = "4".repeat(40);
+    new_ucmd!()
+        .args(&["-n", &format!("3,{huge}p")])
+        .pipe_in("r\ns\nt\nu\n")
+        .succeeds()
+        .stdout_is("t\nu\n");
+    new_ucmd!()
+        .args(&[&format!("{huge}Q")])
+        .pipe_in("r\ns\n")
+        .succeeds()
+        .stdout_is("r\ns\n");
+    new_ucmd!()
+        .args(&["-n", &format!("2,+{huge}p")])
+        .pipe_in("r\ns\nt\n")
+        .succeeds()
+        .stdout_is("s\nt\n");
+    new_ucmd!()
+        .args(&["-n", &format!("1~{huge}p")])
+        .pipe_in("r\ns\nt\n")
+        .succeeds()
+        .stdout_is("r\n");
+}
+
+#[test]
 fn test_posix_disables_gnu_character_classes() {
     new_ucmd!()
         .args(&["--posix", "-e", r"/\w/d"])
