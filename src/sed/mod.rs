@@ -210,6 +210,8 @@ pub fn uu_app() -> Command {
             Arg::new("script-file")
                 .short('f')
                 .long("script-file")
+                // GNU sed documents it as --file.
+                .alias("file")
                 .help("Specify script file.")
                 .value_parser(clap::value_parser!(PathBuf))
                 .allow_hyphen_values(true)
@@ -245,7 +247,16 @@ pub fn uu_app() -> Command {
             Arg::new("null-data")
                 .short('z')
                 .long("null-data")
+                // GNU sed documents it as --zero-terminated too.
+                .alias("zero-terminated")
                 .help("Separate lines by NUL characters.")
+                .action(clap::ArgAction::SetTrue),
+            // Accepted for GNU compatibility. GNU sed only uses it on systems
+            // that translate CR+LF; input is already read as bytes here.
+            Arg::new("binary")
+                .short('b')
+                .long("binary")
+                .help("Open files in binary mode (no effect).")
                 .action(clap::ArgAction::SetTrue),
         ])
 }
