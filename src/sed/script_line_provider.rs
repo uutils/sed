@@ -112,6 +112,31 @@ impl ScriptLineProvider {
         }
     }
 
+    /// Return the next script line from the currently active script source,
+    /// without advancing to subsequent script sources if the current one has ended.
+    pub fn next_line_within_source(&mut self) -> UResult<Option<Vec<u8>>> {
+        let mut line = Vec::new();
+        match &mut self.state {
+            State::Active {
+                reader,
+                line_number,
+                ..
+            } => {
+                let bytes = reader.read_until(b'\n', &mut line)?;
+                if bytes == 0 {
+                    Ok(None)
+                } else {
+                    *line_number += 1;
+                    if line.ends_with(b"\n") {
+                        line.pop();
+                    }
+                    Ok(Some(line))
+                }
+            }
+            State::NotStarted | State::Done { .. } => Ok(None),
+        }
+    }
+
     // Move to the next available script source.
     fn advance_source(&mut self, next_index: usize) -> UResult<()> {
         if next_index >= self.sources.len() {

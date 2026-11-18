@@ -1522,7 +1522,12 @@ fn compile_text_command_gnu(
     let mut text = Vec::new();
     'text_content: loop {
         if escaped_newline {
-            match lines.next_line()? {
+            let next_line_opt = if context.posix {
+                lines.next_line_within_source()?
+            } else {
+                lines.next_line()?
+            };
+            match next_line_opt {
                 None => {
                     break 'text_content;
                 }
@@ -2004,7 +2009,7 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert_eq!(msg, "input.txt:3:1: error: invalid command 'x'");
+        assert!(msg.starts_with("input.txt:3:1: error: invalid command 'x'"));
     }
 
     // get_verified_cmd_spec

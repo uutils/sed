@@ -4385,3 +4385,22 @@ fn test_posix_n_on_last_line_of_each_separate_file() {
         .succeeds()
         .stdout_is("a,b\na,b\n");
 }
+
+#[test]
+fn test_posix_text_command_stops_at_expression_end() {
+    for cmd in ["a\\", "i\\", "c\\"] {
+        new_ucmd!()
+            .args(&["--posix", "-e", cmd, "-e", "second fragment"])
+            .fails()
+            .code_is(1)
+            .no_stdout()
+            .stderr_contains("incomplete command");
+
+        // GNU extension: without --posix the next fragment is the text.
+        new_ucmd!()
+            .args(&["-e", cmd, "-e", "second fragment"])
+            .pipe_in("")
+            .succeeds()
+            .no_output();
+    }
+}
