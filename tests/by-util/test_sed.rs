@@ -1290,6 +1290,45 @@ fn test_posix_l_takes_one_address() {
 }
 
 #[test]
+fn test_posix_rejects_gnu_commands_and_addresses() {
+    for (script, error) in [
+        ("1,+1p", "unexpected `,'"),
+        ("/a/,+2p", "unexpected `,'"),
+        ("Q", "invalid command code `Q'"),
+        ("Q7", "invalid command code `Q'"),
+        ("q5", "extra characters after command"),
+        ("$q 5", "extra characters after command"),
+        ("/A/Ip", "unknown command: `I'"),
+        ("/a/Mp", "unknown command: `M'"),
+        ("1,/A/Ip", "unknown command: `I'"),
+    ] {
+        new_ucmd!()
+            .args(&["--posix", "-n", "-e", script])
+            .pipe_in("a\nb\n")
+            .fails_with_code(1)
+            .no_stdout()
+            .stderr_contains(error);
+    }
+    // Without --posix they are accepted, and a plain q is POSIX.
+    for (args, output) in [
+        (&["-n", "1,+1p"][..], "a\nb\n"),
+        (&["-n", "/A/Ip"][..], "a\n"),
+        (&["Q"][..], ""),
+    ] {
+        new_ucmd!()
+            .args(args)
+            .pipe_in("a\nb\n")
+            .succeeds()
+            .stdout_is(output);
+    }
+    new_ucmd!()
+        .args(&["--posix", "q"])
+        .pipe_in("a\nb\n")
+        .succeeds()
+        .stdout_is("a\n");
+}
+
+#[test]
 fn test_posix_disables_gnu_character_classes() {
     new_ucmd!()
         .args(&["--posix", "-e", r"/\w/d"])
