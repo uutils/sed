@@ -375,6 +375,11 @@ fn compile_address_range(
             return compilation_error(lines, line, "~step is invalid in POSIX mode");
         }
 
+        // addr1,+N is a GNU extension.
+        if context.posix && !line.eol() && line.current() == '+' {
+            return compilation_error(lines, line, "unexpected `,'");
+        }
+
         // Look for second address; a missing ~step counts as 0.
         let has_addr2 = !line.eol() && (is_address_char(line.current()) || line.current() == '+');
         if !(has_addr2 || is_step_match || is_step_end) {
@@ -497,6 +502,10 @@ fn compile_address(
                     break;
                 }
                 match line.current() {
+                    // The I and M modifiers are GNU extensions.
+                    c @ ('I' | 'M') if context.posix => {
+                        return compilation_error(lines, line, format!("unknown command: `{c}'"));
+                    }
                     'I' => icase = true,
                     'M' => multiline = true,
                     _ => break,
@@ -1480,10 +1489,15 @@ fn compile_number_command(
     lines: &mut ScriptLineProvider,
     line: &mut ScriptCharProvider,
     cmd: &mut Command,
-    _context: &mut ProcessingContext,
+    context: &mut ProcessingContext,
 ) -> UResult<CommandHandling> {
     line.advance(); // Skip the command character
     line.eat_spaces(); // Skip any leading whitespace
+
+    // An exit code after q is a GNU extension.
+    if context.posix && cmd.code == 'q' && !line.eol() && line.current().is_ascii_digit() {
+        return compilation_error(lines, line, "extra characters after command");
+    }
 
     match parse_number(lines, line, false)? {
         Some(n) => {
@@ -1871,7 +1885,7 @@ fn get_cmd_spec(
             handler: compile_number_command,
         }),
         // Q is a GNU extension
-        'Q' => Ok(CommandSpec {
+        'Q' if !posix => Ok(CommandSpec {
             n_addr: 1,
             handler: compile_number_command,
         }),
