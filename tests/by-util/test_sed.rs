@@ -908,10 +908,10 @@ fn test_invalid_unicode_escape_does_not_panic() {
         .pipe_in("ud800 Udeadbeef\n")
         .succeeds()
         .stdout_is("x y\n");
-    // The replacement side goes through the same escape parsing.
+    // GNU replacements interpret these letters as case directives.
     for (script, expected) in [
-        (r"s/a/\ud800/", "ud800\n"),
-        (r"s/a/\Udeadbeef/", "Udeadbeef\n"),
+        (r"s/a/\ud800/", "D800\n"),
+        (r"s/a/\Udeadbeef/", "DEADBEEF\n"),
     ] {
         new_ucmd!()
             .arg(script)
