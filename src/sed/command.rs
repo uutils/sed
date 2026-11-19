@@ -59,7 +59,7 @@ pub struct ProcessingContext {
     /// Whether sed operates on bytes or UTF-8 characters
     pub character_mode: CharacterMode,
     /// Previously compiled RE, saved for reuse when specifying an empty RE
-    pub saved_regex: Option<Regex>,
+    pub saved_regex: Option<Rc<Regex>>,
     /// Modification of input processing action
     // This is required to avoid doubly borrowing the reader in the 'N'
     // command.
@@ -73,6 +73,9 @@ pub struct ProcessingContext {
     /// Shared `R` readers keyed by file path, so that all `R` commands naming
     /// the same file advance a single cursor, matching GNU sed.
     pub named_readers: HashMap<PathBuf, Rc<RefCell<NamedReader>>>,
+    /// Shared `w` writers keyed by file path, so that all `w` commands and
+    /// `s///w` flags naming the same file append to one stream, as GNU sed does.
+    pub named_writers: HashMap<PathBuf, Rc<RefCell<NamedWriter>>>,
     /// Commands with a (latchable and resetable) address range
     pub range_commands: Vec<Rc<RefCell<Command>>>,
     /// True if a substitution was made as specified in the t command
@@ -106,12 +109,12 @@ pub struct ByteSpace {
 #[derive(Debug)]
 /// Types of address specifications that precede commands
 pub enum Address {
-    Re(Option<Regex>), // Line that matches (optional) regex
-    Line(usize),       // Specific line
-    RelLine(usize),    // Relative line
-    Last,              // Last line
-    StepMatch(usize),  // Lines matching specified step from first
-    StepEnd(usize),    // Range ending at specified step from first
+    Re(Option<Rc<Regex>>), // Line that matches (optional) regex
+    Line(usize),           // Specific line
+    RelLine(usize),        // Relative line
+    Last,                  // Last line
+    StepMatch(usize),      // Lines matching specified step from first
+    StepEnd(usize),        // Range ending at specified step from first
 }
 
 #[derive(Debug)]
@@ -142,6 +145,8 @@ pub enum RegexMode {
 pub struct ReplacementTemplate {
     pub parts: Vec<ReplacementPart>,
     pub max_group_number: usize, // Highest used group number (e.g. 8 for \8)
+    /// Where the first reference to `max_group_number` appears in the script.
+    pub max_group_location: Option<ScriptLocation>,
 }
 
 impl Default for ReplacementTemplate {
@@ -258,7 +263,8 @@ impl ReplacementTemplate {
             .unwrap_or(0);
         Self {
             parts,
-            max_group_number: max_group_number as usize,
+            max_group_number: max_group_number.try_into().unwrap(),
+            max_group_location: None,
         }
     }
 
@@ -365,9 +371,10 @@ impl ReplacementTemplate {
 #[derive(Debug, Default)]
 /// Substitution command
 pub struct Substitution {
-    pub regex: Option<Regex>,                         // Regular expression
+    pub regex: Option<Rc<Regex>>,                     // Regular expression
     pub replacement: ReplacementTemplate,             // Specified broken-down replacement
     pub occurrence: usize,                            // Which occurrence to substitute
+    pub global: bool,                                 // True if 'g' flag: also every later one
     pub print_flag: bool,                             // True if 'p' flag
     pub p_before_e: bool,                             // True if 'p' appears before 'e'
     pub ignore_case: bool,                            // True if 'I' flag
@@ -545,7 +552,11 @@ pub enum NextLine {
     /// Replace the pattern space with the line (`n`)
     Replace,
     /// Append the line, after a newline, to these contents (`N`)
-    Append(Vec<u8>),
+    Append {
+        contents: Vec<u8>,
+        /// Whether the contents ended with a newline, used when no next line comes
+        has_newline: bool,
+    },
 }
 
 #[cfg(test)]

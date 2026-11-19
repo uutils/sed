@@ -13,11 +13,11 @@ use crate::sed::command::{
     ProcessingContext, Transliteration,
 };
 use crate::sed::delimited_parser::os_string_from_bytes;
-use crate::sed::error_handling::{ScriptLocation, input_runtime_error};
+use crate::sed::error_handling::{ScriptLocation, input_runtime_error, semantic_error};
 use crate::sed::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::sed::fast_regex::Regex;
 use crate::sed::in_place::InPlace;
-use crate::sed::named_writer;
+use crate::sed::named_writer::{self, NamedWriter};
 
 use memchr::memchr;
 use std::borrow::Cow;
@@ -129,12 +129,23 @@ fn applies(
                 Address::Line(n) if linenum > *n => {
                     !command.range_started && !matches!(addr2, Address::Line(m) if *m < linenum)
                 }
+                // Numeric start on this line: a backward branch or `D` can
+                // re-evaluate the command on the same line, but a range with a
+                // line-number start is entered only once.
+                Address::Line(n) if linenum == *n => !command.range_started,
                 _ => match_address(addr1, reader, pattern, context, &command.location)?,
             };
             if starts {
                 command.range_started = true;
                 match addr2 {
                     Address::Line(n) if linenum >= *n => {
+                        context.last_address = true;
+                    }
+                    // A `$` end on the last line closes the range where it
+                    // starts, so revisiting the line can't select it again.
+                    Address::Last
+                        if match_address(addr2, reader, pattern, context, &command.location)? =>
+                    {
                         context.last_address = true;
                     }
                     Address::RelLine(0) | Address::StepMatch(0) | Address::StepEnd(0) => {
@@ -172,6 +183,26 @@ fn applies(
     }
 }
 
+/// Write line, possibly with a newline, to the file of a `w` command or flag.
+/// `/dev/stdout` is sed's own output, so the lines keep their order there,
+/// unless that output is the temporary file of `-i`.
+fn write_to_file(
+    writer: &Rc<RefCell<NamedWriter>>,
+    output: &mut OutputBuffer,
+    in_place: bool,
+    line: &[u8],
+    newline: bool,
+) -> UResult<()> {
+    if in_place || !writer.borrow().is_stdout() {
+        return writer.borrow_mut().write_line_bytes(line, newline);
+    }
+    output.write_raw(line)?;
+    if newline {
+        output.write_raw(b"\n")?;
+    }
+    Ok(())
+}
+
 /// Write the specified chunk to the output for a given processing context.
 fn write_chunk(
     output: &mut OutputBuffer,
@@ -190,20 +221,21 @@ fn write_chunk(
 /// Return a reference to the current or the saved RE if the RE is None.
 /// Update the saved RE to RE.
 fn re_or_saved_re<'a>(
-    regex: Option<&Regex>,
+    regex: Option<&Rc<Regex>>,
     context: &'a mut ProcessingContext,
     location: &ScriptLocation,
 ) -> UResult<&'a Regex> {
     if let Some(re) = regex {
-        // First time we see this regex: clone it *once* into the context.
-        context.saved_regex = Some(re.clone());
+        // Share the compiled RE with the context: a reference count
+        // increment, rather than a deep copy for every input line.
+        context.saved_regex = Some(Rc::clone(re));
         // Return a reference into context.saved_regex.
         Ok(context.saved_regex.as_ref().unwrap())
     } else if let Some(ref saved_re) = context.saved_regex {
         // We already have one: just borrow it.
         Ok(saved_re)
     } else {
-        input_runtime_error(location, context, "no previous regular expression")
+        semantic_error(location, "no previous regular expression")
     }
 }
 
@@ -306,8 +338,8 @@ fn substitute(
     // The following let block allows a common input_runtime_error to be
     // called once in all cases, and most importantly, to finish the regex
     // mutable borrowing of context, so as to reuse context in the error call.
-    let subst_result = match (sub.occurrence, sub.replacement.max_group_number) {
-        (1, 0) => {
+    let subst_result = match (sub.occurrence, sub.global, sub.replacement.max_group_number) {
+        (1, false, 0) => {
             // Example: s/foo/bar/: find() is enough.
             match regex.find(pattern) {
                 Err(e) => Err(e),
@@ -324,7 +356,7 @@ fn substitute(
             }
         }
 
-        (1, _) => {
+        (1, false, _) => {
             // Example: s/\(.\)\(.\)/\2\1/: captures() is enough.
             match regex.captures(pattern) {
                 Err(e) => Err(e),
@@ -344,7 +376,7 @@ fn substitute(
             }
         }
 
-        (_, _) => {
+        (_, _, _) => {
             // Example: s/(.)(.)/\2\1/3: captures_iter() is needed.
             // Iterate over multiple captures of the RE in the pattern.
             'captures: {
@@ -360,7 +392,7 @@ fn substitute(
                     // Always write the unmatched text before this match.
                     result.extend_from_slice(&text[last_end..m.start()]);
 
-                    if sub.occurrence == 0 || count == sub.occurrence {
+                    if count == sub.occurrence || (sub.global && count > sub.occurrence) {
                         let replacement =
                             sub.replacement
                                 .apply_captures(command, &caps, character_mode)?;
@@ -375,7 +407,7 @@ fn substitute(
 
                     // Early exit if only a specific occurrence,
                     // (likely 1) needed replacing.
-                    if count == sub.occurrence {
+                    if !sub.global && count == sub.occurrence {
                         break 'captures Ok(());
                     }
                 }
@@ -410,9 +442,13 @@ fn substitute(
 
         // Write to file if needed.
         if let Some(ref writer) = sub.write_file {
-            writer
-                .borrow_mut()
-                .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
+            write_to_file(
+                writer,
+                output,
+                context.in_place,
+                pattern.as_bytes(),
+                pattern.is_newline_terminated(),
+            )?;
         }
         context.substitution_made = true;
     }
@@ -498,6 +534,7 @@ fn readable_ascii_byte(byte: u8) -> Cow<'static, str> {
         b'\x08' => Cow::Borrowed(r"\b"),
         b'\x0b' => Cow::Borrowed(r"\v"),
         b'\x0c' => Cow::Borrowed(r"\f"),
+        b'\n' => Cow::Borrowed(r"\n"),
         b'\\' => Cow::Borrowed(r"\\"),
         b'\r' => Cow::Borrowed(r"\r"),
         b'\t' => Cow::Borrowed(r"\t"),
@@ -549,15 +586,6 @@ impl ListLine {
         Ok(())
     }
 
-    /// Write the current list line with an embedded newline marker.
-    fn write_embedded_newline(&mut self, output: &mut OutputBuffer) -> UResult<()> {
-        self.buffer.push_str("$\n");
-        output.write_str(&self.buffer)?;
-        self.buffer.clear();
-        self.width = 0;
-        Ok(())
-    }
-
     /// Finish the list line if it has buffered output.
     fn finish(&mut self, output: &mut OutputBuffer) -> UResult<()> {
         if !self.buffer.is_empty() {
@@ -589,10 +617,6 @@ fn list(
     if !context.uutil_extensions || context.character_mode == CharacterMode::Byte {
         // List non-ASCII bytes in octal.
         for &byte in line.as_bytes() {
-            if byte == b'\n' {
-                list_line.write_embedded_newline(output)?;
-                continue;
-            }
             let out_str = readable_ascii_byte(byte);
             list_line.write_item(output, &out_str)?;
         }
@@ -607,10 +631,6 @@ fn list(
             .unwrap_err()
         })?;
         for ch in line.chars() {
-            if ch == '\n' {
-                list_line.write_embedded_newline(output)?;
-                continue;
-            }
             let out_str = readable_char(ch);
             list_line.write_item(output, &out_str)?;
         }
@@ -666,7 +686,11 @@ fn process_file(
         let mut current: Option<Rc<RefCell<Command>>> =
             if let Some(action) = context.input_action.take() {
                 // Continue processing the `N` or `n` command.
-                if let NextLine::Append(mut combined_lines) = action.next_line {
+                if let NextLine::Append {
+                    contents: mut combined_lines,
+                    ..
+                } = action.next_line
+                {
                     combined_lines.push(b'\n');
                     combined_lines.extend_from_slice(pattern.as_bytes());
 
@@ -811,7 +835,10 @@ fn process_file(
                     // to perform when the next line is read.
                     context.input_action = Some(InputAction {
                         next_command: command.next.clone(),
-                        next_line: NextLine::Append(pattern.as_bytes().to_vec()),
+                        next_line: NextLine::Append {
+                            contents: pattern.as_bytes().to_vec(),
+                            has_newline: pattern.is_newline_terminated(),
+                        },
                     });
                     continue 'lines;
                 }
@@ -899,9 +926,13 @@ fn process_file(
                 'w' => {
                     // Append the pattern space to the specified file.
                     let writer = extract_variant!(command, NamedWriter);
-                    writer
-                        .borrow_mut()
-                        .write_line_bytes(pattern.as_bytes(), pattern.is_newline_terminated())?;
+                    write_to_file(
+                        writer,
+                        output,
+                        context.in_place,
+                        pattern.as_bytes(),
+                        pattern.is_newline_terminated(),
+                    )?;
                 }
                 'W' => {
                     // Append only the first line of the pattern space.
@@ -913,7 +944,10 @@ fn process_file(
                             Some(pos) => (&pattern_bytes[..=pos], true),
                             None => (pattern_bytes, false),
                         };
-                    writer.borrow_mut().write_line_bytes(
+                    write_to_file(
+                        writer,
+                        output,
+                        context.in_place,
                         first_line,
                         !found_newline && pattern.is_newline_terminated(),
                     )?;
@@ -968,13 +1002,17 @@ fn process_file(
 
     // Handle any n or N command remains.
     // Take them even with -n, so that they do not carry over to the next file.
+    // POSIX `N` with no next line quits without printing; GNU prints.
     if context.separate
         && let Some(action) = context.input_action.take()
-        && let NextLine::Append(mut pending) = action.next_line
+        && let NextLine::Append {
+            contents: pending,
+            has_newline,
+        } = action.next_line
         && !context.quiet
+        && !context.posix
     {
-        pending.push(b'\n');
-        output.write_bytes(&pending)?;
+        output.write_line(&pending, has_newline)?;
         if context.unbuffered {
             output.flush()?;
         }
@@ -1028,11 +1066,14 @@ pub fn process_all_files(
         if context.last_file
             && !context.separate
             && !context.quiet
+            && !context.posix
             && let Some(action) = context.input_action.take()
-            && let NextLine::Append(mut pending) = action.next_line
+            && let NextLine::Append {
+                contents: pending,
+                has_newline,
+            } = action.next_line
         {
-            pending.push(b'\n');
-            output.write_bytes(&pending)?;
+            output.write_line(&pending, has_newline)?;
         }
 
         in_place.end()?;
@@ -1056,7 +1097,7 @@ mod tests {
 
     #[test]
     fn test_readable_ascii_byte_named_escapes() {
-        assert_eq!(readable_ascii_byte(b'\n'), r"\012");
+        assert_eq!(readable_ascii_byte(b'\n'), r"\n");
         assert_eq!(readable_ascii_byte(b'\t'), r"\t");
         assert_eq!(readable_ascii_byte(b'\\'), r"\\");
     }
