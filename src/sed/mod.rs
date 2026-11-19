@@ -573,6 +573,19 @@ mod tests {
     }
 
     #[test]
+    fn test_gnu_option_spellings() {
+        let ctx = build_context(&test_matches(&["--zero-terminated", "p"])).unwrap();
+        assert!(ctx.null_data);
+        let ctx = build_context(&test_matches(&["p"])).unwrap();
+        assert!(!ctx.null_data);
+        // -b/--binary is accepted and changes nothing.
+        for binary in ["-b", "--binary"] {
+            let ctx = build_context(&test_matches(&[binary, "p"])).unwrap();
+            assert!(!ctx.null_data);
+        }
+    }
+
+    #[test]
     fn test_multiple_same_arguments() {
         let matches = test_matches(&["-E", "-r"]);
         let ctx = build_context(&matches).unwrap();
