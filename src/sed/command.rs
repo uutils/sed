@@ -179,14 +179,12 @@ fn push_case_converted_char(result: &mut Vec<u8>, ch: char, case: CaseConversion
         });
         return;
     }
-    let mapped: Vec<char> = match case {
-        CaseConversion::Upper => ch.to_uppercase().collect(),
-        CaseConversion::Lower => ch.to_lowercase().collect(),
+    let mapper = icu_casemap::CaseMapper::new();
+    let mapped = match case {
+        CaseConversion::Upper => mapper.simple_uppercase(ch),
+        CaseConversion::Lower => mapper.simple_lowercase(ch),
     };
-    for c in mapped {
-        let mut buf = [0u8; 4];
-        result.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
-    }
+    result.extend_from_slice(mapped.encode_utf8(&mut [0; 4]).as_bytes());
 }
 
 fn push_char(result: &mut Vec<u8>, ch: char, case: Option<CaseConversion>) {
@@ -208,14 +206,20 @@ fn append_with_case(
     single: &mut Option<CaseConversion>,
     character_mode: CharacterMode,
 ) {
-    if input.is_empty() {
-        return;
-    }
-    // Copy segments outside a case-conversion range directly.
     if persistent.is_none() && single.is_none() {
         result.extend_from_slice(input);
-        return;
+    } else if !input.is_empty() {
+        append_converted(result, input, persistent, single, character_mode);
     }
+}
+
+fn append_converted(
+    result: &mut Vec<u8>,
+    input: &[u8],
+    persistent: Option<CaseConversion>,
+    single: &mut Option<CaseConversion>,
+    character_mode: CharacterMode,
+) {
     if character_mode == CharacterMode::Byte {
         result.reserve(input.len());
         for &b in input {
@@ -957,8 +961,8 @@ mod tests {
     }
 
     #[test]
-    fn test_case_unicode_expansion() {
-        // ß (U+00DF) uppercases to "SS" in UTF-8 mode.
+    fn test_case_unicode_simple_mapping() {
+        // Simple uppercase preserves sharp S, including for a one-shot directive.
         let out = apply_literal(
             vec![
                 ReplacementPart::Upper,
@@ -966,8 +970,7 @@ mod tests {
             ],
             CharacterMode::Utf8,
         );
-        assert_eq!(out, b"SS");
-        // \u on ß also expands.
+        assert_eq!(out, "ß".as_bytes());
         let out = apply_literal(
             vec![
                 ReplacementPart::UpperFirst,
@@ -975,7 +978,15 @@ mod tests {
             ],
             CharacterMode::Utf8,
         );
-        assert_eq!(out, b"SSabc");
+        assert_eq!(out, "ßabc".as_bytes());
+        let out = apply_literal(
+            vec![
+                ReplacementPart::Lower,
+                ReplacementPart::Literal("İ".as_bytes().to_vec()),
+            ],
+            CharacterMode::Utf8,
+        );
+        assert_eq!(out, b"i");
         // Cyrillic small DE -> capital DE (utf8-ru behavior).
         let out = apply_literal(
             vec![

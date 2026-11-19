@@ -90,6 +90,9 @@ cargo test
 ## Extensions and incompatibilities
 The GNU, BSD and new extensions _sed_ supports, and where it differs from GNU
 _sed_, are listed in [docs/src/extensions.md](docs/src/extensions.md).
+In substitution replacements, `\u` and `\U` change the case of the following
+text. Numeric Unicode escapes (`\uXXXX` and `\UXXXXXXXX`) are supported in
+patterns and transliterations.
 
 ## GNU test suite compatibility
 
