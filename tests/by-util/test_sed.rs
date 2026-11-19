@@ -1302,13 +1302,13 @@ fn test_posix_rejects_gnu_commands_and_addresses() {
         ("Q7", "invalid command code `Q'"),
         ("q5", "extra characters after command"),
         ("$q 5", "extra characters after command"),
-        ("/A/Ip", "unknown command: `I'"),
-        ("/a/Mp", "unknown command: `M'"),
-        ("1,/A/Ip", "unknown command: `I'"),
+        ("/A/Ip", "invalid command code `I'"),
+        ("/a/Mp", "invalid command code `M'"),
+        ("1,/A/Ip", "invalid command code `I'"),
     ] {
+        // No input: sed stops at the script, before it reads any.
         new_ucmd!()
             .args(&["--posix", "-n", "-e", script])
-            .pipe_in("a\nb\n")
             .fails_with_code(1)
             .no_stdout()
             .stderr_contains(error);
