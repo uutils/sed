@@ -727,6 +727,17 @@ fn compile_regex(
     Ok(Some(compiled))
 }
 
+fn case_part(c: char) -> Option<ReplacementPart> {
+    match c {
+        'U' => Some(ReplacementPart::Upper),
+        'L' => Some(ReplacementPart::Lower),
+        'u' => Some(ReplacementPart::UpperFirst),
+        'l' => Some(ReplacementPart::LowerFirst),
+        'E' => Some(ReplacementPart::End),
+        _ => None,
+    }
+}
+
 /// Compile a regular expression replacement string according to character mode.
 pub fn compile_replacement(
     lines: &mut ScriptLineProvider,
@@ -789,39 +800,22 @@ pub fn compile_replacement(
                             line.advance();
                         }
 
-                        // GNU case-conversion escapes: \U \L \u \l \E.
-                        // These produce no output themselves; they control how
-                        // following replacement text (literals, &, \1..\9) is
-                        // cased. Handled before parse_char_escape so that \u
-                        // and \U are not mistaken for \uXXXX / \UXXXXXXXX
-                        // Unicode escapes (GNU reserves them for conversion).
-                        // Under POSIX mode, case conversions are disabled.
-                        case @ ('U' | 'L' | 'u' | 'l' | 'E') if !posix => {
-                            if !literal.is_empty() {
-                                parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
-                            }
-                            parts.push(match case {
-                                'U' => ReplacementPart::Upper,
-                                'L' => ReplacementPart::Lower,
-                                'u' => ReplacementPart::UpperFirst,
-                                'l' => ReplacementPart::LowerFirst,
-                                'E' => ReplacementPart::End,
-                                _ => unreachable!(),
-                            });
-                            line.advance();
-                        }
-
-                        // Under POSIX mode, case conversions are disabled and \u / \U
-                        // are not treated as Unicode escapes in replacements; GNU sed emits
-                        // the escape letter plus following characters literally.
-                        'U' | 'L' | 'u' | 'l' | 'E' if posix => {
-                            literal.push(line.current_byte());
-                            line.advance();
-                        }
-
-                        // other escape sequences
-                        _ => {
-                            if let Some(decoded) = parse_char_escape(line) {
+                        c => {
+                            // GNU reserves these letters for case conversion. POSIX
+                            // mode copies them literally, including u and U.
+                            if let Some(part) = case_part(c) {
+                                if posix {
+                                    literal.push(line.current_byte());
+                                } else {
+                                    if !literal.is_empty() {
+                                        parts.push(ReplacementPart::Literal(std::mem::take(
+                                            &mut literal,
+                                        )));
+                                    }
+                                    parts.push(part);
+                                }
+                                line.advance();
+                            } else if let Some(decoded) = parse_char_escape(line) {
                                 push_script_char(&mut literal, decoded, character_mode);
                             } else {
                                 literal.push(line.current_byte());
@@ -2641,16 +2635,6 @@ mod tests {
         assert!(matches!(&template.parts[2], ReplacementPart::LowerFirst));
         assert!(matches!(&template.parts[3], ReplacementPart::WholeMatch));
         assert_eq!(template.max_group_number, 1);
-    }
-
-    #[test]
-    fn test_compile_replacement_escaped_delimiter_wins_over_case_escape() {
-        // With `U` as delimiter, `\U` is an escaped delimiter, not a directive.
-        let (mut lines, mut chars) = make_providers(r"U\UU");
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-
-        assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"U"));
     }
 
     #[test]

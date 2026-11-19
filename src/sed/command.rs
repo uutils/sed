@@ -212,19 +212,6 @@ fn append_with_case(
         return;
     }
     if character_mode == CharacterMode::Byte {
-        // Byte mode is ASCII-only; hoist persistent conversion out of the loop.
-        if single.is_none()
-            && let Some(case) = persistent
-        {
-            result.reserve(input.len());
-            for &b in input {
-                result.push(match case {
-                    CaseConversion::Upper => b.to_ascii_uppercase(),
-                    CaseConversion::Lower => b.to_ascii_lowercase(),
-                });
-            }
-            return;
-        }
         result.reserve(input.len());
         for &b in input {
             match take_case(single, persistent) {
@@ -273,20 +260,6 @@ impl ReplacementTemplate {
             parts,
             max_group_number: max_group_number as usize,
         }
-    }
-
-    /// Whether this template contains any case conversion escapes (\U \L \u \l \E).
-    fn has_case_conversion(&self) -> bool {
-        self.parts.iter().any(|part| {
-            matches!(
-                part,
-                ReplacementPart::Upper
-                    | ReplacementPart::Lower
-                    | ReplacementPart::UpperFirst
-                    | ReplacementPart::LowerFirst
-                    | ReplacementPart::End
-            )
-        })
     }
 
     fn render_parts<'a, F>(
@@ -362,9 +335,7 @@ impl ReplacementTemplate {
             );
         }
 
-        if !self.has_case_conversion()
-            && let [ReplacementPart::Literal(s)] = self.parts.as_slice()
-        {
+        if let [ReplacementPart::Literal(s)] = self.parts.as_slice() {
             return Ok(s.clone());
         }
 
@@ -380,14 +351,11 @@ impl ReplacementTemplate {
 
     /// Apply the template to the given RE single match.
     pub fn apply_match(&self, m: &Match<'_>, character_mode: CharacterMode) -> Vec<u8> {
-        if !self.has_case_conversion()
-            && let [ReplacementPart::Literal(s)] = self.parts.as_slice()
-        {
+        if let [ReplacementPart::Literal(s)] = self.parts.as_slice() {
             return s.clone();
         }
         self.render_parts(character_mode, |part| match part {
             ReplacementPart::WholeMatch => Ok(Some(m.as_bytes())),
-            ReplacementPart::Group(_) => Ok(None),
             _ => Ok(None),
         })
         .unwrap_or_default()
@@ -801,8 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn test_case_end_and_switch() {
-        // \Uabc\Edef -> ABCdef, \Uabc\Ldef -> ABCdef, \L\uABC -> Abc
+    fn test_case_end_and_single_shot_override() {
         let out = apply_literal(
             vec![
                 ReplacementPart::Upper,

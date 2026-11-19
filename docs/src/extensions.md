@@ -31,18 +31,18 @@ Below is a list of these extensions and incompatibilities.
 * Address steps can be specified in the form of start~step and start,~step
   ranges.
 * Address 0 can be used in the `r` command to prepend a file.
-
-## Supported BSD and GNU extensions
-* The second address in a range can be specified as a relative address with +N.
-* In-place editing of file with the `-i` flag.
-  As in GNU _sed_, a backup suffix must be attached (`-i.bak`,
-  `--in-place=.bak`); BSD's `-i .bak` and `-i ''` are not supported.
 * GNU `s///` replacement case-conversion escapes:
   - `\U`: Turn replacement text to uppercase until `\L` or `\E`.
   - `\L`: Turn replacement text to lowercase until `\U` or `\E`.
   - `\u`: Turn the next character to uppercase (one-shot).
   - `\l`: Turn the next character to lowercase (one-shot).
   - `\E`: Terminate persistent conversion started by `\U` or `\L` and clear any pending one-shot conversion.
+
+## Supported BSD and GNU extensions
+* The second address in a range can be specified as a relative address with +N.
+* In-place editing of file with the `-i` flag.
+  As in GNU _sed_, a backup suffix must be attached (`-i.bak`,
+  `--in-place=.bak`); BSD's `-i .bak` and `-i ''` are not supported.
 
 ## New extensions
 * Unicode characters can be specified in regular expression patterns and
