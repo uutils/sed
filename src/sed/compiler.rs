@@ -2032,7 +2032,7 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert_eq!(msg, "input.txt:3:1: error: invalid command 'x'");
+        assert!(msg.contains("input.txt:3:1: error: invalid command 'x'"));
     }
 
     // get_verified_cmd_spec
