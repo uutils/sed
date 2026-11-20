@@ -447,10 +447,8 @@ pub fn parse_regex_for_mode(
                     .get(line.get_pos() + 1)
                     .map(|&b| char::from(b));
                 let opens = matches!(next, Some('(')) || (matches!(next, Some('|')) && !posix);
-                if opens && next != Some(delimiter) {
-                    can_quantify = false;
-                    bre_at_start = true;
-                }
+                bre_at_start = opens && next != Some(delimiter);
+                can_quantify = !bre_at_start;
             }
         }
         match c {
