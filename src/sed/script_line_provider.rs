@@ -76,9 +76,24 @@ impl ScriptLineProvider {
     }
 
     /// Return the next script line to process across all scripts.
-    pub fn next_line(&mut self) -> UResult<Option<Vec<u8>>> {
+    fn read_trimmed_line(
+        reader: &mut Box<dyn BufRead>,
+        line_number: &mut usize,
+    ) -> UResult<Option<Vec<u8>>> {
         let mut line = Vec::new();
+        let bytes = reader.read_until(b'\n', &mut line)?;
+        if bytes == 0 {
+            Ok(None)
+        } else {
+            *line_number += 1;
+            if line.ends_with(b"\n") {
+                line.pop();
+            }
+            Ok(Some(line))
+        }
+    }
 
+    pub fn next_line(&mut self) -> UResult<Option<Vec<u8>>> {
         loop {
             let advance = match &mut self.state {
                 State::NotStarted => Some(0),
@@ -87,20 +102,10 @@ impl ScriptLineProvider {
                     reader,
                     line_number,
                     ..
-                } => {
-                    line.clear();
-                    let bytes = reader.read_until(b'\n', &mut line)?;
-                    if bytes == 0 {
-                        Some(*index + 1) // finished reading this source
-                    } else {
-                        *line_number += 1;
-                        // Remove trailing newline
-                        if line.ends_with(b"\n") {
-                            line.pop();
-                        }
-                        return Ok(Some(line));
-                    }
-                }
+                } => match Self::read_trimmed_line(reader, line_number)? {
+                    Some(line) => return Ok(Some(line)),
+                    None => Some(*index + 1),
+                },
                 State::Done { .. } => {
                     return Ok(None);
                 }
@@ -115,24 +120,12 @@ impl ScriptLineProvider {
     /// Return the next script line from the currently active script source,
     /// without advancing to subsequent script sources if the current one has ended.
     pub fn next_line_within_source(&mut self) -> UResult<Option<Vec<u8>>> {
-        let mut line = Vec::new();
         match &mut self.state {
             State::Active {
                 reader,
                 line_number,
                 ..
-            } => {
-                let bytes = reader.read_until(b'\n', &mut line)?;
-                if bytes == 0 {
-                    Ok(None)
-                } else {
-                    *line_number += 1;
-                    if line.ends_with(b"\n") {
-                        line.pop();
-                    }
-                    Ok(Some(line))
-                }
-            }
+            } => Self::read_trimmed_line(reader, line_number),
             State::NotStarted | State::Done { .. } => Ok(None),
         }
     }

@@ -2009,7 +2009,7 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
 
-        assert!(msg.starts_with("input.txt:3:1: error: invalid command 'x'"));
+        assert_eq!(msg, "input.txt:3:1: error: invalid command 'x'");
     }
 
     // get_verified_cmd_spec
