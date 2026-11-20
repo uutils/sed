@@ -1186,6 +1186,23 @@ mod tests {
     use tempfile::tempfile;
 
     #[test]
+    fn test_input_files_debug() {
+        let mut files = InputFiles::default();
+        assert_eq!(
+            format!("{files:?}"),
+            "InputFiles { paths: [], opened: None, unreadable: false }"
+        );
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_path_buf();
+        files = InputFiles::new(vec![path.clone()]);
+        assert!(!files.at_end());
+        assert_eq!(
+            format!("{files:?}"),
+            format!("InputFiles {{ paths: [], opened: Some({path:?}), unreadable: false }}")
+        );
+    }
+
+    #[test]
     fn test_at_end_does_not_open_stdin_after_missing_file() {
         let mut files = InputFiles::new(vec![
             PathBuf::from("no/such/input/file"),
