@@ -840,6 +840,14 @@ fn compile_regex(
 ) -> UResult<Option<Regex>> {
     let pattern = pattern.as_ref();
     if pattern.is_empty() {
+        // An empty regex reuses the last one, so it can't take modifiers.
+        if icase || multiline {
+            return compilation_error(
+                lines,
+                line,
+                "cannot specify modifiers on an empty regular expression",
+            );
+        }
         return Ok(None);
     }
 
@@ -1043,14 +1051,6 @@ fn compile_subst_command(
 
     subst.replacement = compile_replacement(lines, line, context.character_mode)?;
     compile_subst_flags(lines, line, &mut subst, context)?;
-
-    if pattern.is_empty() && (subst.ignore_case || subst.multiline) {
-        return compilation_error(
-            lines,
-            line,
-            "cannot specify modifiers on an empty regular expression",
-        );
-    }
 
     // Compile regex with now known modifier flags.
     subst.regex = compile_regex(
