@@ -38,6 +38,8 @@ pub struct ProcessingContext {
     pub separate: bool,
     pub sandbox: bool,
     pub unbuffered: bool,
+    /// Flush named files per line only when -u was explicitly requested.
+    pub unbuffered_named_files: bool,
     pub null_data: bool,
     pub uutil_extensions: bool,
 
