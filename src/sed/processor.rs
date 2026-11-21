@@ -59,6 +59,11 @@ fn match_address(
 
         Address::Line(lineno) => Ok(context.line_number == *lineno),
 
+        Address::StepStart(first, step) => {
+            let n = context.line_number;
+            Ok(n >= *first && (n - first).is_multiple_of(*step))
+        }
+
         // Recognize "$" as the last line of last file. This is consistent
         // with the original 7th Research Edition implementation:
         // https://github.com/dspinellis/unix-history-repo/blob/Research-V7/usr/src/cmd/sed/sed1.c#L665
