@@ -31,6 +31,12 @@ Below is a list of these extensions and incompatibilities.
 * Address steps can be specified in the form of start~step and start,~step
   ranges.
 * Address 0 can be used in the `r` command to prepend a file.
+* GNU `s///` replacement case-conversion escapes:
+  - `\U`: Turn replacement text to uppercase until `\L` or `\E`.
+  - `\L`: Turn replacement text to lowercase until `\U` or `\E`.
+  - `\u`: Turn the next character to uppercase (one-shot).
+  - `\l`: Turn the next character to lowercase (one-shot).
+  - `\E`: Terminate persistent conversion started by `\U` or `\L` and clear any pending one-shot conversion.
 
 ## Supported BSD and GNU extensions
 * The second address in a range can be specified as a relative address with +N.
@@ -39,8 +45,10 @@ Below is a list of these extensions and incompatibilities.
   `--in-place=.bak`); BSD's `-i .bak` and `-i ''` are not supported.
 
 ## New extensions
-* Unicode characters can be specified in regular expression pattern, replacement
-  and transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences.
+* Unicode characters can be specified in regular expression patterns and
+  transliteration sequences using `\uXXXX` or `\UXXXXXXXX` sequences. In
+  substitution replacements, `\u`, `\U`, `\l`, `\L`, and `\E` are GNU
+  case-conversion directives.
 * On a terminal, script errors also quote the script line and underline the
   character at fault (`UUTILS_DIAG=always` or `never` overrides this):
   ```
