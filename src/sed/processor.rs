@@ -108,16 +108,7 @@ fn applies(
                 }
                 Address::StepMatch(step) => Ok((linenum - start).is_multiple_of(*step)),
                 Address::StepEnd(step) => {
-                    let target = if *step == 0 {
-                        start
-                    } else {
-                        let rem = start % step;
-                        if rem == 0 {
-                            start + step
-                        } else {
-                            start + (step - rem)
-                        }
-                    };
+                    let target = (start / step + 1) * step;
                     if linenum >= target {
                         command.start_line = None;
                         context.last_address = true;
