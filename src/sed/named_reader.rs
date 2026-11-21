@@ -40,6 +40,11 @@ impl NamedReader {
         }))
     }
 
+    /// Restart at the beginning of the file for a new separate input file.
+    pub fn reset(&mut self) {
+        self.state = State::Unopened;
+    }
+
     /// Return the next line of the file, including its trailing newline if
     /// present, or `None` once the file is exhausted or could not be read.
     pub fn next_line(&mut self) -> Option<Vec<u8>> {
