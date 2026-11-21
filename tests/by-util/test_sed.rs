@@ -1198,6 +1198,36 @@ fn test_subst_flags_pe_print_then_execute() {
 }
 
 #[test]
+fn test_gnu_option_spellings() {
+    let file = script_file("s/a/b/");
+    new_ucmd!()
+        .arg(format!("--file={}", script_path(&file)))
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_only("b\n");
+
+    // --zero-terminated is -z under its other GNU name.
+    let null_data = new_ucmd!()
+        .args(&["-z", "s/^/>/"])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .stdout_move_bytes();
+    new_ucmd!()
+        .args(&["--zero-terminated", "s/^/>/"])
+        .pipe_in("a\0b\0")
+        .succeeds()
+        .stdout_is_bytes(null_data);
+
+    for binary in ["-b", "--binary"] {
+        new_ucmd!()
+            .args(&[binary, "s/a/b/"])
+            .pipe_in("a\n")
+            .succeeds()
+            .stdout_only("b\n");
+    }
+}
+
+#[test]
 fn test_subst_e_flag_rejected_with_posix() {
     // e flag is rejected at compile time if --posix or --sandbox is provided.
     new_ucmd!()
