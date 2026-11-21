@@ -95,29 +95,32 @@ pub struct LiteralMatcher {
 }
 
 impl LiteralMatcher {
-    /// Construct a new matcher based on a needle possible with anchors.
-    pub fn new(needle: impl AsRef<[u8]>) -> Self {
-        let needle_bytes = needle.as_ref();
-        if needle_bytes[0] == b'^' && needle_bytes[needle_bytes.len() - 1] == b'$' {
-            LiteralMatcher {
-                match_type: AnchoredMatch::Both,
-                needle: needle_bytes[1..needle_bytes.len() - 1].into(),
-            }
-        } else if needle_bytes[0] == b'^' {
-            LiteralMatcher {
-                match_type: AnchoredMatch::Begin,
-                needle: needle_bytes[1..needle_bytes.len()].into(),
-            }
-        } else if needle_bytes[needle_bytes.len() - 1] == b'$' {
-            LiteralMatcher {
-                match_type: AnchoredMatch::End,
-                needle: needle_bytes[0..needle_bytes.len() - 1].into(),
-            }
-        } else {
-            LiteralMatcher {
-                match_type: AnchoredMatch::Free,
-                needle: needle_bytes.into(),
-            }
+    /// Construct a new matcher based on a literal pattern with possible
+    /// anchors and backslash escapes. An escaped `\^` or `\$` stands for
+    /// itself rather than an anchor.
+    pub fn new(pattern: impl AsRef<[u8]>) -> Self {
+        let mut pattern = pattern.as_ref();
+        let begin = pattern.first() == Some(&b'^');
+        if begin {
+            pattern = &pattern[1..];
+        }
+        // A trailing `$` is an anchor unless an odd number of backslashes
+        // precedes it.
+        let end = pattern.split_last().is_some_and(|(&last, rest)| {
+            last == b'$' && rest.iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 0
+        });
+        if end {
+            pattern = &pattern[..pattern.len() - 1];
+        }
+        let match_type = match (begin, end) {
+            (true, true) => AnchoredMatch::Both,
+            (true, false) => AnchoredMatch::Begin,
+            (false, true) => AnchoredMatch::End,
+            (false, false) => AnchoredMatch::Free,
+        };
+        LiteralMatcher {
+            match_type,
+            needle: remove_escapes(pattern).into(),
         }
     }
 
@@ -298,7 +301,6 @@ impl Regex {
                 ))
             }
         } else {
-            let pattern = remove_escapes(pattern);
             Ok(Self::Literal(LiteralMatcher::new(pattern)))
         }
     }
@@ -929,6 +931,39 @@ mod tests {
         assert!(!matcher.is_match(b"needle no match"));
         assert!(!matcher.is_match(b"no match needle"));
         assert!(!matcher.is_match(b"nada"));
+    }
+
+    #[test]
+    fn test_literal_matcher_escaped_caret_is_literal() {
+        let matcher = LiteralMatcher::new(r"\^a");
+        assert!(matcher.is_match(b"x^a"));
+        assert!(!matcher.is_match(b"a"));
+        assert_eq!(matcher.find(b"x^a"), Some((1, 3, &b"^a"[..])));
+    }
+
+    #[test]
+    fn test_literal_matcher_escaped_dollar_is_literal() {
+        let matcher = LiteralMatcher::new(r"a\$");
+        assert!(matcher.is_match(b"a$x"));
+        assert!(!matcher.is_match(b"xa"));
+        assert_eq!(matcher.find(b"a$x"), Some((0, 2, &b"a$"[..])));
+    }
+
+    #[test]
+    fn test_literal_matcher_anchor_then_escaped_caret() {
+        let matcher = LiteralMatcher::new(r"^\^");
+        assert!(matcher.is_match(b"^a"));
+        assert!(!matcher.is_match(b"a^"));
+        assert!(!matcher.is_match(b"a"));
+    }
+
+    #[test]
+    fn test_literal_matcher_escaped_backslash_then_anchor() {
+        let matcher = LiteralMatcher::new(r"a\\$");
+        assert!(matcher.is_match(br"xa\"));
+        assert!(!matcher.is_match(br"a\x"));
+        assert!(!matcher.is_match(b"xa"));
+        assert_eq!(matcher.find(br"xa\"), Some((1, 3, &br"a\"[..])));
     }
 
     #[test]
