@@ -472,6 +472,7 @@ fn compile_address(
             if line.current() == '\\' {
                 // The next character is an arbitrary delimiter
                 line.advance();
+                reject_multibyte_delimiter(lines, line, context.character_mode)?;
             }
             let regex_mode = if context.regex_extended {
                 RegexMode::Extended
@@ -1031,6 +1032,23 @@ pub fn compile_replacement(
     }
 }
 
+/// In UTF-8 mode, reject a delimiter that is not a single-byte character,
+/// including a byte that only starts a multibyte sequence.
+fn reject_multibyte_delimiter(
+    lines: &ScriptLineProvider,
+    line: &ScriptCharProvider,
+    character_mode: CharacterMode,
+) -> UResult<()> {
+    if character_mode == CharacterMode::Utf8 && !line.eol() && !line.current_byte().is_ascii() {
+        return compilation_error(
+            lines,
+            line,
+            "delimiter character is not a single-byte character",
+        );
+    }
+    Ok(())
+}
+
 // Handles s
 fn compile_subst_command(
     lines: &mut ScriptLineProvider,
@@ -1052,6 +1070,7 @@ fn compile_subst_command(
             "substitute pattern cannot be delimited by newline or backslash",
         );
     }
+    reject_multibyte_delimiter(lines, line, context.character_mode)?;
 
     let regex_mode = if context.regex_extended {
         RegexMode::Extended
@@ -1089,10 +1108,13 @@ fn compile_subst_command(
     )?
     .map(Rc::new);
 
+    subst.replacement.missing_groups_are_empty = context.posix;
+
     // Catch invalid group references at compile time, if possible.
     // `compile_replacement` records a location for every `\N` it reads,
     // so the location is only absent when there is no group reference.
     if let Some(regex) = &subst.regex
+        && !subst.replacement.missing_groups_are_empty
         && let Some(location) = &subst.replacement.max_group_location
         && subst.replacement.max_group_number > regex.captures_len() - 1
     {
@@ -1131,6 +1153,7 @@ fn compile_trans_command(
             "transliteration string cannot be delimited by newline or backslash",
         );
     }
+    reject_multibyte_delimiter(lines, line, context.character_mode)?;
 
     let source = parse_transliteration_for_mode(lines, line, context.character_mode)?;
     let target = parse_transliteration_for_mode(lines, line, context.character_mode)?;

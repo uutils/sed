@@ -147,6 +147,9 @@ pub struct ReplacementTemplate {
     pub max_group_number: usize, // Highest used group number (e.g. 8 for \8)
     /// Where the first reference to `max_group_number` appears in the script.
     pub max_group_location: Option<ScriptLocation>,
+    /// With `--posix`, like GNU sed, a reference to a group the RE lacks
+    /// expands to nothing instead of being an error.
+    pub missing_groups_are_empty: bool,
 }
 
 impl Default for ReplacementTemplate {
@@ -269,6 +272,7 @@ impl ReplacementTemplate {
             parts,
             max_group_number: max_group_number.try_into().unwrap(),
             max_group_location: None,
+            missing_groups_are_empty: false,
         }
     }
 
@@ -335,7 +339,7 @@ impl ReplacementTemplate {
         caps: &Captures<'_>,
         character_mode: CharacterMode,
     ) -> UResult<Vec<u8>> {
-        if self.max_group_number > caps.len() - 1 {
+        if self.max_group_number > caps.len() - 1 && !self.missing_groups_are_empty {
             return runtime_error(
                 &command.location,
                 format!(

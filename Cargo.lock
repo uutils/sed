@@ -187,9 +187,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.8"
+version = "4.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac230478587d0269d8d6998b82ae69ea51509d55df66d9e92edd1f986904cd4a"
+checksum = "844c5c0b65be192cb68d570cca1b21a6444431d24e39c084dc0336177015337c"
 dependencies = [
  "clap_builder",
 ]
@@ -215,9 +215,9 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "codspeed"
-version = "6.0.0"
+version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e7c21807b937b8e535f2745cd83c525fc250524021cd662b9ba4d3e399bb504"
+checksum = "b4a421b41e765c0882236030e4431c948bb77f95e7b1c3252a95e03ac996f94e"
 dependencies = [
  "anyhow",
  "cc",
@@ -232,9 +232,9 @@ dependencies = [
 
 [[package]]
 name = "codspeed-divan-compat"
-version = "6.0.0"
+version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc7e48c4e555e60b894144b14df1e893a7317b9f4000b1492ace3041479b12cc"
+checksum = "7b0e00145ddda5104c5fd05e7616decaf37d0cc20a95ed35807425a1527b0e0c"
 dependencies = [
  "clap",
  "codspeed",
@@ -245,9 +245,9 @@ dependencies = [
 
 [[package]]
 name = "codspeed-divan-compat-macros"
-version = "6.0.0"
+version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1eb62a7a8d4cc6b79b18dcbac670b3202f4c8c901ca8ea701ab42190f0b14799"
+checksum = "104efbfd20145b66daa4b47308e3fc6ee65bfbcb9ce1295cf80e150903190067"
 dependencies = [
  "divan-macros",
  "itertools 0.14.0",
@@ -259,9 +259,9 @@ dependencies = [
 
 [[package]]
 name = "codspeed-divan-compat-walltime"
-version = "6.0.0"
+version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15c4e77a97571b6214b976cee7e2a564215d0a5bee9520a3cdab86106d0b31a3"
+checksum = "8c56485a01ff5540bf409b6d42650df8facb9b19653a9fd424f9be7be55fb3dd"
 dependencies = [
  "cfg-if",
  "clap",
@@ -639,6 +639,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "icu_locale"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe8fa57bcddc15cb921582ee5259c5b77da39f946f188ca5213fad24d9241236"
+dependencies = [
+ "icu_collections",
+ "icu_locale_core",
+ "icu_locale_data",
+ "icu_locale_fallback",
+ "icu_provider",
+ "tinystr",
+ "zerovec",
+]
+
+[[package]]
 name = "icu_locale_core"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -651,6 +666,32 @@ dependencies = [
  "writeable",
  "zerovec",
 ]
+
+[[package]]
+name = "icu_locale_data"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a64014dac577a11d8d2cee48517c73c1984bd72ab11031e934269bd3cefb2ad9"
+
+[[package]]
+name = "icu_locale_fallback"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "406e9ae5b95d8aa37db6293405931b766a6172d1848daee22d70eb44aa78a43c"
+dependencies = [
+ "icu_locale_core",
+ "icu_locale_fallback_data",
+ "icu_provider",
+ "potential_utf",
+ "tinystr",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_locale_fallback_data"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3632ebbd0c5c3637ba1a40bdf8288f2cb9d2268e73441a69d5fc73d7cfbaa87c"
 
 [[package]]
 name = "icu_properties"
@@ -1519,15 +1560,17 @@ checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
 name = "uucore"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f24a5910ebbf2c0baf486a9125705f8e026a8f7741a3ea8cf5eca3c9257c9bdf"
+checksum = "90cf14b33aa0368fd2842ef436d8890219dea9be20b2594836f0bba903533cca"
 dependencies = [
  "ariadne",
+ "cfg_aliases",
  "clap",
  "dns-lookup",
  "fluent",
  "fluent-syntax",
+ "icu_locale",
  "itertools 0.15.0",
  "jiff",
  "libc",
@@ -1547,9 +1590,9 @@ dependencies = [
 
 [[package]]
 name = "uucore_procs"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50aa1f3bba55168888ae6f1f2714ce58897d8020d742d21f474f01e86468fedd"
+checksum = "ab3d681c07e9a1613fc69fa57756c485c379c535e1947a4382e865a3b5aa9edb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1557,9 +1600,9 @@ dependencies = [
 
 [[package]]
 name = "uutests"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c47cf53a889f65f0c96eb4fcaaf29cc3a61ae1cef00860e0ca94e0ed4952ef7"
+checksum = "ec9b08b2d8415d2c3d9b5825301e4686909aa6c154828999e95c67ff551e6286"
 dependencies = [
  "ctor",
  "libc",
@@ -1568,9 +1611,22 @@ dependencies = [
  "rand",
  "regex",
  "rlimit",
+ "rustix",
  "tempfile",
  "uucore",
+ "uutests_procs",
  "xattr",
+]
+
+[[package]]
+name = "uutests_procs"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e759af52ab8e56529202885503420686c9f54bdcfe19d40d3272b49cce98bd8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
 ]
 
 [[package]]

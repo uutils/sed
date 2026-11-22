@@ -1543,6 +1543,26 @@ fn test_posix_l_takes_one_address() {
 }
 
 #[test]
+fn test_posix_missing_group_expands_to_empty() {
+    new_ucmd!()
+        .args(&["--posix", "-E", "s/(m)n/[\\1|\\3]/"])
+        .pipe_in("lmno\n")
+        .succeeds()
+        .stdout_is("l[m|]o\n");
+    // Also when the RE is only known at run time.
+    new_ucmd!()
+        .args(&["--posix", "/qr/s//<\\2>/"])
+        .pipe_in("pqrs\n")
+        .succeeds()
+        .stdout_is("p<>s\n");
+
+    new_ucmd!()
+        .args(&["-E", "s/(m)n/[\\1|\\3]/"])
+        .fails_with_code(1)
+        .stderr_contains("invalid reference \\3");
+}
+
+#[test]
 fn test_posix_disables_gnu_character_classes() {
     new_ucmd!()
         .args(&["--posix", "-e", r"/\w/d"])
@@ -4023,6 +4043,21 @@ fn test_range_numeric_start_already_passed() {
 }
 
 #[test]
+fn test_step_end_range_with_skipped_end() {
+    for (script, expected) in [
+        ("3d;2,~3p", "2\n4\n"),
+        ("3,4d;2,~3p", "2\n5\n"),
+        ("3,~3p", "3\n4\n5\n6\n"),
+    ] {
+        new_ucmd!()
+            .args(&["-n", script])
+            .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n")
+            .succeeds()
+            .stdout_is(expected);
+    }
+}
+
+#[test]
 fn test_range_numeric_start_passed_starts_once() {
     // Once the range has ended, it does not start again.
     for (script, expected) in [
@@ -4637,4 +4672,40 @@ fn test_posix_n_on_last_line_of_each_separate_file() {
         .args(&["--posix", "-s", "N;s/\\n/,/", "f", "f"])
         .succeeds()
         .stdout_is("a,b\na,b\n");
+}
+
+#[test]
+fn test_multibyte_delimiter_rejected() {
+    for script in ["s€x€y€", "y€x€y€", "\\€x€d"] {
+        new_ucmd!()
+            .env("LC_ALL", "C.UTF-8")
+            .arg(script)
+            .pipe_in("x\n")
+            .ignore_stdin_write_error()
+            .fails_with_code(1)
+            .stderr_contains("delimiter character is not a single-byte character");
+    }
+}
+
+#[test]
+fn test_lone_lead_byte_delimiter() {
+    let scene = TestScenario::new(util_name!());
+    // 0xE2 starts a 3-byte UTF-8 sequence.
+    scene.fixtures.write_bytes("prog", b"s\xe2x\xe2y\xe2\n");
+    scene
+        .ucmd()
+        .env("LC_ALL", "C.UTF-8")
+        .args(&["-f", "prog"])
+        .pipe_in("x\n")
+        .ignore_stdin_write_error()
+        .fails_with_code(1)
+        .stderr_contains("delimiter character is not a single-byte character");
+    // Any byte is a delimiter in the C locale.
+    scene
+        .ucmd()
+        .env("LC_ALL", "C")
+        .args(&["-f", "prog"])
+        .pipe_in("x\n")
+        .succeeds()
+        .stdout_only("y\n");
 }
