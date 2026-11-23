@@ -971,6 +971,9 @@ fn process_file(
                 ':' => {
                     // Branch target; do nothing.
                 }
+                'v' => {
+                    // Version assertion is checked at compile time.
+                }
                 '=' => {
                     // Output current line number.
                     output.write_str(format!("{}\n", context.line_number))?;
