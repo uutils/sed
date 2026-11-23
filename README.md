@@ -90,6 +90,12 @@ cargo test
 ## Extensions and incompatibilities
 The GNU, BSD and new extensions _sed_ supports, and where it differs from GNU
 _sed_, are listed in [docs/src/extensions.md](docs/src/extensions.md).
+In substitution replacements, `\u` and `\l` uppercase or lowercase only
+the next character, respectively. `\U` and `\L` uppercase or lowercase
+the rest of the replacement unless another persistent directive switches the
+case or `\E` ends conversion. `\E` also clears any pending one-character
+conversion. Numeric Unicode escapes (`\uXXXX` and `\UXXXXXXXX`) are supported
+in patterns and transliterations.
 
 ## GNU test suite compatibility
 
