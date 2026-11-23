@@ -3803,6 +3803,49 @@ fn test_empty_text_commands_fail() {
 }
 
 #[test]
+fn test_script_parser_skips_only_space_and_tab() {
+    new_ucmd!().arg("p\r").fails().code_is(1).stderr_is(
+        "sed: <script argument 1>:1:2: error: extra characters at the end of the p command\n",
+    );
+
+    new_ucmd!()
+        .arg("1a\x0bfoo")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\n\x0bfoo\n");
+}
+
+#[test]
+fn test_crlf_script_file_uses_line_ending() -> std::io::Result<()> {
+    let mut script = NamedTempFile::new()?;
+    script.write_all(b"s/./X/\r\n")?;
+    let script_path = script.path().to_str().unwrap();
+
+    new_ucmd!()
+        .args(&["-f", script_path])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("X\n");
+
+    Ok(())
+}
+
+#[test]
+fn test_substitution_followed_by_group_end_or_comment() {
+    new_ucmd!()
+        .arg("3{s/./x/}")
+        .pipe_in("a\na\na\n")
+        .succeeds()
+        .stdout_is("a\na\nx\n");
+
+    new_ucmd!()
+        .arg("s/./x/# comment")
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("x\n");
+}
+
+#[test]
 fn test_addr0_non_posix() {
     new_ucmd!()
         .args(&["--posix", "0,/foo/p"])

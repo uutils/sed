@@ -94,8 +94,12 @@ impl ScriptLineProvider {
                         Some(*index + 1) // finished reading this source
                     } else {
                         *line_number += 1;
-                        // Remove trailing newline
-                        if line.ends_with(b"\n") {
+                        // Treat CRLF as a line ending in script files, not as a script blank.
+                        if matches!(self.sources[*index], ScriptValue::PathVal(_))
+                            && line.ends_with(b"\r\n")
+                        {
+                            line.truncate(line.len() - 2);
+                        } else if line.ends_with(b"\n") {
                             line.pop();
                         }
                         return Ok(Some(line));
