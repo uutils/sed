@@ -14,6 +14,7 @@ use std::io::{Read, Write};
 #[cfg(unix)]
 use assert_fs::fixture::{FileWriteStr, PathChild};
 
+use rstest::rstest;
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 use uutests::new_ucmd;
@@ -107,33 +108,39 @@ fn test_f_script_ok() {
 
 ////////////////////////////////////////////////////////////
 // Test simple I/O processing
-const INPUT_FILES: &[&str] = &[
-    "input/two-lines.txt",
-    "input/no-new-line.txt",
-    "input/dots-4k.txt",
-    "input/dots-8k.txt",
-    "input/dots-64k.txt",
-];
-
-#[test]
-fn test_no_script_stdin() {
-    for fixture in INPUT_FILES {
-        new_ucmd!()
-            .arg("")
-            .pipe_in_fixture(fixture)
-            .succeeds()
-            .stdout_is_fixture(fixture);
-    }
+#[rstest]
+fn test_no_script_stdin(
+    #[values(
+        "input/two-lines.txt",
+        "input/no-new-line.txt",
+        "input/dots-4k.txt",
+        "input/dots-8k.txt",
+        "input/dots-64k.txt"
+    )]
+    fixture: &str,
+) {
+    new_ucmd!()
+        .arg("")
+        .pipe_in_fixture(fixture)
+        .succeeds()
+        .stdout_is_fixture(fixture);
 }
 
-#[test]
-fn test_no_script_file() {
-    for fixture in INPUT_FILES {
-        new_ucmd!()
-            .args(&["-e", "", fixture])
-            .succeeds()
-            .stdout_is_fixture(fixture);
-    }
+#[rstest]
+fn test_no_script_file(
+    #[values(
+        "input/two-lines.txt",
+        "input/no-new-line.txt",
+        "input/dots-4k.txt",
+        "input/dots-8k.txt",
+        "input/dots-64k.txt"
+    )]
+    fixture: &str,
+) {
+    new_ucmd!()
+        .args(&["-e", "", fixture])
+        .succeeds()
+        .stdout_is_fixture(fixture);
 }
 
 /// Test correct functioning of copy_file_range.
@@ -151,69 +158,68 @@ fn test_multiple_input_files() {
         .stdout_is_fixture("output/multiple_input_files");
 }
 
-#[test]
-fn test_delete_stdin() {
-    for fixture in INPUT_FILES {
-        new_ucmd!()
-            .arg("d")
-            .pipe_in_fixture(fixture)
-            .succeeds()
-            .no_stdout();
-    }
+#[rstest]
+fn test_delete_stdin(
+    #[values(
+        "input/two-lines.txt",
+        "input/no-new-line.txt",
+        "input/dots-4k.txt",
+        "input/dots-8k.txt",
+        "input/dots-64k.txt"
+    )]
+    fixture: &str,
+) {
+    new_ucmd!()
+        .arg("d")
+        .pipe_in_fixture(fixture)
+        .succeeds()
+        .no_stdout();
 }
 
-#[test]
-fn test_delete_file() {
-    for fixture in INPUT_FILES {
-        new_ucmd!()
-            .args(&["-e", "d", fixture])
-            .succeeds()
-            .no_stdout();
-    }
+#[rstest]
+fn test_delete_file(
+    #[values(
+        "input/two-lines.txt",
+        "input/no-new-line.txt",
+        "input/dots-4k.txt",
+        "input/dots-8k.txt",
+        "input/dots-64k.txt"
+    )]
+    fixture: &str,
+) {
+    new_ucmd!()
+        .args(&["-e", "d", fixture])
+        .succeeds()
+        .no_stdout();
 }
 
-#[test]
+#[rstest]
 #[cfg(unix)]
-fn test_special_file() {
-    for fixture in INPUT_FILES {
-        // To test path avoiding copy_file_range
-        let devnull = fs::File::create("/dev/null").unwrap();
+fn test_special_file(
+    #[values(
+        "input/two-lines.txt",
+        "input/no-new-line.txt",
+        "input/dots-4k.txt",
+        "input/dots-8k.txt",
+        "input/dots-64k.txt"
+    )]
+    fixture: &str,
+) {
+    // To test path avoiding copy_file_range
+    let devnull = fs::File::create("/dev/null").unwrap();
 
-        new_ucmd!()
-            .args(&["-e", "", fixture])
-            .set_stdout(devnull)
-            .succeeds();
-    }
+    new_ucmd!()
+        .args(&["-e", "", fixture])
+        .set_stdout(devnull)
+        .succeeds();
 }
 
-/// Create a new test function to verify an execution for specified output.
-macro_rules! check_output {
-    ($name:ident, $args:expr) => {
-        #[test]
-        fn $name() {
-            new_ucmd!()
-                .args(&$args)
-                .succeeds()
-                .stdout_is_fixture(&format!("output/{}", stringify!($name)));
-        }
-    };
-}
-
-// Run ucmd twice to test POSIX conformance: Once where posix is "--posix"
-// and once where it has the dummy value "--follow-symlinks".
-// This shall be used to test commands that behave differently under POSIX.
-macro_rules! check_output_posix {
-    ($name:ident, [$($args:expr),* $(,)?]) => {
-        #[test]
-        fn $name() {
-            for posix in ["--posix", "--follow-symlinks"] {
-                new_ucmd!()
-                    .args(&[posix $(, $args)*]) // prepend posix, then add args
-                    .succeeds()
-                    .stdout_is_fixture(&format!("output/{}", stringify!($name)));
-            }
-        }
-    };
+/// Run sed with `args` and check that its output matches `output/<fixture>`.
+fn check_output(args: &[&str], fixture: &str) {
+    new_ucmd!()
+        .args(args)
+        .succeeds()
+        .stdout_is_fixture(format!("output/{fixture}"));
 }
 
 ////////////////////////////////////////////////////////////
@@ -226,89 +232,80 @@ const NO_NEW_LINE: &str = "input/no-new-line.txt";
 
 ////////////////////////////////////////////////////////////
 // Comments
-check_output!(comment, ["-n", "-e", "4p;# comment", LINES1]);
-check_output!(comment_silent, ["-e", "#n", "-e", "4p", LINES1]);
-check_output!(comment_no_silent, ["-e", "4p;#n comment", LINES1]);
+#[rstest]
+#[case::comment(&["-n", "-e", "4p;# comment", LINES1], "comment")]
+#[case::comment_silent(&["-e", "#n", "-e", "4p", LINES1], "comment_silent")]
+#[case::comment_no_silent(&["-e", "4p;#n comment", LINES1], "comment_no_silent")]
+fn comments(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
 ////////////////////////////////////////////////////////////
 // Address ranges: One and two, numeric and pattern
-check_output!(addr_one_line, ["-n", "-e", "4p", LINES1]);
-check_output!(addr_straddle, ["-n", "-e", "20p", LINES1, LINES2]);
-check_output!(addr_last_one_file, ["-n", "-e", "$p", LINES1]);
-check_output!(addr_last_two_files, ["-n", "-e", "$p", LINES1, LINES2]);
+#[rstest]
+#[case::addr_one_line(&["-n", "-e", "4p", LINES1], "addr_one_line")]
+#[case::addr_straddle(&["-n", "-e", "20p", LINES1, LINES2], "addr_straddle")]
+#[case::addr_last_one_file(&["-n", "-e", "$p", LINES1], "addr_last_one_file")]
+#[case::addr_last_two_files(&["-n", "-e", "$p", LINES1, LINES2], "addr_last_two_files")]
+#[case::addr_append_empty(&["-e", "$a\\\nhello", "input/empty"], "addr_append_empty")]
+#[case::addr_last_empty(&["-n", "-e", "$p", LINES1, "input/empty", LINES2], "addr_last_empty")]
+#[case::addr_past_last(&["-n", "-e", "20p", LINES1], "addr_past_last")]
+#[case::addr_not_found(&["-n", "-e", "/NOTFOUND/p", LINES1], "addr_not_found")]
+#[case::addr_found(&["-n", "/l1_7/p", LINES1], "addr_found")]
+#[case::addr_found_space(&["-n", " /l1_7/ p", LINES1], "addr_found_space")]
+#[case::addr_escaped_delimiter(&["-n", "\\_l1\\_7_p", LINES1], "addr_escaped_delimiter")]
+#[case::addr_range_numeric(&["-n", "1,4p", LINES1], "addr_range_numeric")]
+#[case::addr_range_to_last(&["-n", "1,$p", LINES1, LINES2], "addr_range_to_last")]
+#[case::addr_range_to_pattern(&["-n", "1,/l2_9/p", LINES1, LINES2], "addr_range_to_pattern")]
+#[case::addr_range_straddle(&["-n", "/l1_3/,/l2_3/p", LINES1, LINES2], "addr_range_straddle")]
+#[case::addr_range_separate(
+    &["-n", "--separate", "/l1_3/,/l2_3/p", LINES1, LINES2],
+    "addr_range_separate"
+)]
+#[case::addr_range_from_zero_to_pattern(
+    &["-n", "0,/_1/p", LINES1],
+    "addr_range_from_zero_to_pattern"
+)]
+#[case::addr_pattern_to_last(&["-n", "/4/,$p", LINES1, LINES2], "addr_pattern_to_last")]
+#[case::addr_pattern_to_straddle(&["-n", "/4/,20p", LINES1, LINES2], "addr_pattern_to_straddle")]
+#[case::addr_pattern_to_pattern(&["-n", "/4/,/10/p", LINES1, LINES2], "addr_pattern_to_pattern")]
+#[case::addr_pattern_straddle(&["-n", "/l2_3/,/l1_8/p", LINES1, LINES2], "addr_pattern_straddle")]
+#[case::addr_range_reverse(&["-n", "12,3p", LINES1, LINES2], "addr_range_reverse")]
+#[case::addr_pattern_range_reverse(
+    &["-n", "/l1_7/,3p", LINES1, LINES2],
+    "addr_pattern_range_reverse"
+)]
+#[case::addr_numeric_to_relative(&["-n", "13,+4p", LINES1, LINES2], "addr_numeric_to_relative")]
+#[case::addr_pattern_to_relative(&["-n", "/l1_6/,+2p", LINES1, LINES2], "addr_pattern_to_relative")]
+#[case::addr_numeric_relative_straddle(&["-n", "12,+1p", LINES1], "addr_numeric_relative_straddle")]
+#[case::addr_first_separate(&["-n", "--separate", "1p", LINES1, LINES2], "addr_first_separate")]
+#[case::addr_last_separate(&["-ns", "$p", LINES1, LINES2], "addr_last_separate")]
+#[case::addr_two_lines_semicolon(&["-n", "-e", "4p;8p", LINES1], "addr_two_lines_semicolon")]
+#[case::addr_two_lines_newline(&["-n", "-e", "4p\n8p", LINES1], "addr_two_lines_newline")]
+#[case::addr_three_lines_semicolon(&["-n", "-e", "4p;8p;1p", LINES1], "addr_three_lines_semicolon")]
+#[case::addr_one_line_negate(&["-n", "-e", "4!p", LINES1], "addr_one_line_negate")]
+#[case::addr_range_numeric_negate(&["-n", "1,4!p", LINES1], "addr_range_numeric_negate")]
+#[case::addr_pattern_to_pattern_negate(
+    &["-n", "/1_4/,/10/!p", LINES1],
+    "addr_pattern_to_pattern_negate"
+)]
+#[case::addr_empty_re_reuse(&["-n", "/_2/,//p", LINES1, LINES2], "addr_empty_re_reuse")]
+#[case::addr_simple_negation(&["-e", r"4,12!s/^/^/", LINES1], "addr_simple_negation")]
+#[case::addr_range_even(&["-n", "0~2p", LINES1], "addr_range_even")]
+#[case::addr_range_odd(&["-n", "1~2p", LINES1], "addr_range_odd")]
+#[case::addr_range_step_zero(&["-n", "10~0p", LINES1], "addr_range_step_zero")]
+#[case::addr_range_end_multiple(&["-n", "/l1_2/,~10p", LINES1], "addr_range_end_multiple")]
+fn addresses(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
-check_output!(addr_append_empty, ["-e", "$a\\\nhello", "input/empty"]);
-
-check_output!(
-    addr_last_empty,
-    ["-n", "-e", "$p", LINES1, "input/empty", LINES2]
-);
-
-check_output!(addr_past_last, ["-n", "-e", "20p", LINES1]);
-check_output!(addr_not_found, ["-n", "-e", "/NOTFOUND/p", LINES1]);
-check_output!(addr_found, ["-n", "/l1_7/p", LINES1]);
-check_output!(addr_found_space, ["-n", " /l1_7/ p", LINES1]);
-check_output!(addr_escaped_delimiter, ["-n", "\\_l1\\_7_p", LINES1]);
-check_output!(addr_range_numeric, ["-n", "1,4p", LINES1]);
-check_output!(addr_range_to_last, ["-n", "1,$p", LINES1, LINES2]);
-check_output!(addr_range_to_pattern, ["-n", "1,/l2_9/p", LINES1, LINES2]);
-check_output!(
-    addr_range_straddle,
-    ["-n", "/l1_3/,/l2_3/p", LINES1, LINES2]
-);
-check_output!(
-    addr_range_separate,
-    ["-n", "--separate", "/l1_3/,/l2_3/p", LINES1, LINES2]
-);
-check_output!(addr_range_from_zero_to_pattern, ["-n", "0,/_1/p", LINES1]);
-check_output!(addr_pattern_to_last, ["-n", "/4/,$p", LINES1, LINES2]);
-check_output!(addr_pattern_to_straddle, ["-n", "/4/,20p", LINES1, LINES2]);
-check_output!(addr_pattern_to_pattern, ["-n", "/4/,/10/p", LINES1, LINES2]);
-check_output!(
-    addr_pattern_straddle,
-    ["-n", "/l2_3/,/l1_8/p", LINES1, LINES2]
-);
-check_output!(addr_range_reverse, ["-n", "12,3p", LINES1, LINES2]);
-check_output!(
-    addr_pattern_range_reverse,
-    ["-n", "/l1_7/,3p", LINES1, LINES2]
-);
-check_output!(addr_numeric_to_relative, ["-n", "13,+4p", LINES1, LINES2]);
-check_output!(
-    addr_pattern_to_relative,
-    ["-n", "/l1_6/,+2p", LINES1, LINES2]
-);
-check_output!(addr_numeric_relative_straddle, ["-n", "12,+1p", LINES1]);
-check_output!(
-    addr_first_separate,
-    ["-n", "--separate", "1p", LINES1, LINES2]
-);
-check_output!(addr_last_separate, ["-ns", "$p", LINES1, LINES2]);
-check_output!(addr_two_lines_semicolon, ["-n", "-e", "4p;8p", LINES1]);
-check_output!(addr_two_lines_newline, ["-n", "-e", "4p\n8p", LINES1]);
-check_output!(addr_three_lines_semicolon, ["-n", "-e", "4p;8p;1p", LINES1]);
-check_output!(addr_one_line_negate, ["-n", "-e", "4!p", LINES1]);
-check_output!(addr_range_numeric_negate, ["-n", "1,4!p", LINES1]);
-check_output!(
-    addr_pattern_to_pattern_negate,
-    ["-n", "/1_4/,/10/!p", LINES1]
-);
-check_output!(addr_empty_re_reuse, ["-n", "/_2/,//p", LINES1, LINES2]);
-check_output!(addr_simple_negation, ["-e", r"4,12!s/^/^/", LINES1]);
-check_output!(addr_range_even, ["-n", "0~2p", LINES1]);
-check_output!(addr_range_odd, ["-n", "1~2p", LINES1]);
-check_output!(addr_range_step_zero, ["-n", "10~0p", LINES1]);
-check_output!(addr_range_end_multiple, ["-n", "/l1_2/,~10p", LINES1]);
-
-#[test]
-fn command_may_end_before_closing_brace() {
-    for script in ["{p}", "1{p}", "/a/{p}"] {
-        new_ucmd!()
-            .arg(script)
-            .pipe_in("a\n")
-            .succeeds()
-            .stdout_is("a\na\n");
-    }
+#[rstest]
+fn command_may_end_before_closing_brace(#[values("{p}", "1{p}", "/a/{p}")] script: &str) {
+    new_ucmd!()
+        .arg(script)
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is("a\na\n");
 }
 
 ////////////////////////////////////////////////////////////
@@ -319,165 +316,67 @@ fn command_may_end_before_closing_brace() {
 const REGEX_QUANTIFIERS_INPUT: &str =
     "Hello World\nHelo World\nHelllllo World\nHeo Word\nHeo Worl}d\n";
 
-#[test]
-fn ere_quantifier_exactly_m() {
+#[rstest]
+#[case::ere_exactly_m(&["-E", "-e", "/l{2}/p"], "Hello World\nHelllllo World\n")]
+#[case::ere_minimum_m(
+    &["-E", "-e", "/l{1,}/p"],
+    "Hello World\nHelo World\nHelllllo World\nHeo Worl}d\n"
+)]
+#[case::ere_m_to_n(&["-E", "-e", "/l{3,4}/p"], "Helllllo World\n")]
+#[case::ere_comma_n(&["-E", "-e", "/l{,4}/p"], REGEX_QUANTIFIERS_INPUT)]
+#[case::bre_minimum_m(&["-e", "/l\\{3,\\}/p"], "Helllllo World\n")]
+#[case::bre_comma(&["-e", "/l\\{,\\}/p"], REGEX_QUANTIFIERS_INPUT)]
+#[case::bre_only_closing_brace(&["-e", "/l\\}/p"], "Heo Worl}d\n")]
+fn regex_quantifier(#[case] args: &[&str], #[case] expected: &str) {
     new_ucmd!()
-        .args(&["-n", "-E", "-e", "/l{2}/p"])
+        .arg("-n")
+        .args(args)
         .pipe_in(REGEX_QUANTIFIERS_INPUT)
         .succeeds()
-        .stdout_is("Hello World\nHelllllo World\n");
+        .stdout_is(expected);
 }
 
-#[test]
-fn ere_quantifier_minimum_m() {
+#[rstest]
+#[case::ere_n_gt_m(&["-E", "-e", "/l{3,2}/p"], "Invalid content of \\{\\}")]
+#[case::ere_negative_m(&["-E", "-e", "/l{-2,4}/p"], "Invalid content of \\{\\}")]
+#[case::ere_invalid_m(&["-E", "-e", "/l{d,}/p"], "Invalid content of \\{\\}")]
+#[case::ere_m_too_big(&["-E", "-e", "/l{32768,}/p"], "Regular expression too big")]
+// The {,n} form must enforce the RE_DUP_MAX upper bound on n.
+#[case::ere_leading_comma_n_too_big(&["-E", "-e", "/l{,32768}/p"], "Regular expression too big")]
+#[case::ere_empty(&["-E", "-e", "/l{}/p"], "Invalid content of \\{\\}")]
+#[case::ere_whitespace(&["-E", "-e", "/l{ }/p"], "Invalid content of \\{\\}")]
+#[case::ere_unmatched_brace(&["-E", "-e", "/l{,/p"], "Unmatched \\{")]
+#[case::ere_unmatched_brace_2(&["-E", "-e", "/l{m,n/p"], "Unmatched \\{")]
+#[case::bre_unmatched_brace(&["-e", "/l\\{1,2}/p"], "Unmatched \\{")]
+fn regex_quantifier_invalid(#[case] args: &[&str], #[case] message: &str) {
     new_ucmd!()
-        .args(&["-n", "-E", "-e", "/l{1,}/p"])
-        .pipe_in(REGEX_QUANTIFIERS_INPUT)
-        .succeeds()
-        .stdout_is("Hello World\nHelo World\nHelllllo World\nHeo Worl}d\n");
-}
-
-#[test]
-fn ere_quantifier_m_to_n() {
-    new_ucmd!()
-        .args(&["-n", "-E", "-e", "/l{3,4}/p"])
-        .pipe_in(REGEX_QUANTIFIERS_INPUT)
-        .succeeds()
-        .stdout_is("Helllllo World\n");
-}
-
-#[test]
-fn ere_quantifier_comma_n() {
-    new_ucmd!()
-        .args(&["-n", "-E", "-e", "/l{,4}/p"])
-        .pipe_in(REGEX_QUANTIFIERS_INPUT)
-        .succeeds()
-        .stdout_is(REGEX_QUANTIFIERS_INPUT);
-}
-
-#[test]
-fn bre_quantifier_minimum_m() {
-    new_ucmd!()
-        .args(&["-n", "-e", "/l\\{3,\\}/p"])
-        .pipe_in(REGEX_QUANTIFIERS_INPUT)
-        .succeeds()
-        .stdout_is("Helllllo World\n");
-}
-
-#[test]
-fn bre_quantifier_comma() {
-    new_ucmd!()
-        .args(&["-n", "-e", "/l\\{,\\}/p"])
-        .pipe_in(REGEX_QUANTIFIERS_INPUT)
-        .succeeds()
-        .stdout_is(REGEX_QUANTIFIERS_INPUT);
-}
-
-#[test]
-fn bre_quantifier_only_closing_brace() {
-    new_ucmd!()
-        .args(&["-n", "-e", "/l\\}/p"])
-        .pipe_in(REGEX_QUANTIFIERS_INPUT)
-        .succeeds()
-        .stdout_is("Heo Worl}d\n");
-}
-
-#[test]
-fn test_ere_quantifier_n_gt_m() {
-    new_ucmd!()
-        .args(&["-E", "-e", "/l{3,2}/p"])
+        .args(args)
         .fails()
         .code_is(1)
-        .stderr_contains("Invalid content of \\{\\}");
+        .stderr_contains(message);
 }
 
-#[test]
-fn test_ere_quantifier_negative_m() {
+#[rstest]
+#[case::star_first("/*/p", 3)]
+#[case::plus_first("/+/p", 3)]
+#[case::question_first("/?/p", 3)]
+#[case::interval_first("/{2}/p", 5)]
+#[case::star_after_alternation("/a|*b/p", 6)]
+#[case::star_after_group_open("/(*a)/p", 6)]
+#[case::star_after_caret("/^*/p", 4)]
+#[case::star_after_dollar("/$*/p", 4)]
+#[case::plus_after_inner_caret("/a^+/p", 5)]
+#[case::subst_star_first("s/*/x/", 4)]
+#[case::subst_plus_after_alternation("s/a|+b/x/", 7)]
+#[case::subst_star_after_caret("s/^*/x/g", 5)]
+fn test_ere_quantifier_without_preceding_atom(#[case] script: &str, #[case] column: usize) {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{-2,4}/p"])
+        .args(&["-n", "-E", "-e", script])
         .fails()
         .code_is(1)
-        .stderr_contains("Invalid content of \\{\\}");
-}
-
-#[test]
-fn test_ere_quantifier_invalid_m() {
-    new_ucmd!()
-        .args(&["-E", "-e", "/l{d,}/p"])
-        .fails()
-        .code_is(1)
-        .stderr_contains("Invalid content of \\{\\}");
-}
-
-#[test]
-fn test_ere_quantifier_m_too_big() {
-    new_ucmd!()
-        .args(&["-E", "-e", "/l{32768,}/p"])
-        .fails()
-        .code_is(1)
-        .stderr_contains("Regular expression too big");
-}
-
-#[test]
-fn test_ere_quantifier_empty() {
-    new_ucmd!()
-        .args(&["-E", "-e", "/l{}/p"])
-        .fails()
-        .code_is(1)
-        .stderr_contains("Invalid content of \\{\\}");
-}
-
-#[test]
-fn test_ere_quantifier_whitespace() {
-    new_ucmd!()
-        .args(&["-E", "-e", "/l{ }/p"])
-        .fails()
-        .code_is(1)
-        .stderr_contains("Invalid content of \\{\\}");
-}
-
-#[test]
-fn test_ere_quantifier_unmatched_brace() {
-    new_ucmd!()
-        .args(&["-E", "-e", "/l{,/p"])
-        .fails()
-        .code_is(1)
-        .stderr_contains("Unmatched \\{");
-}
-
-#[test]
-fn test_ere_quantifier_unmatched_brace_2() {
-    new_ucmd!()
-        .args(&["-E", "-e", "/l{m,n/p"])
-        .fails()
-        .code_is(1)
-        .stderr_contains("Unmatched \\{");
-}
-
-#[test]
-fn test_ere_quantifier_without_preceding_atom() {
-    for (script, column) in [
-        ("/*/p", 3),
-        ("/+/p", 3),
-        ("/?/p", 3),
-        ("/{2}/p", 5),
-        ("/a|*b/p", 6),
-        ("/(*a)/p", 6),
-        ("/^*/p", 4),
-        ("/$*/p", 4),
-        ("/a^+/p", 5),
-        ("s/*/x/", 4),
-        ("s/a|+b/x/", 7),
-        ("s/^*/x/g", 5),
-    ] {
-        new_ucmd!()
-            .args(&["-n", "-E", "-e", script])
-            .fails()
-            .code_is(1)
-            .stderr_only(format!(
-                "sed: <script argument 1>:1:{column}: error: Invalid preceding regular expression\n"
-            ));
-    }
+        .stderr_only(format!(
+            "sed: <script argument 1>:1:{column}: error: Invalid preceding regular expression\n"
+        ));
 }
 
 /// Write a sed script to a temporary file. Tests pass it with `-f`, since on
@@ -492,100 +391,80 @@ fn script_path(file: &NamedTempFile) -> &str {
     file.path().to_str().expect("temporary path is UTF-8")
 }
 
-#[test]
-fn test_ere_quantifier_after_atom() {
-    for script in [
-        "/a**/p", "/a+?/p", "/()*/p", "/(a|)*/p", "/[a]*/p", "/a{1}*/p", "/\\(*/p", "/\\**/p",
-    ] {
-        let file = script_file(script);
-        new_ucmd!()
-            .args(&["-n", "-E", "-f", script_path(&file)])
-            .pipe_in("xa*b\n")
-            .succeeds()
-            .stdout_is("xa*b\n");
-    }
-}
-
-#[test]
-fn test_quantifier_after_quantifier_stays_greedy() {
-    for (args, input, expected) in [
-        (&["-E", "s/b+?/X/"][..], "abbc\n", "Xabbc\n"),
-        (&["-E", "s/b+?/X/g"], "abbc\n", "XaXcX\n"),
-        (&["-E", "s/ab??/X/"], "abbc\n", "Xbc\n"),
-        (&["-E", "s/ab+?/X/"], "abbc\n", "Xc\n"),
-        (&["-E", "s/ab+???/X/"], "abbc\n", "Xc\n"),
-        (&["-E", "s/a(b)+?/X\\1/"], "abbc\n", "Xbc\n"),
-        (&["-E", "s/a[b]+?/X/"], "abbc\n", "Xc\n"),
-        (&["-E", "s/b+?/X/"], "bbc\n", "Xc\n"),
-        (&["-E", "s/b+?/X/I"], "BBc\n", "Xc\n"),
-        (&["-E", "s/b+?/X/gM"], "bbc\n", "XcX\n"),
-        (&["-E", "s/ab*+b/X/"], "abbc\n", "Xc\n"),
-        (&["-E", "s/(a)b*+b\\1/X/"], "abba\n", "X\n"),
-        (&["s/ab\\+\\?/X/"], "abbc\n", "Xc\n"),
-        (&["s/a\\(b\\)*\\?b\\1/X/"], "abbb\n", "X\n"),
-        (&["-n", "/ab\\+\\?c/p"], "abbc\n", "abbc\n"),
-        // A literal ? or + is still one.
-        (&["-E", "s/a\\??/X/"], "a?bc\n", "Xbc\n"),
-        (&["-E", "s/a[?+]+/X/"], "a?+c\n", "Xc\n"),
-        (&["s/b?+/X/"], "ab?+c\n", "aXc\n"),
-    ] {
-        new_ucmd!()
-            .args(args)
-            .pipe_in(input)
-            .succeeds()
-            .stdout_is(expected);
-    }
-}
-
-#[test]
-fn test_quantifier_after_quantifier_byte_mode() {
-    // With LC_ALL=C the \xa9 byte is a character of its own, so a\xa9+?
-    // only makes the \xa9 part optional and still matches a lone a.
-    for (input, expected) in [(&b"ab\n"[..], &b"Xb\n"[..]), (b"a\xa9\xa9b\n", b"Xb\n")] {
-        new_ucmd!()
-            .env("LC_ALL", "C")
-            .args(&["-E", "s/a\\xa9+?/X/"])
-            .pipe_in(input)
-            .succeeds()
-            .stdout_is_bytes(expected);
-    }
-}
-
-#[test]
-fn test_bre_anchors_in_subexpression() {
-    for (script, expected) in [
-        ("s/\\(^a\\)/x/g", "xb\n"),
-        ("s/b\\|^a/x/g", "xx\n"),
-        ("s/x*\\(^a\\)/y/", "yb\n"),
-        ("s/\\(b$\\)/x/", "ax\n"),
-        ("s/a$\\|b$/x/g", "ax\n"),
-    ] {
-        let file = script_file(script);
-        new_ucmd!()
-            .args(&["-f", script_path(&file)])
-            .pipe_in("ab\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
-}
-
-#[test]
-fn test_bre_quantifier_unmatched_brace() {
+#[rstest]
+fn test_ere_quantifier_after_atom(
+    #[values(
+        "/a**/p", "/a+?/p", "/()*/p", "/(a|)*/p", "/[a]*/p", "/a{1}*/p", "/\\(*/p", "/\\**/p"
+    )]
+    script: &str,
+) {
+    let file = script_file(script);
     new_ucmd!()
-        .args(&["-e", "/l\\{1,2}/p"])
-        .fails()
-        .code_is(1)
-        .stderr_contains("Unmatched \\{");
+        .args(&["-n", "-E", "-f", script_path(&file)])
+        .pipe_in("xa*b\n")
+        .succeeds()
+        .stdout_is("xa*b\n");
 }
 
-#[test]
-fn test_ere_quantifier_leading_comma_n_too_big() {
-    // The {,n} form must enforce the RE_DUP_MAX upper bound on n.
+#[rstest]
+#[case::plus_question(&["-E", "s/b+?/X/"], "abbc\n", "Xabbc\n")]
+#[case::plus_question_global(&["-E", "s/b+?/X/g"], "abbc\n", "XaXcX\n")]
+#[case::question_question(&["-E", "s/ab??/X/"], "abbc\n", "Xbc\n")]
+#[case::plus_question_after_atom(&["-E", "s/ab+?/X/"], "abbc\n", "Xc\n")]
+#[case::plus_triple_question(&["-E", "s/ab+???/X/"], "abbc\n", "Xc\n")]
+#[case::group_plus_question(&["-E", "s/a(b)+?/X\\1/"], "abbc\n", "Xbc\n")]
+#[case::bracket_plus_question(&["-E", "s/a[b]+?/X/"], "abbc\n", "Xc\n")]
+#[case::plus_question_at_start(&["-E", "s/b+?/X/"], "bbc\n", "Xc\n")]
+#[case::plus_question_case_insensitive(&["-E", "s/b+?/X/I"], "BBc\n", "Xc\n")]
+#[case::plus_question_multiline(&["-E", "s/b+?/X/gM"], "bbc\n", "XcX\n")]
+#[case::star_plus(&["-E", "s/ab*+b/X/"], "abbc\n", "Xc\n")]
+#[case::star_plus_backref(&["-E", "s/(a)b*+b\\1/X/"], "abba\n", "X\n")]
+#[case::bre_plus_question(&["s/ab\\+\\?/X/"], "abbc\n", "Xc\n")]
+#[case::bre_group_star_question(&["s/a\\(b\\)*\\?b\\1/X/"], "abbb\n", "X\n")]
+#[case::bre_address_plus_question(&["-n", "/ab\\+\\?c/p"], "abbc\n", "abbc\n")]
+// A literal ? or + is still one.
+#[case::escaped_question(&["-E", "s/a\\??/X/"], "a?bc\n", "Xbc\n")]
+#[case::bracketed_question_plus(&["-E", "s/a[?+]+/X/"], "a?+c\n", "Xc\n")]
+#[case::bre_literal_question_plus(&["s/b?+/X/"], "ab?+c\n", "aXc\n")]
+fn test_quantifier_after_quantifier_stays_greedy(
+    #[case] args: &[&str],
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
     new_ucmd!()
-        .args(&["-E", "-e", "/l{,32768}/p"])
-        .fails()
-        .code_is(1)
-        .stderr_contains("Regular expression too big");
+        .args(args)
+        .pipe_in(input)
+        .succeeds()
+        .stdout_is(expected);
+}
+
+// With LC_ALL=C the \xa9 byte is a character of its own, so a\xa9+?
+// only makes the \xa9 part optional and still matches a lone a.
+#[rstest]
+#[case::lone_a(b"ab\n", b"Xb\n")]
+#[case::repeated_byte(b"a\xa9\xa9b\n", b"Xb\n")]
+fn test_quantifier_after_quantifier_byte_mode(#[case] input: &[u8], #[case] expected: &[u8]) {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["-E", "s/a\\xa9+?/X/"])
+        .pipe_in(input)
+        .succeeds()
+        .stdout_is_bytes(expected);
+}
+
+#[rstest]
+#[case::caret_in_group("s/\\(^a\\)/x/g", "xb\n")]
+#[case::caret_after_alternation("s/b\\|^a/x/g", "xx\n")]
+#[case::caret_in_group_after_star("s/x*\\(^a\\)/y/", "yb\n")]
+#[case::dollar_in_group("s/\\(b$\\)/x/", "ax\n")]
+#[case::dollar_before_alternation("s/a$\\|b$/x/g", "ax\n")]
+fn test_bre_anchors_in_subexpression(#[case] script: &str, #[case] expected: &str) {
+    let file = script_file(script);
+    new_ucmd!()
+        .args(&["-f", script_path(&file)])
+        .pipe_in("ab\n")
+        .succeeds()
+        .stdout_is(expected);
 }
 
 // A closing brace used as the regex delimiter must terminate the regex
@@ -617,48 +496,63 @@ fn bre_closing_brace_delimiter() {
         .stdout_is("a-b-c\n");
 }
 
+#[rstest]
 // Substitution: s
-check_output!(subst_any, ["-e", r"s/./X/g", LINES1]);
-check_output!(subst_any_global, ["-e", r"s,.,X,g", LINES1]);
-check_output!(subst_escaped_magic_separator, ["-e", r"s.\..X.g", LINES1]);
-check_output!(subst_escaped_braced_separator, ["-e", r"s/[\/]/Q/", LINES1]);
-check_output!(subst_escaped_separator, ["-e", r"s_\__X_", LINES1]);
-check_output!(subst_whole_match_group, ["-e", r"s/./(&)/g", LINES1]);
-check_output!(subst_print, ["-ne", "s/1_1/S&/p", LINES1]);
-check_output!(
-    subst_escaped_whole_match_group,
-    ["-e", r"s/./(\&)/g", LINES1]
-);
-check_output!(
-    subst_numerical_groups,
-    ["-e", r"s/\(.\)\(.\)\(.\)/x\3x\2x\1/g", LINES1]
-);
-check_output!(
-    subst_ere_numerical_groups,
-    [
+#[case::subst_any(&["-e", r"s/./X/g", LINES1], "subst_any")]
+#[case::subst_any_global(&["-e", r"s,.,X,g", LINES1], "subst_any_global")]
+#[case::subst_escaped_magic_separator(
+    &["-e", r"s.\..X.g", LINES1],
+    "subst_escaped_magic_separator"
+)]
+#[case::subst_escaped_braced_separator(
+    &["-e", r"s/[\/]/Q/", LINES1],
+    "subst_escaped_braced_separator"
+)]
+#[case::subst_escaped_separator(&["-e", r"s_\__X_", LINES1], "subst_escaped_separator")]
+#[case::subst_whole_match_group(&["-e", r"s/./(&)/g", LINES1], "subst_whole_match_group")]
+#[case::subst_print(&["-ne", "s/1_1/S&/p", LINES1], "subst_print")]
+#[case::subst_escaped_whole_match_group(
+    &["-e", r"s/./(\&)/g", LINES1],
+    "subst_escaped_whole_match_group"
+)]
+#[case::subst_numerical_groups(
+    &["-e", r"s/\(.\)\(.\)\(.\)/x\3x\2x\1/g", LINES1],
+    "subst_numerical_groups"
+)]
+#[case::subst_ere_numerical_groups(
+    &[
         "--regexp-extended",
         "-e",
         r"s/(.)(.)(.)/x\3x\2x\1/g",
         LINES1
-    ]
-);
-check_output!(
-    subst_quantifier_zero_or_one,
-    ["-e", r"s/_[0-9]\([0-9]\)\?/_x\1/g", LINES1]
-);
-check_output!(
-    subst_quantifier_one_or_more,
-    ["-e", r"s/_[0-9]\+/_x/g", LINES1]
-);
-check_output!(subst_alternation_operator, ["-e", r"s/0\|1/x/g", LINES1]);
-check_output!(subst_multiline, ["-e", "s/_/u0\\\nu1\\\nu2/g", LINES1]);
-check_output!(subst_numbered_replacement, ["-e", r"s/./X/4", LINES1]);
-check_output!(subst_brace, ["-e", r"s/[123]/X/g", LINES1]);
-check_output!(subst_case_insensitive, ["-e", r"s/L/Line/", LINES1]);
-check_output!(subst_no_new_line, ["-e", r"s/l/L/g", NO_NEW_LINE]);
-check_output!(subst_re_reuse, ["-e", r"2s//M/;1s/l/L/", LINES1]);
-check_output!(subst_newline_class, ["-n", r"1{;N;s/[\n]/X/;p;}", LINES1]);
-check_output!(subst_newline_re, ["-n", r"1{;N;s/\n/X/;p;}", LINES1]);
+    ],
+    "subst_ere_numerical_groups"
+)]
+#[case::subst_quantifier_zero_or_one(
+    &["-e", r"s/_[0-9]\([0-9]\)\?/_x\1/g", LINES1],
+    "subst_quantifier_zero_or_one"
+)]
+#[case::subst_quantifier_one_or_more(
+    &["-e", r"s/_[0-9]\+/_x/g", LINES1],
+    "subst_quantifier_one_or_more"
+)]
+#[case::subst_alternation_operator(&["-e", r"s/0\|1/x/g", LINES1], "subst_alternation_operator")]
+#[case::subst_multiline(&["-e", "s/_/u0\\\nu1\\\nu2/g", LINES1], "subst_multiline")]
+#[case::subst_numbered_replacement(&["-e", r"s/./X/4", LINES1], "subst_numbered_replacement")]
+#[case::subst_brace(&["-e", r"s/[123]/X/g", LINES1], "subst_brace")]
+#[case::subst_case_insensitive(&["-e", r"s/L/Line/", LINES1], "subst_case_insensitive")]
+#[case::subst_no_new_line(&["-e", r"s/l/L/g", NO_NEW_LINE], "subst_no_new_line")]
+#[case::subst_re_reuse(&["-e", r"2s//M/;1s/l/L/", LINES1], "subst_re_reuse")]
+#[case::subst_newline_class(&["-n", r"1{;N;s/[\n]/X/;p;}", LINES1], "subst_newline_class")]
+#[case::subst_newline_re(&["-n", r"1{;N;s/\n/X/;p;}", LINES1], "subst_newline_re")]
+// Check appropriate selection and behavior of fast_Regex matcher
+// Literal matcher
+#[case::subst_literal_start(&["-e", r"s/^l1/L1/", LINES1], "subst_literal_start")]
+#[case::subst_literal_end(&["-e", r"s/2$/TWO/", LINES1], "subst_literal_end")]
+#[case::subst_literal(&["-e", r"s/_/-/", LINES1], "subst_literal")]
+fn substitution(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
 #[test]
 fn subst_dot_matches_newline() {
@@ -696,20 +590,17 @@ fn subst_multiline_flag_matches_embedded_line_end() {
         .stdout_is("foX\nbaX\n");
 }
 
-#[test]
-fn address_multiline_modifier() {
-    for (script, expected) in [
-        ("$!N;/^b$/Mp", "a\nb\n"),
-        ("$!N;/^b$/p", ""),
-        ("$!N;/^B/ I M p", "a\nb\n"),
-        ("/^b/M,/c$/Mp", "b\nc\n"),
-    ] {
-        new_ucmd!()
-            .args(&["-n", script])
-            .pipe_in("a\nb\nc\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
+#[rstest]
+#[case::multiline("$!N;/^b$/Mp", "a\nb\n")]
+#[case::without_modifier("$!N;/^b$/p", "")]
+#[case::with_case_insensitive("$!N;/^B/ I M p", "a\nb\n")]
+#[case::range("/^b/M,/c$/Mp", "b\nc\n")]
+fn address_multiline_modifier(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!()
+        .args(&["-n", script])
+        .pipe_in("a\nb\nc\n")
+        .succeeds()
+        .stdout_is(expected);
 }
 
 ////////////////////////////////////////////////////////////
@@ -791,16 +682,14 @@ fn test_bracket_escaped_delimiter_is_two_members() {
         .stdout_is("aXb/c\n");
 }
 
-#[test]
-fn test_bracket_literal_open_bracket() {
-    // [\[] and [[] both hold a literal [, they do not open a nested class.
-    for script in [r"s/[\[]/X/g", r"s/[[]/X/g"] {
-        new_ucmd!()
-            .args(&["-e", script])
-            .pipe_in("a[b\n")
-            .succeeds()
-            .stdout_is("aXb\n");
-    }
+// [\[] and [[] both hold a literal [, they do not open a nested class.
+#[rstest]
+fn test_bracket_literal_open_bracket(#[values(r"s/[\[]/X/g", r"s/[[]/X/g")] script: &str) {
+    new_ucmd!()
+        .args(&["-e", script])
+        .pipe_in("a[b\n")
+        .succeeds()
+        .stdout_is("aXb\n");
 }
 
 #[test]
@@ -864,17 +753,26 @@ fn test_unknown_escape_is_the_bare_character() {
         .stdout_is("aqc\n");
 }
 
+// A \c at the end of the text takes the newline that ends it, giving
+// control-newline ('J') and no trailing newline.
+#[rstest]
+#[case::append_backslash("a\\hello\\c", "a\nhelloJ")]
+#[case::append_space("a hello\\c", "a\nhelloJ")]
+// GNU sed ends `i` and `c` text with a newline instead.
+#[case::insert_backslash("i\\hello\\c", "hello\na\n")]
+#[case::insert_space("i hello\\c", "hello\na\n")]
+#[case::change_backslash("c\\hello\\c", "hello\n")]
+#[case::change_space("c hello\\c", "hello\n")]
+fn test_trailing_backslash_c_does_not_panic(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!()
+        .arg(script)
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is(expected);
+}
+
 #[test]
-fn test_trailing_backslash_c_does_not_panic() {
-    // A \c at the end of the text takes the newline that ends it, giving
-    // control-newline ('J') and no trailing newline.
-    for script in ["a\\hello\\c", "a hello\\c"] {
-        new_ucmd!()
-            .arg(script)
-            .pipe_in("a\n")
-            .succeeds()
-            .stdout_is("a\nhelloJ");
-    }
+fn test_trailing_backslash_c_ends_the_text() {
     // The text ends there; the next script line is a new command.
     new_ucmd!()
         .arg("a hello\\c\n1d")
@@ -886,18 +784,6 @@ fn test_trailing_backslash_c_does_not_panic() {
         .pipe_in("a\n")
         .succeeds()
         .stdout_is("a\na\nhelloJ");
-
-    // GNU sed ends `i` and `c` text with a newline instead.
-    for code in ['i', 'c'] {
-        for script in [format!("{code}\\hello\\c"), format!("{code} hello\\c")] {
-            let expected = if code == 'i' { "hello\na\n" } else { "hello\n" };
-            new_ucmd!()
-                .arg(&script)
-                .pipe_in("a\n")
-                .succeeds()
-                .stdout_is(expected);
-        }
-    }
     new_ucmd!()
         .arg("i hello\\c\n1d")
         .pipe_in("a\nb\n")
@@ -910,37 +796,41 @@ fn test_trailing_backslash_c_does_not_panic() {
         .stdout_is("hello\nhello\n");
 }
 
-#[test]
-fn test_trailing_backslash_c_in_delimited_string_does_not_panic() {
-    // The script fails to compile, so sed exits without reading any input;
-    // piping input in here would race with that and hit a broken pipe.
-    for (script, message) in [
-        ("s/a\\c\n/x/", "unterminated regular expression"),
-        ("y/a/\\c\n/", "unterminated transliteration string"),
-    ] {
-        new_ucmd!()
-            .arg(script)
-            .fails()
-            .code_is(1)
-            .stderr_contains(message);
-    }
+// The script fails to compile, so sed exits without reading any input;
+// piping input in here would race with that and hit a broken pipe.
+#[rstest]
+#[case::substitute("s/a\\c\n/x/", "unterminated regular expression")]
+#[case::transliterate("y/a/\\c\n/", "unterminated transliteration string")]
+fn test_trailing_backslash_c_in_delimited_string_does_not_panic(
+    #[case] script: &str,
+    #[case] message: &str,
+) {
+    new_ucmd!()
+        .arg(script)
+        .fails()
+        .code_is(1)
+        .stderr_contains(message);
+}
+
+#[rstest]
+#[case::upper_d(r"s/\D/X/", "aDb1\n", "aXb1\n")]
+#[case::upper_a(r"s/\A/X/", "xAy\n", "xXy\n")]
+#[case::zero(r"s/\0/X/", "x0y\n", "xXy\n")]
+#[case::lower_p(r"s/\p/X/", "xpy\n", "xXy\n")]
+fn test_unknown_regex_escape_is_literal(
+    #[case] script: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    new_ucmd!()
+        .arg(script)
+        .pipe_in(input)
+        .succeeds()
+        .stdout_is(expected);
 }
 
 #[test]
-fn test_unknown_regex_escape_is_literal() {
-    for (script, input, expected) in [
-        (r"s/\D/X/", "aDb1\n", "aXb1\n"),
-        (r"s/\A/X/", "xAy\n", "xXy\n"),
-        (r"s/\0/X/", "x0y\n", "xXy\n"),
-        (r"s/\p/X/", "xpy\n", "xXy\n"),
-    ] {
-        new_ucmd!()
-            .arg(script)
-            .pipe_in(input)
-            .succeeds()
-            .stdout_is(expected);
-    }
-
+fn test_unknown_regex_escape_is_literal_in_ere_and_address() {
     new_ucmd!()
         .args(&["-E", r"s/\A/X/"])
         .pipe_in("xAy\n")
@@ -953,34 +843,30 @@ fn test_unknown_regex_escape_is_literal() {
         .stdout_is("D\n");
 }
 
+// \u and \U digits that are not a Unicode scalar value (a surrogate or
+// a value above U+10FFFF) are not an escape: the letter stands for
+// itself, as with too few digits.
+#[rstest]
+#[case::regex_surrogate(r"s/\ud800/x/", "a\n")]
+#[case::regex_above_max(r"s/\Udeadbeef/x/", "a\n")]
+// The replacement side goes through the same escape parsing.
+#[case::replacement_surrogate(r"s/a/\ud800/", "ud800\n")]
+#[case::replacement_above_max(r"s/a/\Udeadbeef/", "Udeadbeef\n")]
+fn test_invalid_unicode_escape_does_not_panic(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!()
+        .arg(script)
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is(expected);
+}
+
 #[test]
-fn test_invalid_unicode_escape_does_not_panic() {
-    // \u and \U digits that are not a Unicode scalar value (a surrogate or
-    // a value above U+10FFFF) are not an escape: the letter stands for
-    // itself, as with too few digits.
-    for script in [r"s/\ud800/x/", r"s/\Udeadbeef/x/"] {
-        new_ucmd!()
-            .arg(script)
-            .pipe_in("a\n")
-            .succeeds()
-            .stdout_is("a\n");
-    }
+fn test_invalid_unicode_escape_is_the_bare_letter() {
     new_ucmd!()
         .args(&["-e", r"s/\ud800/x/", "-e", r"s/\Udeadbeef/y/"])
         .pipe_in("ud800 Udeadbeef\n")
         .succeeds()
         .stdout_is("x y\n");
-    // The replacement side goes through the same escape parsing.
-    for (script, expected) in [
-        (r"s/a/\ud800/", "ud800\n"),
-        (r"s/a/\Udeadbeef/", "Udeadbeef\n"),
-    ] {
-        new_ucmd!()
-            .arg(script)
-            .pipe_in("a\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
     // The script fails to compile, so sed exits without reading any input;
     // piping input in here would race with that and hit a broken pipe.
     new_ucmd!()
@@ -1001,39 +887,29 @@ fn test_control_backslash_escape() {
         .stdout_is("\x1cx\x1c\n");
 }
 
-#[test]
-fn test_control_backslash_recursive_escape() {
-    // GNU only allows \c\ when it is followed by a second backslash
-    for script in [r"s/b/\c\d/", r"s/\c\d/x/", r"y/a/\c\d/", r"a foo\c\d"] {
-        new_ucmd!()
-            .args(&[script])
-            .fails()
-            .code_is(1)
-            .stderr_contains(r"recursive escaping after \c not allowed");
-    }
+// GNU only allows \c\ when it is followed by a second backslash
+#[rstest]
+fn test_control_backslash_recursive_escape(
+    #[values(r"s/b/\c\d/", r"s/\c\d/x/", r"y/a/\c\d/", r"a foo\c\d")] script: &str,
+) {
+    new_ucmd!()
+        .args(&[script])
+        .fails()
+        .code_is(1)
+        .stderr_contains(r"recursive escaping after \c not allowed");
 }
 
-#[test]
-fn subst_number_and_g_replace_from_that_match_on() {
-    for flags in ["2g", "g2"] {
-        new_ucmd!()
-            .arg(format!("s/a/b/{flags}"))
-            .pipe_in("aaaa\n")
-            .succeeds()
-            .stdout_is("abbb\n");
-    }
+#[rstest]
+#[case::number_then_g("s/a/b/2g", "abbb\n")]
+#[case::g_then_number("s/a/b/g2", "abbb\n")]
+#[case::with_group(r"s/\(a\)/<\1>/3g", "aa<a><a>\n")]
+fn subst_number_and_g_replace_from_that_match_on(#[case] script: &str, #[case] expected: &str) {
     new_ucmd!()
-        .arg(r"s/\(a\)/<\1>/3g")
+        .arg(script)
         .pipe_in("aaaa\n")
         .succeeds()
-        .stdout_is("aa<a><a>\n");
+        .stdout_is(expected);
 }
-
-// Check appropriate selection and behavior of fast_Regex matcher
-// Literal matcher
-check_output!(subst_literal_start, ["-e", r"s/^l1/L1/", LINES1]);
-check_output!(subst_literal_end, ["-e", r"s/2$/TWO/", LINES1]);
-check_output!(subst_literal, ["-e", r"s/_/-/", LINES1]);
 
 // Fancy matcher
 /// Substitute using a backreference under an explicit UTF-8 locale.
@@ -1323,14 +1199,16 @@ fn test_posix_disables_gnu_bre_operators() {
         .stdout_is("a\nb\n");
 }
 
+#[rstest]
+fn test_q_rejects_two_addresses(#[values("2,3q", "2,3Q")] script: &str) {
+    new_ucmd!()
+        .args(&[script])
+        .fails_with_code(1)
+        .stderr_contains("expects up to 1 address(es), found 2");
+}
+
 #[test]
 fn test_q_takes_one_address() {
-    for script in ["2,3q", "2,3Q"] {
-        new_ucmd!()
-            .args(&[script])
-            .fails_with_code(1)
-            .stderr_contains("expects up to 1 address(es), found 2");
-    }
     new_ucmd!()
         .args(&["2q"])
         .pipe_in("k\nl\nm\n")
@@ -1371,14 +1249,18 @@ fn test_posix_missing_group_expands_to_empty() {
         .stderr_contains("invalid reference \\3");
 }
 
+#[rstest]
+fn test_empty_regex_address_rejects_modifiers(
+    #[values("//I,2p", "/k/p;//Mp", "\\,,Ip")] script: &str,
+) {
+    new_ucmd!()
+        .args(&["-n", script])
+        .fails_with_code(1)
+        .stderr_contains("cannot specify modifiers on an empty regular expression");
+}
+
 #[test]
-fn test_empty_regex_address_rejects_modifiers() {
-    for script in ["//I,2p", "/k/p;//Mp", "\\,,Ip"] {
-        new_ucmd!()
-            .args(&["-n", script])
-            .fails_with_code(1)
-            .stderr_contains("cannot specify modifiers on an empty regular expression");
-    }
+fn test_empty_regex_address_reuses_modifiers() {
     new_ucmd!()
         .args(&["-n", "/K/Ip;//p"])
         .pipe_in("k\nl\n")
@@ -1439,38 +1321,40 @@ fn test_posix_disables_gnu_extensions_in_ere() {
         .stdout_is("");
 }
 
-#[test]
-fn test_posix_keeps_posix_regex_constructs() {
-    // Groups and quantifiers are POSIX, so --posix must leave them alone.
-    for script in [r"s/\(a\)a/X/", r"s/a\{2\}/X/"] {
-        new_ucmd!()
-            .args(&["--posix", "-e", script])
-            .pipe_in("aab\n")
-            .succeeds()
-            .stdout_is("Xb\n");
+// Groups and quantifiers are POSIX, so --posix must leave them alone.
+#[rstest]
+fn test_posix_keeps_posix_regex_constructs(#[values(r"s/\(a\)a/X/", r"s/a\{2\}/X/")] script: &str) {
+    new_ucmd!()
+        .args(&["--posix", "-e", script])
+        .pipe_in("aab\n")
+        .succeeds()
+        .stdout_is("Xb\n");
+}
+
+// \` and \' match only at the start and end of the pattern space,
+// also with the M flag, in both BRE and ERE.
+#[rstest]
+#[case::start_only_once(r"s/\`./X/g", "ab\ncd\n", "Xb\nXd\n")]
+#[case::multiline(r"N;s/\`/>/Mg;s/\'/</Mg", "ab\ncd\n", ">ab\ncd<\n")]
+#[case::start_and_end(r"s/\`a/X/;s/a\'/Y/", "ab\nca\n", "Xb\ncY\n")]
+fn test_buffer_start_and_end_anchors(
+    #[values(None, Some("-E"))] mode: Option<&str>,
+    #[case] script: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    let mut ucmd = new_ucmd!();
+    if let Some(flag) = mode {
+        ucmd.arg(flag);
     }
+    ucmd.args(&["-e", script])
+        .pipe_in(input)
+        .succeeds()
+        .stdout_is(expected);
 }
 
 #[test]
-fn test_buffer_start_and_end_anchors() {
-    // \` and \' match only at the start and end of the pattern space,
-    // also with the M flag, in both BRE and ERE.
-    for mode in [None, Some("-E")] {
-        for (script, input, expected) in [
-            (r"s/\`./X/g", "ab\ncd\n", "Xb\nXd\n"),
-            (r"N;s/\`/>/Mg;s/\'/</Mg", "ab\ncd\n", ">ab\ncd<\n"),
-            (r"s/\`a/X/;s/a\'/Y/", "ab\nca\n", "Xb\ncY\n"),
-        ] {
-            let mut ucmd = new_ucmd!();
-            if let Some(flag) = mode {
-                ucmd.arg(flag);
-            }
-            ucmd.args(&["-e", script])
-                .pipe_in(input)
-                .succeeds()
-                .stdout_is(expected);
-        }
-    }
+fn test_buffer_start_and_end_anchors_with_ere_alternation() {
     new_ucmd!()
         .args(&["-E", "-e", r"s/\`(a|c)/X/;s/(a|b)\'/Y/"])
         .pipe_in("ab\nca\n")
@@ -1478,35 +1362,32 @@ fn test_buffer_start_and_end_anchors() {
         .stdout_is("XY\nXY\n");
 }
 
-#[test]
-fn test_posix_keeps_gnu_character_escapes() {
-    // The character escapes are GNU extensions, but GNU sed keeps them under --posix.
-    for script in [r"s/\x61/X/", r"s/\o141/X/", r"s/\d097/X/"] {
-        new_ucmd!()
-            .args(&["--posix", "-e", script])
-            .pipe_in("ab\n")
-            .succeeds()
-            .stdout_is("Xb\n");
-    }
+// The character escapes are GNU extensions, but GNU sed keeps them under --posix.
+#[rstest]
+fn test_posix_keeps_gnu_character_escapes(
+    #[values(r"s/\x61/X/", r"s/\o141/X/", r"s/\d097/X/")] script: &str,
+) {
+    new_ucmd!()
+        .args(&["--posix", "-e", script])
+        .pipe_in("ab\n")
+        .succeeds()
+        .stdout_is("Xb\n");
 }
 
-#[test]
-fn test_posix_text_command_on_same_line() {
-    // GNU sed accepts the text right after `a\`, `i\` and `c\` under --posix too.
-    for (script, expected) in [
-        (r"a\bar", "foo\nbar\n"),
-        (r"i\(text", "(text\nfoo\n"),
-        (r"c\bar", "bar\n"),
-        (r"a\  bar", "foo\n  bar\n"),
-        (r"1a\b\tc", "foo\nb\tc\n"),
-        ("a\\bar\\\nbaz", "foo\nbar\nbaz\n"),
-    ] {
-        new_ucmd!()
-            .args(&["--posix", "-e", script])
-            .pipe_in("foo\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
+// GNU sed accepts the text right after `a\`, `i\` and `c\` under --posix too.
+#[rstest]
+#[case::append(r"a\bar", "foo\nbar\n")]
+#[case::insert(r"i\(text", "(text\nfoo\n")]
+#[case::change(r"c\bar", "bar\n")]
+#[case::leading_spaces(r"a\  bar", "foo\n  bar\n")]
+#[case::tab_escape(r"1a\b\tc", "foo\nb\tc\n")]
+#[case::continued_line("a\\bar\\\nbaz", "foo\nbar\nbaz\n")]
+fn test_posix_text_command_on_same_line(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!()
+        .args(&["--posix", "-e", script])
+        .pipe_in("foo\n")
+        .succeeds()
+        .stdout_is(expected);
 }
 
 #[test]
@@ -1815,12 +1696,14 @@ fn test_e_command_with_arg_non_utf8_output_passthrough() {
 
 ////////////////////////////////////////////////////////////
 // Transliteration: y
-check_output!(trans_simple, ["-e", r"y/0123456789/9876543210/", LINES1]);
-check_output!(
-    trans_delimiter,
-    ["-e", r"y10\123456789198765432\101", LINES1]
-);
-check_output!(trans_no_new_line, ["-e", r"y/l/L/", NO_NEW_LINE]);
+#[rstest]
+#[case::trans_simple(&["-e", r"y/0123456789/9876543210/", LINES1], "trans_simple")]
+#[case::trans_delimiter(&["-e", r"y10\123456789198765432\101", LINES1], "trans_delimiter")]
+#[case::trans_no_new_line(&["-e", r"y/l/L/", NO_NEW_LINE], "trans_no_new_line")]
+#[case::trans_newline(&["-e", r"1N;2y/\n/X/", LINES1], "trans_newline")]
+fn transliteration(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
 /// Transliterate non-UTF-8 input bytes using byte escapes in byte mode.
 #[test]
@@ -1906,24 +1789,23 @@ fn pattern_clear_with_z_is_non_posix() {
         .code_is(1)
         .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `z'\n");
 }
-check_output!(trans_newline, ["-e", r"1N;2y/\n/X/", LINES1]);
 
 ////////////////////////////////////////////////////////////
 // Rich diagnostics, drawn for a terminal and controlled by UUTILS_DIAG
-#[test]
-fn diagnostics_stay_out_of_the_way_of_scripts() {
-    // stderr is not a terminal here, so only the plain message is printed.
-    for value in [None, Some(""), Some("never")] {
-        let mut command = new_ucmd!();
-        if let Some(value) = value {
-            command.env("UUTILS_DIAG", value);
-        }
-        command
-            .args(&["--posix", "z"])
-            .fails()
-            .code_is(1)
-            .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `z'\n");
+// stderr is not a terminal here, so only the plain message is printed.
+#[rstest]
+fn diagnostics_stay_out_of_the_way_of_scripts(
+    #[values(None, Some(""), Some("never"))] value: Option<&str>,
+) {
+    let mut command = new_ucmd!();
+    if let Some(value) = value {
+        command.env("UUTILS_DIAG", value);
     }
+    command
+        .args(&["--posix", "z"])
+        .fails()
+        .code_is(1)
+        .stderr_is("sed: <script argument 1>:1:1: error: invalid command code `z'\n");
 }
 
 #[test]
@@ -2126,36 +2008,38 @@ fn diagnostics_skip_scripts_that_are_not_utf8() {
 
 ////////////////////////////////////////////////////////////
 // Pattern space manipulation: D, d, H, h, N, n, P, p, q, x
-check_output!(pattern_print_to_newline, ["-n", r"1{;N;P;P;p;}", LINES1]);
-check_output!(pattern_next_print, ["-n", r"N;N;P", LINES1]);
-check_output!(pattern_delete_to_newline, ["-n", r"2N;3p;3D;3p", LINES1]);
-check_output!(pattern_delete_no_newline, ["-e", r"2D", LINES1]);
-check_output!(pattern_delete_print, ["-n", r"4d;p", LINES1]);
-
+#[rstest]
+#[case::pattern_print_to_newline(&["-n", r"1{;N;P;P;p;}", LINES1], "pattern_print_to_newline")]
+#[case::pattern_next_print(&["-n", r"N;N;P", LINES1], "pattern_next_print")]
+#[case::pattern_delete_to_newline(&["-n", r"2N;3p;3D;3p", LINES1], "pattern_delete_to_newline")]
+#[case::pattern_delete_no_newline(&["-e", r"2D", LINES1], "pattern_delete_no_newline")]
+#[case::pattern_delete_print(&["-n", r"4d;p", LINES1], "pattern_delete_print")]
 // FreeBSD sed does not produce any output for the following two
-check_output!(pattern_append_delete, ["-e", r"N;N;N;D", LINES1]);
-check_output!(pattern_append_delete_2, ["-e", r"N;N;N;D", LINES1, LINES2]);
-
-check_output!(
-    pattern_append_delete2_separate,
-    ["-s", r"N;N;N;D", LINES1, LINES2]
-);
-check_output!(
-    pattern_hold_append_swap,
-    ["-e", r"2h;3H;4g;5G;6x;6p;6x;6p", LINES1]
-);
-check_output!(
-    pattern_swap_separate,
-    ["--separate", r"4x;6x", LINES1, LINES2]
-);
-check_output!(pattern_next_output, ["-e", r"4n", LINES1]);
-check_output!(pattern_next_no_output, ["-n", "-e", r"4n", LINES1]);
-check_output!(pattern_next_print_output, ["-e", r"4n;p", LINES1]);
-check_output!(pattern_next_print_no_output, ["-n", "-e", r"4n;p", LINES1]);
-check_output!(pattern_quit, [r"5q", LINES1]);
-check_output!(pattern_quit_2, [r"5q", LINES1, LINES2]);
-check_output!(pattern_re_reuse, ["-n", r"/_1/p;//p", LINES1]);
-check_output!(pattern_subst_re_reuse, ["-n", r"/_1/p;s//-N/p", LINES1]);
+#[case::pattern_append_delete(&["-e", r"N;N;N;D", LINES1], "pattern_append_delete")]
+#[case::pattern_append_delete_2(&["-e", r"N;N;N;D", LINES1, LINES2], "pattern_append_delete_2")]
+#[case::pattern_append_delete2_separate(
+    &["-s", r"N;N;N;D", LINES1, LINES2],
+    "pattern_append_delete2_separate"
+)]
+#[case::pattern_hold_append_swap(
+    &["-e", r"2h;3H;4g;5G;6x;6p;6x;6p", LINES1],
+    "pattern_hold_append_swap"
+)]
+#[case::pattern_swap_separate(&["--separate", r"4x;6x", LINES1, LINES2], "pattern_swap_separate")]
+#[case::pattern_next_output(&["-e", r"4n", LINES1], "pattern_next_output")]
+#[case::pattern_next_no_output(&["-n", "-e", r"4n", LINES1], "pattern_next_no_output")]
+#[case::pattern_next_print_output(&["-e", r"4n;p", LINES1], "pattern_next_print_output")]
+#[case::pattern_next_print_no_output(
+    &["-n", "-e", r"4n;p", LINES1],
+    "pattern_next_print_no_output"
+)]
+#[case::pattern_quit(&[r"5q", LINES1], "pattern_quit")]
+#[case::pattern_quit_2(&[r"5q", LINES1, LINES2], "pattern_quit_2")]
+#[case::pattern_re_reuse(&["-n", r"/_1/p;//p", LINES1], "pattern_re_reuse")]
+#[case::pattern_subst_re_reuse(&["-n", r"/_1/p;s//-N/p", LINES1], "pattern_subst_re_reuse")]
+fn pattern_space(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
 #[test]
 fn test_next_continues_with_following_command() {
@@ -2193,20 +2077,20 @@ fn test_next_reads_across_files_unless_separate() {
 
 /// When `N` finds no next line it prints the pattern space without adding
 /// the newline the last line lacks, as GNU sed does.
+#[rstest]
+fn test_append_next_at_end_keeps_missing_newline(
+    #[values("N", "N;P;D", "N;N;N")] script: &str,
+    #[values("a\nb\nc", "a\nb\nc\n")] input: &str,
+) {
+    new_ucmd!()
+        .arg(script)
+        .pipe_in(input)
+        .succeeds()
+        .stdout_is(input);
+}
+
 #[test]
-fn test_append_next_at_end_keeps_missing_newline() -> std::io::Result<()> {
-    for script in ["N", "N;P;D", "N;N;N"] {
-        new_ucmd!()
-            .arg(script)
-            .pipe_in("a\nb\nc")
-            .succeeds()
-            .stdout_is("a\nb\nc");
-        new_ucmd!()
-            .arg(script)
-            .pipe_in("a\nb\nc\n")
-            .succeeds()
-            .stdout_is("a\nb\nc\n");
-    }
+fn test_append_next_at_end_keeps_missing_newline_in_other_modes() -> std::io::Result<()> {
     new_ucmd!()
         .args(&["-s", "N"])
         .pipe_in("a\nb\nc")
@@ -2300,9 +2184,9 @@ fn test_uppercase_delete_prevents_automatic_printing() {
 
 ////////////////////////////////////////////////////////////
 // Command blocks: {}
-check_output!(
-    block_simple_range,
-    [
+#[rstest]
+#[case::block_simple_range(
+    &[
         "-e",
         r#"
 4,12 {
@@ -2311,12 +2195,11 @@ check_output!(
 	s/_/T/
 }"#,
         LINES1
-    ]
-);
-
-check_output!(
-    block_negative_range,
-    [
+    ],
+    "block_simple_range"
+)]
+#[case::block_negative_range(
+    &[
         "-e",
         r#"
 4,12 !{
@@ -2325,12 +2208,11 @@ check_output!(
 	s/_/T/
 }"#,
         LINES1
-    ]
-);
-
-check_output!(
-    block_negative_range_2,
-    [
+    ],
+    "block_negative_range"
+)]
+#[case::block_negative_range_2(
+    &[
         "-e",
         r#"
 4,12 !{
@@ -2340,12 +2222,11 @@ check_output!(
 }"#,
         LINES1,
         LINES2
-    ]
-);
-
-check_output!(
-    block_nested_selection,
-    [
+    ],
+    "block_negative_range_2"
+)]
+#[case::block_nested_selection(
+    &[
         "-e",
         r#"
 4,12 {
@@ -2356,12 +2237,11 @@ check_output!(
 	}
 }"#,
         LINES1
-    ]
-);
-
-check_output!(
-    block_nested_negative_selection,
-    [
+    ],
+    "block_nested_selection"
+)]
+#[case::block_nested_negative_selection(
+    &[
         "-e",
         r#"
 4,12 !{
@@ -2372,12 +2252,16 @@ check_output!(
 	}
 }"#,
         LINES1
-    ]
-);
+    ],
+    "block_nested_negative_selection"
+)]
+fn command_blocks(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
-check_output!(
-    branch_plain,
-    [
+#[rstest]
+#[case::branch_plain(
+    &[
         "-n",
         "-e",
         r#"
@@ -2397,14 +2281,11 @@ b label3
 :end
 "#,
         LINES1
-    ]
-);
-
-////////////////////////////////////////////////////////////
-// Branching: :, b, t
-check_output!(
-    branch_conditional_simple,
-    [
+    ],
+    "branch_plain"
+)]
+#[case::branch_conditional_simple(
+    &[
         "-n",
         "-e",
         r#"
@@ -2416,13 +2297,12 @@ s/^/tested /p
 "#,
         LINES1,
         LINES2
-    ]
-);
-
+    ],
+    "branch_conditional_simple"
+)]
 // SunOS and GNU sed behave as follows: lines 9-$ aren"#,t printed at all
-check_output!(
-    branch_to_block,
-    [
+#[case::branch_to_block(
+    &[
         "-n",
         "-e",
         r#"
@@ -2434,13 +2314,12 @@ check_output!(
 }
 "#,
         LINES1
-    ]
-);
-
+    ],
+    "branch_to_block"
+)]
 // Check that t clears the substitution done flag
-check_output!(
-    branch_test_clears,
-    [
+#[case::branch_test_clears(
+    &[
         "-n",
         "-e",
         r#"
@@ -2454,13 +2333,12 @@ b
 s/^/ERROR/
 "#,
         LINES1
-    ]
-);
-
+    ],
+    "branch_test_clears"
+)]
 // Check that reading a line clears the substitution done flag
-check_output!(
-    branch_cycle_clears,
-    [
+#[case::branch_cycle_clears(
+    &[
         "-n",
         "-e",
         r#"
@@ -2472,12 +2350,11 @@ b
 s/^/ERROR/p
 "#,
         LINES1
-    ]
-);
-
-check_output!(
-    branch_conditional_boundary,
-    [
+    ],
+    "branch_cycle_clears"
+)]
+#[case::branch_conditional_boundary(
+    &[
         "-e",
         r#"
 {
@@ -2486,16 +2363,15 @@ check_output!(
 s/l/m/
 tb"#,
         LINES1
-    ]
-);
-
+    ],
+    "branch_conditional_boundary"
+)]
 // T branches when NO substitution was made (inverse of t).
 // Lines not ending in "2" leave s/2$/X/ with no match, so T branches to
 // :skip and keeps the original line; lines ending in "2" fall through and
 // get the "SUB " mark.
-check_output!(
-    branch_no_sub_simple,
-    [
+#[case::branch_no_sub_simple(
+    &[
         "-n",
         "-e",
         r#"
@@ -2506,17 +2382,16 @@ s/^/SUB /
 p
 "#,
         LINES1
-    ]
-);
-
+    ],
+    "branch_no_sub_simple"
+)]
 // Check that T also clears the substitution-done flag, matching t.
 // After s/// sets the flag, the first T sees a substitution so it does
 // not branch but still clears the flag; the second T then sees no
 // substitution and branches to :y. Reaching :y (CLEARED) rather than
 // falling through to :x (NOTCLEARED) proves the first T cleared the flag.
-check_output!(
-    branch_no_sub_clears,
-    [
+#[case::branch_no_sub_clears(
+    &[
         "-n",
         "-e",
         r#"
@@ -2530,8 +2405,15 @@ b
 s/^/CLEARED /p
 "#,
         LINES1
-    ]
-);
+    ],
+    "branch_no_sub_clears"
+)]
+fn branching(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
+
+////////////////////////////////////////////////////////////
+// Branching: :, b, t
 
 #[test]
 fn test_branch_no_sub_non_posix() {
@@ -2547,33 +2429,42 @@ fn test_branch_no_sub_non_posix() {
 
 // Check both POSIX and GNU parsing routines.
 
-check_output!(
-    text_simple_insert,
-    [
+#[rstest]
+#[case::text_simple_insert(
+    &[
         "-e",
         r#"
 2,4i\
 extra
 "#,
         LINES1
-    ]
-);
-
-check_output!(
-    text_simple_append,
-    [
+    ],
+    "text_simple_insert"
+)]
+#[case::text_simple_append(
+    &[
         "-e",
         r#"
 2,4a\
 extra
 "#,
         LINES1
-    ]
-);
+    ],
+    "text_simple_append"
+)]
+#[case::text_delete(&["d", LINES1], "text_delete")]
+// GNU syntax extensions:
+// Text can follow the initial \.
+// Character escapes are supported.
+// Invalid escapes result in the escaped character.
+#[case::text_insert_gnu(&["-e", "i\\>\\h\\elll\x08o\\nto\\\nall\\a", LINES1], "text_insert_gnu")]
+fn text_commands(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
-check_output_posix!(
-    text_insert_quit,
-    [
+#[rstest]
+#[case::text_insert_quit(
+    &[
         "-e",
         r#"
 5i\
@@ -2581,12 +2472,11 @@ hello
 5q
 "#,
         LINES1
-    ]
-);
-
-check_output_posix!(
-    text_insert_between_subst,
-    [
+    ],
+    "text_insert_quit"
+)]
+#[case::text_insert_between_subst(
+    &[
         "-n",
         "-e",
         r#"
@@ -2597,12 +2487,11 @@ s/^/after_i/p
 "#,
         LINES1,
         LINES2
-    ]
-);
-
-check_output_posix!(
-    text_append_between_subst,
-    [
+    ],
+    "text_insert_between_subst"
+)]
+#[case::text_append_between_subst(
+    &[
         "-n",
         "-e",
         r#"
@@ -2614,12 +2503,11 @@ s/^/after_a/p
 "#,
         LINES1,
         LINES2
-    ]
-);
-
-check_output_posix!(
-    text_append_before_next,
-    [
+    ],
+    "text_append_between_subst"
+)]
+#[case::text_append_before_next(
+    &[
         "-n",
         "-e",
         r#"
@@ -2631,12 +2519,11 @@ s/$/$/p
 "#,
         LINES1,
         LINES2
-    ]
-);
-
-check_output_posix!(
-    text_change_global,
-    [
+    ],
+    "text_append_before_next"
+)]
+#[case::text_change_global(
+    &[
         "-n",
         "-e",
         r#"
@@ -2644,51 +2531,45 @@ c\
 hello
 "#,
         LINES1
-    ]
-);
-
-check_output_posix!(
-    text_change_line,
-    [
+    ],
+    "text_change_global"
+)]
+#[case::text_change_line(
+    &[
         "-e",
         r#"
 8c\
 hello
 "#,
         LINES1
-    ]
-);
-
-check_output_posix!(
-    text_change_range,
-    [
+    ],
+    "text_change_line"
+)]
+#[case::text_change_range(
+    &[
         "-e",
         r#"
 3,14c\
 hello
 "#,
         LINES1
-    ]
-);
-
-check_output_posix!(
-    text_change_reverse_range,
-    [
+    ],
+    "text_change_range"
+)]
+#[case::text_change_reverse_range(
+    &[
         "-e",
         r#"
 8,3c\
 hello
 "#,
         LINES1
-    ]
-);
-
-check_output!(text_delete, ["d", LINES1]);
-
+    ],
+    "text_change_reverse_range"
+)]
 // Check that the pattern space is deleted.
-check_output_posix!(
-    text_change_print,
-    [
+#[case::text_change_print(
+    &[
         "-n",
         "-e",
         r#"
@@ -2697,31 +2578,32 @@ changed
 p
 "#,
         LINES1
-    ]
-);
-
-// GNU syntax extensions:
-// Text can follow the initial \.
-// Character escapes are supported.
-// Invalid escapes result in the escaped character.
-check_output!(
-    text_insert_gnu,
-    ["-e", "i\\>\\h\\elll\x08o\\nto\\\nall\\a", LINES1]
-);
+    ],
+    "text_change_print"
+)]
+fn text_commands_posix(
+    #[values("--posix", "--follow-symlinks")] posix: &str,
+    #[case] args: &[&str],
+    #[case] expected: &str,
+) {
+    new_ucmd!()
+        .arg(posix)
+        .args(args)
+        .succeeds()
+        .stdout_is_fixture(format!("output/{expected}"));
+}
 
 ////////////////////////////////////////////////////////////
 // r, w, W commands
-check_output!(read_ok, [format!("4r {LINES2}"), LINES1.to_string()]);
-check_output!(read_missing, ["5r /xyzzyxyzy42", LINES1]);
-check_output!(read_empty, ["6r input/empty", LINES1]);
-check_output!(
-    cmd_read_zero_addr,
-    [format!("0r {LINES2}"), LINES1.to_string()]
-);
-check_output!(
-    cmd_read_one_addr,
-    [format!("1r {LINES2}"), LINES1.to_string()]
-);
+#[rstest]
+#[case::read_ok(&["4r input/lines2", LINES1], "read_ok")]
+#[case::read_missing(&["5r /xyzzyxyzy42", LINES1], "read_missing")]
+#[case::read_empty(&["6r input/empty", LINES1], "read_empty")]
+#[case::cmd_read_zero_addr(&["0r input/lines2", LINES1], "cmd_read_zero_addr")]
+#[case::cmd_read_one_addr(&["1r input/lines2", LINES1], "cmd_read_one_addr")]
+fn read_command(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
 #[test]
 fn sandbox_rejects_read_command() {
@@ -2835,33 +2717,26 @@ fn write_same_file_from_two_w_commands() -> std::io::Result<()> {
     Ok(())
 }
 
-#[test]
-fn write_dev_stdout_is_sed_output() {
-    // GNU sed writes /dev/stdout through its own output, in order.
-    for (script, expected) in [
-        ("w /dev/stdout", "a\na\nb\nb\n"),
-        ("W /dev/stdout", "a\na\nb\nb\n"),
-        ("s/a/X/w /dev/stdout", "X\nX\nb\n"),
-    ] {
-        new_ucmd!()
-            .args(&[script])
-            .pipe_in("a\nb\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
-    // With -n, and with a last line that has no newline.
-    for (args, input, expected) in [
-        (&["-n", "s/a/X/w /dev/stdout"][..], "a\nb\n", "X\n"),
-        (&["w /dev/stdout"][..], "a", "aa"),
-        (&["w /dev/stdout"][..], "a\nb", "a\na\nbb"),
-        (&["-n", "w /dev/stdout"][..], "a\nb", "a\nb"),
-    ] {
-        new_ucmd!()
-            .args(args)
-            .pipe_in(input)
-            .succeeds()
-            .stdout_is(expected);
-    }
+// GNU sed writes /dev/stdout through its own output, in order.
+#[rstest]
+#[case::w_command(&["w /dev/stdout"], "a\nb\n", "a\na\nb\nb\n")]
+#[case::upper_w_command(&["W /dev/stdout"], "a\nb\n", "a\na\nb\nb\n")]
+#[case::subst_w_flag(&["s/a/X/w /dev/stdout"], "a\nb\n", "X\nX\nb\n")]
+// With -n, and with a last line that has no newline.
+#[case::subst_w_flag_quiet(&["-n", "s/a/X/w /dev/stdout"], "a\nb\n", "X\n")]
+#[case::single_line_no_newline(&["w /dev/stdout"], "a", "aa")]
+#[case::last_line_no_newline(&["w /dev/stdout"], "a\nb", "a\na\nbb")]
+#[case::quiet_last_line_no_newline(&["-n", "w /dev/stdout"], "a\nb", "a\nb")]
+fn write_dev_stdout_is_sed_output(
+    #[case] args: &[&str],
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    new_ucmd!()
+        .args(args)
+        .pipe_in(input)
+        .succeeds()
+        .stdout_is(expected);
 }
 
 #[test]
@@ -3115,17 +2990,31 @@ fn read_one_line_same_file_shares_cursor() -> std::io::Result<()> {
 
 ////////////////////////////////////////////////////////////
 // =, l, F commands
-check_output!(number_continuous, ["/l2_/=", LINES1, LINES2]);
-check_output!(number_separate, ["-s", "/l._8/=", LINES1, LINES2]);
-check_output!(number_range, ["-e", "10,12=", LINES1]);
-check_output!(number_range_out_of_bounds, ["-e", "47,60=", LINES1]);
+#[rstest]
+#[case::number_continuous(&["/l2_/=", LINES1, LINES2], "number_continuous")]
+#[case::number_separate(&["-s", "/l._8/=", LINES1, LINES2], "number_separate")]
+#[case::number_range(&["-e", "10,12=", LINES1], "number_range")]
+#[case::number_range_out_of_bounds(&["-e", "47,60=", LINES1], "number_range_out_of_bounds")]
+fn line_number_command(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
-check_output!(list_ascii, ["-n", "l 60", "input/ascii"]);
-check_output!(list_empty, ["-n", "l 60", "input/empty"]);
+#[rstest]
+#[case::list_ascii(&["-n", "l 60", "input/ascii"], "list_ascii")]
+#[case::list_empty(&["-n", "l 60", "input/empty"], "list_empty")]
+// List Unicode input without uutil extensions should generate octal bytes.
+#[case::list_unicode_octal(&["l 60", "input/unicode"], "list_unicode_octal")]
+fn list_command(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
-check_output!(filename_file, ["-n", r"F", LINES1]);
+#[rstest]
+#[case::filename_file(&["-n", r"F", LINES1], "filename_file")]
 // Non-ASCII filename
-check_output!(filename_αρχείο1, [r"F", "input/αρχείο1"]);
+#[case::filename_αρχείο1(&[r"F", "input/αρχείο1"], "filename_αρχείο1")]
+fn filename_command(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
 #[test]
 fn filename_stdin() {
@@ -3155,9 +3044,6 @@ fn list_unicode() {
         .succeeds()
         .stdout_is_fixture_bytes("output/list_unicode");
 }
-
-// List Unicode input without uutil extensions should generate octal bytes.
-check_output!(list_unicode_octal, ["l 60", "input/unicode"]);
 
 /// List Unicode input without uutil extensions should generate octal bytes,
 /// even under an explicit UTF-8 locale.
@@ -3261,26 +3147,24 @@ fn in_place_edit_script_after_bare_i() -> std::io::Result<()> {
 }
 
 // As in GNU sed, BSD's detached suffix is a script or an input file.
-#[test]
-fn in_place_edit_detached_suffix_is_not_suffix() -> std::io::Result<()> {
-    let script = "s/world/universe/";
-    let cases: &[(&[&str], &str)] = &[
-        (&["-i", "", "-e", script], "''"),
-        (&["-i", ".bak", "-e", script], "'.bak'"),
-        // The empty argument is the script, and the script is an input file.
-        (&["-i", "", script], "'s/world/universe/'"),
-    ];
-    for (args, missing) in cases {
-        let dir = tempfile::tempdir()?;
-        let path = dir.path().join("input");
-        std::fs::write(&path, "hello, world\n")?;
+#[rstest]
+#[case::empty_suffix(&["-i", "", "-e", "s/world/universe/"], "''")]
+#[case::bak_suffix(&["-i", ".bak", "-e", "s/world/universe/"], "'.bak'")]
+// The empty argument is the script, and the script is an input file.
+#[case::script_as_input(&["-i", "", "s/world/universe/"], "'s/world/universe/'")]
+fn in_place_edit_detached_suffix_is_not_suffix(
+    #[case] args: &[&str],
+    #[case] missing: &str,
+) -> std::io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
+    std::fs::write(&path, "hello, world\n")?;
 
-        new_ucmd!()
-            .args(args)
-            .arg(&path)
-            .fails()
-            .stderr_contains(format!("error opening input file {missing}"));
-    }
+    new_ucmd!()
+        .args(args)
+        .arg(&path)
+        .fails()
+        .stderr_contains(format!("error opening input file {missing}"));
     Ok(())
 }
 
@@ -3310,28 +3194,24 @@ fn in_place_edit_backup() -> std::io::Result<()> {
     Ok(())
 }
 
-#[test]
-fn in_place_edit_backup_forms() -> std::io::Result<()> {
-    for (arg, expected) in [
-        ("-i.bak", "hello, universe\nhello, universe\n"),
-        ("--in-place=.bak", "hello, universe\nhello, universe\n"),
-        ("-ni.bak", "hello, universe\n"),
-    ] {
-        let dir = tempfile::tempdir()?;
-        let path = dir.path().join("input");
-        std::fs::write(&path, "hello, world\n")?;
+#[rstest]
+#[case::short_attached("-i.bak", "hello, universe\nhello, universe\n")]
+#[case::long_with_equals("--in-place=.bak", "hello, universe\nhello, universe\n")]
+#[case::combined_with_quiet("-ni.bak", "hello, universe\n")]
+fn in_place_edit_backup_forms(#[case] arg: &str, #[case] expected: &str) -> std::io::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("input");
+    std::fs::write(&path, "hello, world\n")?;
 
-        new_ucmd!()
-            .args(&[arg, "s/world/universe/p", path.to_str().unwrap()])
-            .succeeds();
+    new_ucmd!()
+        .args(&[arg, "s/world/universe/p", path.to_str().unwrap()])
+        .succeeds();
 
-        assert_eq!(std::fs::read_to_string(&path)?, expected, "{arg}");
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("input.bak"))?,
-            "hello, world\n",
-            "{arg}"
-        );
-    }
+    assert_eq!(std::fs::read_to_string(&path)?, expected);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("input.bak"))?,
+        "hello, world\n"
+    );
     Ok(())
 }
 
@@ -3505,83 +3385,82 @@ fn two_inputs(
     Ok((dir, path1, path2))
 }
 
-#[test]
-fn in_place_edit_separate() -> std::io::Result<()> {
-    let a = "a1\na2\na3\n";
-    let b = "b1\nb2\nb3\n";
+const SEPARATE_FIRST: &str = "a1\na2\na3\n";
+const SEPARATE_SECOND: &str = "b1\nb2\nb3\n";
 
-    // Arguments, the two inputs, and the two expected results.
-    let cases: &[(&[&str], &str, &str, &str, &str)] = &[
-        // $ is the last line of each file, and line numbers restart.
-        (&["-i", "-e", "$d"], a, b, "a1\na2\n", "b1\nb2\n"),
-        (&["-i", "-e", "1d"], a, b, "a2\na3\n", "b2\nb3\n"),
-        (
-            &["-i", "-e", "="],
-            a,
-            b,
-            "1\na1\n2\na2\n3\na3\n",
-            "1\nb1\n2\nb2\n3\nb3\n",
-        ),
-        // A range left open at the end of a file does not continue into the next.
-        (&["-i", "-e", "/a3/,/b2/d"], a, b, "a1\na2\n", b),
-        // N does not join the last line of one file with the first of the next.
-        (
-            &["-i", "-e", r"N;s/\n/+/"],
-            a,
-            b,
-            "a1+a2\na3\n",
-            "b1+b2\nb3\n",
-        ),
-        // n on the last line of a file does not read the first line of the next.
-        (
-            &["-i", "-e", "n;s/^/X/"],
-            a,
-            b,
-            "a1\nXa2\na3\n",
-            "b1\nXb2\nb3\n",
-        ),
-        // Lines collected in the hold space stay in their own file.
-        (
-            &["-i", "-e", r"H;$!d;x;s/\n/,/g"],
-            a,
-            b,
-            ",a1,a2,a3\n",
-            ",b1,b2,b3\n",
-        ),
-        // Q on the last line of the first file: the second one is never opened.
-        (&["-i", "-e", "$Q"], a, b, "a1\na2\n", b),
-        // q still quits for good, leaving the second file alone.
-        (&["-i", "-e", "2q"], a, b, "a1\na2\n", b),
-        // With -n the pending N is dropped rather than carried into the next file.
-        (
-            &["-n", "-i", "-e", r"N;s/\n/+/;p"],
-            a,
-            b,
-            "a1+a2\n",
-            "b1+b2\n",
-        ),
-        (&["-n", "-i", "-e", "N;p"], "a1\n", b, "", "b1\nb2\n"),
-    ];
+// Arguments, the two inputs, and the two expected results.
+#[rstest]
+// $ is the last line of each file, and line numbers restart.
+#[case::last_line(&["-i", "-e", "$d"], SEPARATE_FIRST, SEPARATE_SECOND, "a1\na2\n", "b1\nb2\n")]
+#[case::first_line(&["-i", "-e", "1d"], SEPARATE_FIRST, SEPARATE_SECOND, "a2\na3\n", "b2\nb3\n")]
+#[case::line_numbers(
+    &["-i", "-e", "="],
+    SEPARATE_FIRST,
+    SEPARATE_SECOND,
+    "1\na1\n2\na2\n3\na3\n",
+    "1\nb1\n2\nb2\n3\nb3\n"
+)]
+// A range left open at the end of a file does not continue into the next.
+#[case::open_range(
+    &["-i", "-e", "/a3/,/b2/d"],
+    SEPARATE_FIRST,
+    SEPARATE_SECOND,
+    "a1\na2\n",
+    SEPARATE_SECOND
+)]
+// N does not join the last line of one file with the first of the next.
+#[case::append_next(
+    &["-i", "-e", r"N;s/\n/+/"],
+    SEPARATE_FIRST,
+    SEPARATE_SECOND,
+    "a1+a2\na3\n",
+    "b1+b2\nb3\n"
+)]
+// n on the last line of a file does not read the first line of the next.
+#[case::next(
+    &["-i", "-e", "n;s/^/X/"],
+    SEPARATE_FIRST,
+    SEPARATE_SECOND,
+    "a1\nXa2\na3\n",
+    "b1\nXb2\nb3\n"
+)]
+// Lines collected in the hold space stay in their own file.
+#[case::hold_space(
+    &["-i", "-e", r"H;$!d;x;s/\n/,/g"],
+    SEPARATE_FIRST,
+    SEPARATE_SECOND,
+    ",a1,a2,a3\n",
+    ",b1,b2,b3\n"
+)]
+// Q on the last line of the first file: the second one is never opened.
+#[case::quit_silently(&["-i", "-e", "$Q"], SEPARATE_FIRST, SEPARATE_SECOND, "a1\na2\n", SEPARATE_SECOND)]
+// q still quits for good, leaving the second file alone.
+#[case::quit(&["-i", "-e", "2q"], SEPARATE_FIRST, SEPARATE_SECOND, "a1\na2\n", SEPARATE_SECOND)]
+// With -n the pending N is dropped rather than carried into the next file.
+#[case::quiet_append_next(
+    &["-n", "-i", "-e", r"N;s/\n/+/;p"],
+    SEPARATE_FIRST,
+    SEPARATE_SECOND,
+    "a1+a2\n",
+    "b1+b2\n"
+)]
+#[case::quiet_append_next_single_line(&["-n", "-i", "-e", "N;p"], "a1\n", SEPARATE_SECOND, "", "b1\nb2\n")]
+fn in_place_edit_separate(
+    #[case] args: &[&str],
+    #[case] first: &str,
+    #[case] second: &str,
+    #[case] expected1: &str,
+    #[case] expected2: &str,
+) -> std::io::Result<()> {
+    let (_dir, path1, path2) = two_inputs(first, second)?;
+    let mut argv = args.to_vec();
+    argv.push(path1.to_str().unwrap());
+    argv.push(path2.to_str().unwrap());
 
-    for (args, first, second, expected1, expected2) in cases {
-        let (_dir, path1, path2) = two_inputs(first, second)?;
-        let mut argv = args.to_vec();
-        argv.push(path1.to_str().unwrap());
-        argv.push(path2.to_str().unwrap());
+    new_ucmd!().args(&argv).succeeds();
 
-        new_ucmd!().args(&argv).succeeds();
-
-        assert_eq!(
-            std::fs::read_to_string(&path1)?,
-            *expected1,
-            "first file, {args:?}"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&path2)?,
-            *expected2,
-            "second file, {args:?}"
-        );
-    }
+    assert_eq!(std::fs::read_to_string(&path1)?, expected1, "first file");
+    assert_eq!(std::fs::read_to_string(&path2)?, expected2, "second file");
     Ok(())
 }
 
@@ -3634,11 +3513,14 @@ fn join_lines_quiet_separate() -> std::io::Result<()> {
 ////////////////////////////////////////////////////////////
 // Large complex scripts
 
+#[rstest]
 // Math expression evaluation
-check_output!(math1, ["-f", "script/math.sed", "input/expression1"]);
-
+#[case::math1(&["-f", "script/math.sed", "input/expression1"], "math1")]
 // Calculate π (scaled) to several decimal places
-check_output!(pi, ["-f", "script/math.sed", "input/pi"]);
+#[case::pi(&["-f", "script/math.sed", "input/pi"], "pi")]
+fn large_scripts(#[case] args: &[&str], #[case] expected: &str) {
+    check_output(args, expected);
+}
 
 /// Solve the Towers of Hanoi puzzle under an explicit UTF-8 locale.
 #[test]
@@ -3736,18 +3618,21 @@ fn test_unmatched_brace_points_at_the_innermost_block() {
         .stderr_is("sed: <script argument 2>:1:1: error: unmatched `{'\n");
 }
 
-#[test]
-fn test_unmatched_brace_points_at_the_address_of_the_block() {
-    // The second block of the first expression opens with its address.
-    for (script, column) in [("1{;2{", 4), ("$!{;/re/{", 5)] {
-        new_ucmd!()
-            .args(&["-e", script, "-e", "p"])
-            .fails()
-            .code_is(1)
-            .stderr_is(format!(
-                "sed: <script argument 1>:1:{column}: error: unmatched `{{'\n"
-            ));
-    }
+// The second block of the first expression opens with its address.
+#[rstest]
+#[case::line_address("1{;2{", 4)]
+#[case::negated_last_line_address("$!{;/re/{", 5)]
+fn test_unmatched_brace_points_at_the_address_of_the_block(
+    #[case] script: &str,
+    #[case] column: usize,
+) {
+    new_ucmd!()
+        .args(&["-e", script, "-e", "p"])
+        .fails()
+        .code_is(1)
+        .stderr_is(format!(
+            "sed: <script argument 1>:1:{column}: error: unmatched `{{'\n"
+        ));
 }
 
 #[test]
@@ -3791,15 +3676,13 @@ fn test_error_at_end_of_script_file_keeps_its_position() {
         ));
 }
 
-#[test]
-fn test_empty_text_commands_fail() {
-    for command in ["a", "c", "i"] {
-        new_ucmd!()
-            .args(&["-e", command])
-            .fails()
-            .code_is(1)
-            .stderr_contains(format!("command `{command}' expects \\ followed by text"));
-    }
+#[rstest]
+fn test_empty_text_commands_fail(#[values("a", "c", "i")] command: &str) {
+    new_ucmd!()
+        .args(&["-e", command])
+        .fails()
+        .code_is(1)
+        .stderr_contains(format!("command `{command}' expects \\ followed by text"));
 }
 
 #[test]
@@ -3847,16 +3730,14 @@ fn test_step_end_non_posix() {
         .stderr_is("sed: <script argument 1>:1:4: error: ~step is invalid in POSIX mode\n");
 }
 
-#[test]
-fn test_step_without_number_is_zero() {
-    // `N~` and `N,~` select line N alone, like a step of 0.
-    for script in ["3~=", "3,~=", "3,~0="] {
-        new_ucmd!()
-            .args(&["-n", script])
-            .pipe_in("q\nr\ns\nt\n")
-            .succeeds()
-            .stdout_is("3\n");
-    }
+// `N~` and `N,~` select line N alone, like a step of 0.
+#[rstest]
+fn test_step_without_number_is_zero(#[values("3~=", "3,~=", "3,~0=")] script: &str) {
+    new_ucmd!()
+        .args(&["-n", script])
+        .pipe_in("q\nr\ns\nt\n")
+        .succeeds()
+        .stdout_is("3\n");
 }
 
 #[test]
@@ -3869,59 +3750,50 @@ fn test_step_match_zero_closes_range() {
         .stdout_is("1\n2\nX\n4\n5\n");
 }
 
-#[test]
-fn test_range_numeric_start_already_passed() {
-    // The inner range is first evaluated on line 3, after its start line.
-    for (script, expected) in [
-        ("3,6{ 1,4p }", "3\n4\n"),
-        ("3,6{ 3,4p }", "3\n4\n"),
-        ("3,6{ 1,3p }", "3\n"),
-        ("3,6{ 1,2p }", ""),
-        ("3,6{ 1,~4p }", "3\n4\n"),
-        ("3,6{ 1,+1p }", "3\n4\n"),
-        ("3,6{ 1,/5/p }", "3\n4\n5\n"),
-        ("3,6{ 1,$p }", "3\n4\n5\n6\n"),
-        ("3,6{ 1,2!p }", "3\n4\n5\n6\n"),
-    ] {
-        new_ucmd!()
-            .args(&["-n", script])
-            .pipe_in("1\n2\n3\n4\n5\n6\n7\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
+// The inner range is first evaluated on line 3, after its start line.
+#[rstest]
+#[case::end_after_start("3,6{ 1,4p }", "3\n4\n")]
+#[case::start_on_first_line("3,6{ 3,4p }", "3\n4\n")]
+#[case::end_on_first_line("3,6{ 1,3p }", "3\n")]
+#[case::end_already_passed("3,6{ 1,2p }", "")]
+#[case::step_end("3,6{ 1,~4p }", "3\n4\n")]
+#[case::relative_end("3,6{ 1,+1p }", "3\n4\n")]
+#[case::regex_end("3,6{ 1,/5/p }", "3\n4\n5\n")]
+#[case::last_line_end("3,6{ 1,$p }", "3\n4\n5\n6\n")]
+#[case::negated("3,6{ 1,2!p }", "3\n4\n5\n6\n")]
+fn test_range_numeric_start_already_passed(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!()
+        .args(&["-n", script])
+        .pipe_in("1\n2\n3\n4\n5\n6\n7\n")
+        .succeeds()
+        .stdout_is(expected);
 }
 
-#[test]
-fn test_step_end_range_with_skipped_end() {
-    for (script, expected) in [
-        ("3d;2,~3p", "2\n4\n"),
-        ("3,4d;2,~3p", "2\n5\n"),
-        ("3,~3p", "3\n4\n5\n6\n"),
-    ] {
-        new_ucmd!()
-            .args(&["-n", script])
-            .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
+#[rstest]
+#[case::end_line_deleted("3d;2,~3p", "2\n4\n")]
+#[case::end_lines_deleted("3,4d;2,~3p", "2\n5\n")]
+#[case::start_on_multiple("3,~3p", "3\n4\n5\n6\n")]
+fn test_step_end_range_with_skipped_end(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!()
+        .args(&["-n", script])
+        .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n")
+        .succeeds()
+        .stdout_is(expected);
 }
 
-#[test]
-fn test_range_numeric_start_passed_starts_once() {
-    // Once the range has ended, it does not start again.
-    for (script, expected) in [
-        ("/[2468]/{ 1,/[48]/p }", "2\n4\n"),
-        ("/[3579]/{ 2,/./p }", "3\n5\n"),
-        ("1,/3/p", "1\n2\n3\n"),
-        ("0,/2/p", "1\n2\n"),
-        ("/[3-9]/{ 0,/5/p }", "3\n4\n5\n"),
-    ] {
-        new_ucmd!()
-            .args(&["-n", script])
-            .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
+// Once the range has ended, it does not start again.
+#[rstest]
+#[case::regex_end_in_block("/[2468]/{ 1,/[48]/p }", "2\n4\n")]
+#[case::any_regex_end_in_block("/[3579]/{ 2,/./p }", "3\n5\n")]
+#[case::regex_end("1,/3/p", "1\n2\n3\n")]
+#[case::zero_start("0,/2/p", "1\n2\n")]
+#[case::zero_start_in_block("/[3-9]/{ 0,/5/p }", "3\n4\n5\n")]
+fn test_range_numeric_start_passed_starts_once(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!()
+        .args(&["-n", script])
+        .pipe_in("1\n2\n3\n4\n5\n6\n7\n8\n9\n")
+        .succeeds()
+        .stdout_is(expected);
 }
 
 #[test]
@@ -3952,17 +3824,17 @@ fn test_range_numeric_start_skipped_by_d() {
         .stdout_is("d!\ne!\nf\n");
 }
 
-#[test]
-fn test_step_non_numeric() {
-    for (script, column) in [("1~/x/p", 6), ("1,~/x/p", 7)] {
-        new_ucmd!()
-            .args(&[script])
-            .fails()
-            .code_is(1)
-            .stderr_is(format!(
-                "sed: <script argument 1>:1:{column}: error: ~step can only be specified through numeric values\n"
-            ));
-    }
+#[rstest]
+#[case::step_match("1~/x/p", 6)]
+#[case::step_end("1,~/x/p", 7)]
+fn test_step_non_numeric(#[case] script: &str, #[case] column: usize) {
+    new_ucmd!()
+        .args(&[script])
+        .fails()
+        .code_is(1)
+        .stderr_is(format!(
+            "sed: <script argument 1>:1:{column}: error: ~step can only be specified through numeric values\n"
+        ));
 }
 
 #[test]
@@ -3974,89 +3846,75 @@ fn test_step_without_number_at_end_of_line() {
         .stderr_is("sed: <script argument 1>:1:3: error: command expected\n");
 }
 
-#[test]
-fn test_addr0_step_zero() {
-    for script in ["0~0p", "0~p"] {
-        new_ucmd!()
-            .args(&[script])
-            .fails()
-            .code_is(1)
-            .stderr_contains("address 0 can only be used with ~step");
-    }
+#[rstest]
+fn test_addr0_step_zero(#[values("0~0p", "0~p")] script: &str) {
+    new_ucmd!()
+        .args(&[script])
+        .fails()
+        .code_is(1)
+        .stderr_contains("address 0 can only be used with ~step");
 }
 
-#[test]
-fn test_comma_without_second_address() {
-    for (script, column) in [("5,", 3), ("5,=", 3), ("5, x", 4)] {
-        new_ucmd!()
-            .args(&[script])
-            .fails()
-            .code_is(1)
-            .stderr_is(format!(
-                "sed: <script argument 1>:1:{column}: error: unexpected `,'\n"
-            ));
-    }
+#[rstest]
+#[case::end_of_script("5,", 3)]
+#[case::command("5,=", 3)]
+#[case::space_then_command("5, x", 4)]
+fn test_comma_without_second_address(#[case] script: &str, #[case] column: usize) {
+    new_ucmd!()
+        .args(&[script])
+        .fails()
+        .code_is(1)
+        .stderr_is(format!(
+            "sed: <script argument 1>:1:{column}: error: unexpected `,'\n"
+        ));
 }
 
-#[test]
-fn test_unterminated_s_or_y_command() {
-    for (script, column, command) in [
-        ("s", 2, 's'),
-        ("1s", 3, 's'),
-        ("p;s", 4, 's'),
-        ("y", 2, 'y'),
-        ("{y", 3, 'y'),
-    ] {
-        new_ucmd!()
-            .args(&[script])
-            .fails()
-            .code_is(1)
-            .stderr_is(format!(
-                "sed: <script argument 1>:1:{column}: error: unterminated `{command}' command\n"
-            ));
-    }
+#[rstest]
+#[case::bare_s("s", 2, 's')]
+#[case::s_with_address("1s", 3, 's')]
+#[case::s_after_command("p;s", 4, 's')]
+#[case::bare_y("y", 2, 'y')]
+#[case::y_in_block("{y", 3, 'y')]
+fn test_unterminated_s_or_y_command(
+    #[case] script: &str,
+    #[case] column: usize,
+    #[case] command: char,
+) {
+    new_ucmd!()
+        .args(&[script])
+        .fails()
+        .code_is(1)
+        .stderr_is(format!(
+            "sed: <script argument 1>:1:{column}: error: unterminated `{command}' command\n"
+        ));
 }
 
 // The following test diverse ways in which regexes are matched.
 // Search for 'regex\.' to find them in the code.
-#[test]
-fn test_fancy_regex_is_match_error() {
+#[rstest]
+#[case::is_match(
+    r"/(\.+)+\1b$/p",
+    "sed: <script argument 1>:1:1: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n"
+)]
+#[case::find(
+    r"p;s/(\.+)+\1b$/X/",
+    "sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n"
+)]
+#[case::captures(
+    r"p;s/(\.+)+\1b$/\1/",
+    "sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n"
+)]
+#[case::captures_iter(
+    r"p;s/(\.+)+\1b$/\1/3",
+    "sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: error retrieving RE captures: Error executing regex: Max limit for backtracking count exceeded\n"
+)]
+fn test_fancy_regex_error(#[case] script: &str, #[case] expected: &str) {
     new_ucmd!()
         .env("LC_ALL", "C.UTF-8")
-        .args(&["-E", r"/(\.+)+\1b$/p", "input/dots-4k.txt"])
+        .args(&["-E", script, "input/dots-4k.txt"])
         .fails()
         .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:1: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
-}
-
-#[test]
-fn test_fancy_regex_find_error() {
-    new_ucmd!()
-        .env("LC_ALL", "C.UTF-8")
-        .args(&["-E", r"p;s/(\.+)+\1b$/X/", "input/dots-4k.txt"])
-        .fails()
-        .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
-}
-
-#[test]
-fn test_fancy_regex_captures_error() {
-    new_ucmd!()
-        .env("LC_ALL", "C.UTF-8")
-        .args(&["-E", r"p;s/(\.+)+\1b$/\1/", "input/dots-4k.txt"])
-        .fails()
-        .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: Error executing regex: Max limit for backtracking count exceeded\n");
-}
-
-#[test]
-fn test_fancy_regex_captures_iter_error() {
-    new_ucmd!()
-        .env("LC_ALL", "C.UTF-8")
-        .args(&["-E", r"p;s/(\.+)+\1b$/\1/3", "input/dots-4k.txt"])
-        .fails()
-        .code_is(2)
-        .stderr_is("sed: <script argument 1>:1:3: 'input/dots-4k.txt':1 error: error retrieving RE captures: Error executing regex: Max limit for backtracking count exceeded\n");
+        .stderr_is(expected);
 }
 
 #[test]
@@ -4237,46 +4095,28 @@ fn test_print_first_line_no_newline() {
         .stdout_is("foo");
 }
 
-#[test]
-fn test_expected_newer_version() {
-    new_ucmd!()
-        .args(&["v4.10"])
-        .fails()
-        .stderr_is("sed: <script argument 1>:1:6: error: expected newer version of sed\n");
+#[rstest]
+#[case::newer_minor(
+    "v4.10",
+    "sed: <script argument 1>:1:6: error: expected newer version of sed\n"
+)]
+#[case::non_numeric_minor(
+    "v4.a",
+    "sed: <script argument 1>:1:5: error: invalid version of sed\n"
+)]
+// v999.0.0
+#[case::newer_major(
+    "v999",
+    "sed: <script argument 1>:1:5: error: invalid version of sed\n"
+)]
+fn test_invalid_version(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!().arg(script).fails().stderr_is(expected);
 }
 
-#[test]
-fn test_invalid_version() {
-    new_ucmd!()
-        .args(&["v4.a"])
-        .fails()
-        .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
-}
-
-#[test]
-fn test_valid_version() {
-    new_ucmd!().args(&["v4.9"]).succeeds();
-}
-
-#[test]
-fn test_valid_only_major_version() {
-    // v4.0.0
-    new_ucmd!().args(&["v4"]).succeeds();
-}
-
-#[test]
-fn test_invalid_only_major_version() {
-    // v999.0.0
-    new_ucmd!()
-        .args(&["v999"])
-        .fails()
-        .stderr_is("sed: <script argument 1>:1:5: error: invalid version of sed\n");
-}
-
-#[test]
-fn test_default_version() {
-    // defaults to v4.9.0
-    new_ucmd!().args(&["v"]).succeeds();
+// A lone major version means v4.0.0, and a bare v defaults to v4.9.0.
+#[rstest]
+fn test_valid_version(#[values("v4.9", "v4", "v")] script: &str) {
+    new_ucmd!().arg(script).succeeds();
 }
 
 //--posix should reject GNU substitute flags i/I https://github.com/uutils/sed/issues/401
@@ -4400,39 +4240,33 @@ fn test_blanks_after_y_command() {
 
 /// Like GNU sed, `addr1,+N` allows blanks after the `+` and reads a missing
 /// `N` as 0.
-#[test]
-fn test_relative_range_blank_or_missing_number() {
-    for (script, expected) in [
-        ("2,+ 1d", "1\n4\n"),
-        ("2,+\t1d", "1\n4\n"),
-        ("2,+d", "1\n3\n4\n"),
-        ("2,+1d", "1\n4\n"),
-    ] {
-        new_ucmd!()
-            .arg(script)
-            .pipe_in("1\n2\n3\n4\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
+#[rstest]
+#[case::space("2,+ 1d", "1\n4\n")]
+#[case::tab("2,+\t1d", "1\n4\n")]
+#[case::missing_number("2,+d", "1\n3\n4\n")]
+#[case::no_blank("2,+1d", "1\n4\n")]
+fn test_relative_range_blank_or_missing_number(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!()
+        .arg(script)
+        .pipe_in("1\n2\n3\n4\n")
+        .succeeds()
+        .stdout_is(expected);
 }
 
-#[test]
-fn test_hash_comment_after_command() {
-    for (script, expected) in [
-        ("s/a/A/#comment", "A\n"),
-        ("s/a/A/g#comment", "A\n"),
-        ("s/a/A/ #comment", "A\n"),
-        ("y/a/A/#c", "A\n"),
-        ("p#comment", "a\na\n"),
-        ("{p}#comment", "a\na\n"),
-        ("{s/a/A/}", "A\n"),
-    ] {
-        new_ucmd!()
-            .args(&[script])
-            .pipe_in("a\n")
-            .succeeds()
-            .stdout_is(expected);
-    }
+#[rstest]
+#[case::after_substitute("s/a/A/#comment", "A\n")]
+#[case::after_substitute_flag("s/a/A/g#comment", "A\n")]
+#[case::after_substitute_and_space("s/a/A/ #comment", "A\n")]
+#[case::after_transliterate("y/a/A/#c", "A\n")]
+#[case::after_print("p#comment", "a\na\n")]
+#[case::after_block("{p}#comment", "a\na\n")]
+#[case::substitute_in_block("{s/a/A/}", "A\n")]
+fn test_hash_comment_after_command(#[case] script: &str, #[case] expected: &str) {
+    new_ucmd!()
+        .args(&[script])
+        .pipe_in("a\n")
+        .succeeds()
+        .stdout_is(expected);
 }
 
 #[test]
@@ -4447,24 +4281,25 @@ fn test_substitute_w_flag_keeps_hash_filename() {
     assert_eq!(scene.fixtures.read("#c"), "A\n");
 }
 
-#[test]
-fn test_numeric_range_not_restarted_by_branch() {
-    // A range whose numeric start and end are the same line is selected
-    // only once, even when a backward branch re-runs the command on it.
-    for script in [
+// A range whose numeric start and end are the same line is selected
+// only once, even when a backward branch re-runs the command on it.
+#[rstest]
+fn test_numeric_range_not_restarted_by_branch(
+    #[values(
         ":a;2,+0{s/x/y/;ta}",
         ":a;2,2{s/x/y/;ta}",
         ":a;2,0{s/x/y/;ta}",
         ":a;2,~0{s/x/y/;ta}",
         ":a;2,1{s/x/y/;ta}",
-        ":a;2,${s/x/y/;ta}",
-    ] {
-        new_ucmd!()
-            .arg(script)
-            .pipe_in("a\nxxx\n")
-            .succeeds()
-            .stdout_is("a\nyxx\n");
-    }
+        ":a;2,${s/x/y/;ta}"
+    )]
+    script: &str,
+) {
+    new_ucmd!()
+        .arg(script)
+        .pipe_in("a\nxxx\n")
+        .succeeds()
+        .stdout_is("a\nyxx\n");
 }
 
 #[test]
@@ -4523,17 +4358,17 @@ fn test_posix_n_on_last_line_of_each_separate_file() {
         .stdout_is("a,b\na,b\n");
 }
 
-#[test]
-fn test_multibyte_delimiter_rejected() {
-    for script in ["s€x€y€", "y€x€y€", "\\€x€d"] {
-        new_ucmd!()
-            .env("LC_ALL", "C.UTF-8")
-            .arg(script)
-            .pipe_in("x\n")
-            .ignore_stdin_write_error()
-            .fails_with_code(1)
-            .stderr_contains("delimiter character is not a single-byte character");
-    }
+#[rstest]
+fn test_multibyte_delimiter_rejected(
+    #[values("s€x€y€", "y€x€y€", "\\€x€d")] script: &str
+) {
+    new_ucmd!()
+        .env("LC_ALL", "C.UTF-8")
+        .arg(script)
+        .pipe_in("x\n")
+        .ignore_stdin_write_error()
+        .fails_with_code(1)
+        .stderr_contains("delimiter character is not a single-byte character");
 }
 
 #[test]

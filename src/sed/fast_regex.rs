@@ -572,96 +572,75 @@ impl<'t> Captures<'t> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    // FANCY_RE
-    #[test]
-    fn test_needs_fancy_re_matches() {
-        let should_match = [
-            r"(\w+):\1", // back-reference \1
-        ];
-
-        for pat in &should_match {
-            assert!(
-                NEEDS_FANCY_RE.is_match(pat.as_bytes()),
-                "Expected NEEDS_FANCY_RE to match: {pat:?}"
-            );
+    /// Name of the `Regex` variant selected by `Regex::new`.
+    fn variant_name(re: &Regex) -> &'static str {
+        match re {
+            Regex::Literal(_) => "Literal",
+            Regex::Byte(_) => "Byte",
+            Regex::Fancy(_) => "Fancy",
+            Regex::FancyBytes(_) => "FancyBytes",
         }
     }
 
-    #[test]
-    fn test_needs_fancy_re_does_not_match() {
-        let should_not_match = [
-            r"\ 1", // Non-adjacent
-            r"\0",  // Only \[1-9]
-            // Simple ASCII
-            r"foo",
-            r"foo|bar",
-            r"^foo[0-9]+bar$",
-        ];
-
-        for pat in &should_not_match {
-            assert!(
-                !NEEDS_FANCY_RE.is_match(pat.as_bytes()),
-                "Expected NEEDS_FANCY_RE to NOT match: {pat:?}"
-            );
-        }
+    // FANCY_RE
+    #[rstest]
+    #[case::back_reference(r"(\w+):\1", true)]
+    #[case::non_adjacent(r"\ 1", false)]
+    #[case::only_one_to_nine(r"\0", false)]
+    #[case::simple_ascii(r"foo", false)]
+    #[case::simple_alternation(r"foo|bar", false)]
+    #[case::simple_anchored(r"^foo[0-9]+bar$", false)]
+    fn test_needs_fancy_re(#[case] pat: &str, #[case] expected: bool) {
+        assert_eq!(
+            NEEDS_FANCY_RE.is_match(pat.as_bytes()),
+            expected,
+            "NEEDS_FANCY_RE on {pat:?}"
+        );
     }
 
     // NEEDS_RE
-    #[test]
-    fn test_needs_re_matches() {
-        let should_match = [
-            r".",       // Single regex wildcard
-            r"a+b",     // Regex +
-            r"foo|bar", // Regex alternation
-            r"abc?",    // Regex optional
-            r"a*b",     // Regex star
-            r"[abc]",   // Character class
-            r"(abc)",   // Group
-            r"{1,2}",   // Repetition
-            r"\d",      // Class shorthand
-            r"\S",      // Class shorthand
-            r"\1",      // Backreference
-            r"a\Pb",    // Unicode property
-            r"\<foo",   // Word start
-            r"foo\>",   // Word end
-        ];
-
-        for pat in &should_match {
-            assert!(
-                NEEDS_RE.is_match(pat.as_bytes()),
-                "Expected NEEDS_RE to match: {pat:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_needs_re_does_not_match() {
-        let should_not_match = [
-            r"abc",
-            r"a\.b", // Escaped dot
-            r"hello world",
-            r"^abc$",  // Anchors alone
-            r"file\.", // Escaped dot
-            r"literal123",
-            r"\\", // Escaped backslash
-        ];
-
-        for pat in &should_not_match {
-            assert!(
-                !NEEDS_RE.is_match(pat.as_bytes()),
-                "Expected NEEDS_RE to NOT match: {pat:?}"
-            );
-        }
-
-        assert!(!NEEDS_RE.is_match(b"\xC2\xE7\xCF\xC2"));
+    #[rstest]
+    #[case::wildcard(br".", true)]
+    #[case::plus(br"a+b", true)]
+    #[case::alternation(br"foo|bar", true)]
+    #[case::optional(br"abc?", true)]
+    #[case::star(br"a*b", true)]
+    #[case::character_class(br"[abc]", true)]
+    #[case::group(br"(abc)", true)]
+    #[case::repetition(br"{1,2}", true)]
+    #[case::digit_shorthand(br"\d", true)]
+    #[case::non_space_shorthand(br"\S", true)]
+    #[case::backreference(br"\1", true)]
+    #[case::unicode_property(br"a\Pb", true)]
+    #[case::word_start(br"\<foo", true)]
+    #[case::word_end(br"foo\>", true)]
+    #[case::plain(br"abc", false)]
+    #[case::escaped_dot(br"a\.b", false)]
+    #[case::with_space(br"hello world", false)]
+    #[case::anchors_alone(br"^abc$", false)]
+    #[case::trailing_escaped_dot(br"file\.", false)]
+    #[case::alphanumeric(br"literal123", false)]
+    #[case::escaped_backslash(br"\\", false)]
+    #[case::invalid_utf8(b"\xC2\xE7\xCF\xC2", false)]
+    fn test_needs_re(#[case] pat: &[u8], #[case] expected: bool) {
+        assert_eq!(NEEDS_RE.is_match(pat), expected, "NEEDS_RE on {pat:?}");
     }
 
     // Regex::new
-    #[test]
-    fn assert_byte_selection() {
-        let re = Regex::new(r"x*", CharacterMode::Utf8).unwrap();
-        assert!(matches!(re, Regex::Byte(_)));
+    #[rstest]
+    #[case::assert_byte_selection(br"x*", CharacterMode::Utf8, "Byte")]
+    #[case::assert_fancy(br"(.)\1", CharacterMode::Utf8, "Fancy")]
+    #[case::byte_mode_backref_uses_fancy_bytes(br"(.)\1", CharacterMode::Byte, "FancyBytes")]
+    #[case::assert_literal(br"x\.", CharacterMode::Utf8, "Literal")]
+    fn test_regex_variant_selection(
+        #[case] pattern: &[u8],
+        #[case] mode: CharacterMode,
+        #[case] expected: &str,
+    ) {
+        let re = Regex::new(pattern, mode).unwrap();
+        assert_eq!(variant_name(&re), expected);
     }
 
     #[test]
@@ -674,24 +653,20 @@ mod tests {
         assert!(re.is_match(&mut chunk).unwrap());
     }
 
-    #[test]
-    fn assert_fancy() {
-        let re = Regex::new(r"(.)\1", CharacterMode::Utf8).unwrap();
-        assert!(matches!(re, Regex::Fancy(_)));
-    }
-
-    #[test]
-    fn byte_mode_backref_uses_fancy_bytes() {
-        let re = Regex::new(r"(.)\1", CharacterMode::Byte).unwrap();
-        assert!(matches!(re, Regex::FancyBytes(_)));
-    }
-
-    #[test]
-    fn rejects_fancy_bytes_with_non_ascii_pattern() {
-        let err = Regex::new(b"(\xE9)\\1", CharacterMode::Byte)
+    #[rstest]
+    #[case::rejects_fancy_bytes_with_non_ascii_pattern(
+        b"(\xE9)\\1",
+        "back-references combined with non-ASCII bytes"
+    )]
+    #[case::handles_invalid_fancy_bytes_regex_gracefully(
+        br"(a)\1(",
+        "Opening parenthesis without closing parenthesis"
+    )]
+    fn test_byte_mode_regex_new_error(#[case] pattern: &[u8], #[case] expected: &str) {
+        let err = Regex::new(pattern, CharacterMode::Byte)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("back-references combined with non-ASCII bytes"));
+        assert!(err.contains(expected), "Unexpected error: {err:?}");
     }
 
     #[test]
@@ -732,17 +707,6 @@ mod tests {
 
         chunk.set_to_bytes(b"abc".to_vec(), true);
         assert!(re.captures(&chunk).unwrap().is_none());
-    }
-
-    #[test]
-    fn handles_invalid_fancy_bytes_regex_gracefully() {
-        let err = Regex::new(r"(a)\1(", CharacterMode::Byte)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("Opening parenthesis without closing parenthesis"),
-            "Unexpected error: {err:?}"
-        );
     }
 
     #[test]
@@ -815,12 +779,6 @@ mod tests {
     }
 
     #[test]
-    fn assert_literal() {
-        let re = Regex::new(r"x\.", CharacterMode::Utf8).unwrap();
-        assert!(matches!(re, Regex::Literal(_)));
-    }
-
-    #[test]
     fn handles_invalid_regex_gracefully() {
         let err = Regex::new("(", CharacterMode::Utf8)
             .unwrap_err()
@@ -831,14 +789,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_byte_regex_pattern_leaves_ascii() {
-        assert_eq!(byte_regex_pattern(br"a.\d"), r"a.\d");
-    }
-
-    #[test]
-    fn test_byte_regex_pattern_escapes_non_ascii_bytes() {
-        assert_eq!(byte_regex_pattern(b"a\x80\xFF"), r"a\x80\xFF");
+    #[rstest]
+    #[case::leaves_ascii(br"a.\d", r"a.\d")]
+    #[case::escapes_non_ascii_bytes(b"a\x80\xFF", r"a\x80\xFF")]
+    fn test_byte_regex_pattern(#[case] input: &[u8], #[case] expected: &str) {
+        assert_eq!(byte_regex_pattern(input), expected);
     }
 
     #[test]
@@ -882,53 +837,39 @@ mod tests {
     }
 
     // remove_escapes
-    #[test]
-    fn test_remove_escapes() {
-        use super::remove_escapes;
-
-        assert_eq!(remove_escapes(b"abc"), b"abc");
-        assert_eq!(remove_escapes(br"a\.c"), b"a.c");
-        assert_eq!(remove_escapes(br"\\d"), br"\d");
-        assert_eq!(remove_escapes(br"\.\*\+\?"), b".*+?");
-        assert_eq!(
-            remove_escapes(br"escaped\\backslash"),
-            br"escaped\backslash"
-        );
-        assert_eq!(remove_escapes(br"trailing\\"), br"trailing\");
+    #[rstest]
+    #[case::no_escape(b"abc", b"abc")]
+    #[case::escaped_dot(br"a\.c", b"a.c")]
+    #[case::escaped_backslash_before_letter(br"\\d", br"\d")]
+    #[case::escaped_metacharacters(br"\.\*\+\?", b".*+?")]
+    #[case::escaped_backslash(br"escaped\\backslash", br"escaped\backslash")]
+    #[case::trailing_escaped_backslash(br"trailing\\", br"trailing\")]
+    fn test_remove_escapes(#[case] input: &[u8], #[case] expected: &[u8]) {
+        assert_eq!(remove_escapes(input), expected);
     }
 
     // LiteralMatcher
-    #[test]
-    fn test_literal_matcher_basic_match() {
-        let matcher = LiteralMatcher::new("needle");
-        assert!(matcher.is_match(b"this is a needle in a haystack"));
-        assert!(!matcher.is_match(b"no match here"));
-    }
-
-    #[test]
-    fn test_literal_matcher_anchor_start_match() {
-        let matcher = LiteralMatcher::new("^needle");
-        assert!(matcher.is_match(b"needle in a haystack"));
-        assert!(!matcher.is_match(b"no needle match here"));
-        assert!(!matcher.is_match(b"no"));
-    }
-
-    #[test]
-    fn test_literal_matcher_anchor_end_match() {
-        let matcher = LiteralMatcher::new("needle$");
-        assert!(matcher.is_match(b"In a haystack there's a needle"));
-        assert!(!matcher.is_match(b"no needle match here"));
-        assert!(!matcher.is_match(b"no"));
-    }
-
-    #[test]
-    fn test_literal_matcher_anchor_begin_end_match() {
-        let matcher = LiteralMatcher::new("^needle$");
-        assert!(matcher.is_match(b"needle"));
-        assert!(!matcher.is_match(b"no needle match"));
-        assert!(!matcher.is_match(b"needle no match"));
-        assert!(!matcher.is_match(b"no match needle"));
-        assert!(!matcher.is_match(b"nada"));
+    #[rstest]
+    #[case::basic_match("needle", b"this is a needle in a haystack", true)]
+    #[case::basic_no_match("needle", b"no match here", false)]
+    #[case::anchor_start_match("^needle", b"needle in a haystack", true)]
+    #[case::anchor_start_not_at_start("^needle", b"no needle match here", false)]
+    #[case::anchor_start_short_haystack("^needle", b"no", false)]
+    #[case::anchor_end_match("needle$", b"In a haystack there's a needle", true)]
+    #[case::anchor_end_not_at_end("needle$", b"no needle match here", false)]
+    #[case::anchor_end_short_haystack("needle$", b"no", false)]
+    #[case::anchor_begin_end_match("^needle$", b"needle", true)]
+    #[case::anchor_begin_end_in_middle("^needle$", b"no needle match", false)]
+    #[case::anchor_begin_end_at_start("^needle$", b"needle no match", false)]
+    #[case::anchor_begin_end_at_end("^needle$", b"no match needle", false)]
+    #[case::anchor_begin_end_absent("^needle$", b"nada", false)]
+    fn test_literal_matcher_is_match(
+        #[case] pattern: &str,
+        #[case] haystack: &[u8],
+        #[case] expected: bool,
+    ) {
+        let matcher = LiteralMatcher::new(pattern);
+        assert_eq!(matcher.is_match(haystack), expected);
     }
 
     #[test]
@@ -940,10 +881,11 @@ mod tests {
         assert_eq!(found.2, "✓".as_bytes());
     }
 
-    #[test]
-    fn test_literal_matcher_find_location() {
-        let matcher = LiteralMatcher::new("abc");
-        let haystack = b"___abc___";
+    #[rstest]
+    #[case::find_location("abc", b"___abc___")]
+    #[case::find_location_end("abc$", b"012abc")]
+    fn test_literal_matcher_find(#[case] pattern: &str, #[case] haystack: &[u8]) {
+        let matcher = LiteralMatcher::new(pattern);
         let result = matcher.find(haystack);
         assert!(result.is_some());
         let (start, end, text) = result.unwrap();
@@ -951,103 +893,48 @@ mod tests {
         assert_eq!(text, b"abc");
     }
 
-    #[test]
-    fn test_literal_matcher_find_location_end() {
-        let matcher = LiteralMatcher::new("abc$");
-        let haystack = b"012abc";
-        let result = matcher.find(haystack);
-        assert!(result.is_some());
-        let (start, end, text) = result.unwrap();
-        assert_eq!((start, end), (3, 6));
-        assert_eq!(text, b"abc");
-    }
-
-    #[test]
-    fn test_literal_matcher_iter_multiple() {
-        let matcher = LiteralMatcher::new("test");
-        let haystack = b"this test is a test of test matching";
+    #[rstest]
+    #[case::iter_multiple("test", b"this test is a test of test matching", 3)]
+    #[case::iter_begin("^test", b"test is a test of test matching", 1)]
+    #[case::iter_end("test$", b"this test is a test of test", 1)]
+    fn test_literal_matcher_iter(
+        #[case] pattern: &str,
+        #[case] haystack: &[u8],
+        #[case] expected_count: usize,
+    ) {
+        let matcher = LiteralMatcher::new(pattern);
         let matches: Vec<_> = matcher.iter(haystack).collect();
-        assert_eq!(matches.len(), 3);
+        assert_eq!(matches.len(), expected_count);
 
         let strings: Vec<_> = matches.iter().map(|(_, _, s)| *s).collect();
-        assert_eq!(
-            strings,
-            [b"test".as_slice(), b"test".as_slice(), b"test".as_slice()]
-        );
+        assert_eq!(strings, vec![b"test".as_slice(); expected_count]);
     }
 
-    #[test]
-    fn test_literal_matcher_iter_begin() {
-        let matcher = LiteralMatcher::new("^test");
-        let haystack = b"test is a test of test matching";
-        let matches: Vec<_> = matcher.iter(haystack).collect();
-        assert_eq!(matches.len(), 1);
-
-        let strings: Vec<_> = matches.iter().map(|(_, _, s)| *s).collect();
-        assert_eq!(strings, [b"test".as_slice()]);
-    }
-
-    #[test]
-    fn test_literal_matcher_iter_end() {
-        let matcher = LiteralMatcher::new("test$");
-        let haystack = b"this test is a test of test";
-        let matches: Vec<_> = matcher.iter(haystack).collect();
-        assert_eq!(matches.len(), 1);
-
-        let strings: Vec<_> = matches.iter().map(|(_, _, s)| *s).collect();
-        assert_eq!(strings, [b"test".as_slice()]);
-    }
-
-    #[test]
-    fn test_literal_matcher_no_match() {
-        let matcher = LiteralMatcher::new("missing");
+    #[rstest]
+    #[case::no_match("missing")]
+    #[case::anchored_no_match("^see$")]
+    fn test_literal_matcher_absent(#[case] pattern: &str) {
+        let matcher = LiteralMatcher::new(pattern);
         let haystack = b"nothing to see here";
         assert!(!matcher.is_match(haystack));
         assert!(matcher.find(haystack).is_none());
         assert_eq!(matcher.iter(haystack).count(), 0);
     }
 
-    #[test]
-    fn test_literal_matcher_anchored_no_match() {
-        let matcher = LiteralMatcher::new("^see$");
-        let haystack = b"nothing to see here";
-        assert!(!matcher.is_match(haystack));
-        assert!(matcher.find(haystack).is_none());
-        assert_eq!(matcher.iter(haystack).count(), 0);
-    }
-
-    #[test]
-    fn prepends_s_when_no_flag_group() {
-        assert_eq!(ensure_dotall("abc"), "(?s)abc");
-    }
-
-    #[test]
-    fn adds_s_when_no_m_or_s() {
-        assert_eq!(ensure_dotall("(?i)abc"), "(?is)abc");
-        assert_eq!(ensure_dotall("(?)abc"), "(?s)abc");
-    }
-
-    #[test]
-    fn prepends_s_before_a_non_capturing_group() {
-        assert_eq!(ensure_dotall("(?:a)b"), "(?s)(?:a)b");
-        assert_eq!(ensure_dotall("(?:a.)?"), "(?s)(?:a.)?");
-    }
-
-    #[test]
-    fn leaves_m_unchanged() {
-        assert_eq!(ensure_dotall("(?m)abc"), "(?m)abc");
-        assert_eq!(ensure_dotall("(?im)abc"), "(?im)abc");
-        assert_eq!(ensure_dotall("(?mi)abc"), "(?mi)abc");
-    }
-
-    #[test]
-    fn leaves_existing_s_unchanged() {
-        assert_eq!(ensure_dotall("(?s)abc"), "(?s)abc");
-        assert_eq!(ensure_dotall("(?is)abc"), "(?is)abc");
-    }
-
-    #[test]
-    fn leaves_malformed_flag_group_unchanged() {
-        assert_eq!(ensure_dotall("(?iabc"), "(?iabc");
+    // ensure_dotall
+    #[rstest]
+    #[case::prepends_s_when_no_flag_group("abc", "(?s)abc")]
+    #[case::adds_s_when_no_m_or_s("(?i)abc", "(?is)abc")]
+    #[case::adds_s_to_empty_flag_group("(?)abc", "(?s)abc")]
+    #[case::prepends_s_before_a_non_capturing_group("(?:a)b", "(?s)(?:a)b")]
+    #[case::prepends_s_before_an_optional_non_capturing_group("(?:a.)?", "(?s)(?:a.)?")]
+    #[case::leaves_m_unchanged("(?m)abc", "(?m)abc")]
+    #[case::leaves_m_after_i_unchanged("(?im)abc", "(?im)abc")]
+    #[case::leaves_m_before_i_unchanged("(?mi)abc", "(?mi)abc")]
+    #[case::leaves_existing_s_unchanged("(?s)abc", "(?s)abc")]
+    #[case::leaves_existing_s_after_i_unchanged("(?is)abc", "(?is)abc")]
+    #[case::leaves_malformed_flag_group_unchanged("(?iabc", "(?iabc")]
+    fn test_ensure_dotall(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(ensure_dotall(input), expected);
     }
 }

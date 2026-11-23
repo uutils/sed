@@ -403,6 +403,7 @@ fn build_context(matches: &ArgMatches) -> UResult<ProcessingContext> {
 #[cfg(test)]
 mod tests {
     use super::*; // Allows access to private functions/items in this module
+    use rstest::rstest;
 
     // get_scripts_files
 
@@ -411,91 +412,55 @@ mod tests {
         uu_app().get_matches_from(["myapp"].iter().chain(args.iter()))
     }
 
-    #[test]
-    fn test_script_as_first_argument() {
-        let matches = get_test_matches(&["1d", "file1.txt"]);
+    #[rstest]
+    #[case::script_as_first_argument(
+        &["1d", "file1.txt"],
+        vec![ScriptValue::StringVal("1d".to_string())],
+        &["file1.txt"]
+    )]
+    #[case::expression_argument(
+        &["-e", "s/foo/bar/", "file1.txt"],
+        vec![ScriptValue::StringVal("s/foo/bar/".to_string())],
+        &["file1.txt"]
+    )]
+    #[case::script_file_argument(
+        &["-f", "script.sed", "file1.txt"],
+        vec![ScriptValue::PathVal(PathBuf::from("script.sed"))],
+        &["file1.txt"]
+    )]
+    #[case::multiple_files(
+        &["-e", "s/foo/bar/", "file1.txt", "file2.txt"],
+        vec![ScriptValue::StringVal("s/foo/bar/".to_string())],
+        &["file1.txt", "file2.txt"]
+    )]
+    #[case::multiple_files_script(
+        &["s/foo/bar/", "file1.txt", "file2.txt"],
+        vec![ScriptValue::StringVal("s/foo/bar/".to_string())],
+        &["file1.txt", "file2.txt"]
+    )]
+    // Stdin should be used when no files are given.
+    #[case::stdin_when_no_files(
+        &["-e", "s/foo/bar/"],
+        vec![ScriptValue::StringVal("s/foo/bar/".to_string())],
+        &["-"]
+    )]
+    #[case::stdin_when_no_files_script(
+        &["s/foo/bar/"],
+        vec![ScriptValue::StringVal("s/foo/bar/".to_string())],
+        &["-"]
+    )]
+    fn test_get_scripts_files(
+        #[case] args: &[&str],
+        #[case] expected_scripts: Vec<ScriptValue>,
+        #[case] expected_files: &[&str],
+    ) {
+        let matches = get_test_matches(args);
         let (scripts, files) = get_scripts_files(&matches).expect("Should succeed");
 
-        assert_eq!(scripts, vec![ScriptValue::StringVal("1d".to_string())]);
-        assert_eq!(files, vec![PathBuf::from("file1.txt")]);
-    }
-
-    #[test]
-    fn test_expression_argument() {
-        let matches = get_test_matches(&["-e", "s/foo/bar/", "file1.txt"]);
-        let (scripts, files) = get_scripts_files(&matches).expect("Should succeed");
-
-        assert_eq!(
-            scripts,
-            vec![ScriptValue::StringVal("s/foo/bar/".to_string())]
-        );
-        assert_eq!(files, vec![PathBuf::from("file1.txt")]);
-    }
-
-    #[test]
-    fn test_script_file_argument() {
-        let matches = get_test_matches(&["-f", "script.sed", "file1.txt"]);
-        let (scripts, files) = get_scripts_files(&matches).expect("Should succeed");
-
-        assert_eq!(
-            scripts,
-            vec![ScriptValue::PathVal(PathBuf::from("script.sed"))]
-        );
-        assert_eq!(files, vec![PathBuf::from("file1.txt")]);
-    }
-
-    #[test]
-    fn test_multiple_files() {
-        let matches = get_test_matches(&["-e", "s/foo/bar/", "file1.txt", "file2.txt"]);
-        let (scripts, files) = get_scripts_files(&matches).expect("Should succeed");
-
-        assert_eq!(
-            scripts,
-            vec![ScriptValue::StringVal("s/foo/bar/".to_string())]
-        );
-        assert_eq!(
-            files,
-            vec![PathBuf::from("file1.txt"), PathBuf::from("file2.txt")]
-        );
-    }
-
-    #[test]
-    fn test_multiple_files_script() {
-        let matches = get_test_matches(&["s/foo/bar/", "file1.txt", "file2.txt"]);
-        let (scripts, files) = get_scripts_files(&matches).expect("Should succeed");
-
-        assert_eq!(
-            scripts,
-            vec![ScriptValue::StringVal("s/foo/bar/".to_string())]
-        );
-        assert_eq!(
-            files,
-            vec![PathBuf::from("file1.txt"), PathBuf::from("file2.txt")]
-        );
-    }
-
-    #[test]
-    fn test_stdin_when_no_files() {
-        let matches = get_test_matches(&["-e", "s/foo/bar/"]);
-        let (scripts, files) = get_scripts_files(&matches).expect("Should succeed");
-
-        assert_eq!(
-            scripts,
-            vec![ScriptValue::StringVal("s/foo/bar/".to_string())]
-        );
-        assert_eq!(files, vec![PathBuf::from("-")]); // Stdin should be used
-    }
-
-    #[test]
-    fn test_stdin_when_no_files_script() {
-        let matches = get_test_matches(&["s/foo/bar/"]);
-        let (scripts, files) = get_scripts_files(&matches).expect("Should succeed");
-
-        assert_eq!(
-            scripts,
-            vec![ScriptValue::StringVal("s/foo/bar/".to_string())]
-        );
-        assert_eq!(files, vec![PathBuf::from("-")]); // Stdin should be used
+        assert_eq!(scripts, expected_scripts);
+        let expected_files: Vec<PathBuf> =
+            expected_files.iter().copied().map(PathBuf::from).collect();
+        assert_eq!(files, expected_files);
     }
 
     // build_context
@@ -580,65 +545,63 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn test_in_place_args_rewrite_attached_suffix() {
-        let cases: &[(&[&str], &[&str])] = &[
-            (&["-i.bak"], &["--in-place=.bak"]),
-            // Everything after the `i` is the suffix, as in GNU sed.
-            (&["-iE"], &["--in-place=E"]),
-            (&["-i=.bak"], &["--in-place==.bak"]),
-            // Flags clustered before `-i` are kept.
-            (&["-ni.bak"], &["-n", "--in-place=.bak"]),
-            (&["-Esi.bak"], &["-Es", "--in-place=.bak"]),
-            (&["-ri.bak"], &["-r", "--in-place=.bak"]),
-            (
-                &["-i.bak", "--", "-i.keep"],
-                &["--in-place=.bak", "--", "-i.keep"],
-            ),
-            // Only the next argument is another option's value.
-            (&["-e", "p", "-i.bak"], &["-e", "p", "--in-place=.bak"]),
-            (
-                &["--expression=p", "-i.bak"],
-                &["--expression=p", "--in-place=.bak"],
-            ),
-            (&["--quiet", "-i.bak"], &["--quiet", "--in-place=.bak"]),
-            (
-                &["--in-place", "-i.bak"],
-                &["--in-place", "--in-place=.bak"],
-            ),
-            // A `--` that is an option's value does not end the options.
-            (&["-e", "--", "-i.bak"], &["-e", "--", "--in-place=.bak"]),
-        ];
-        for (args, expected) in cases {
-            assert_eq!(in_place_args(args), *expected, "args: {args:?}");
-        }
+    #[rstest]
+    #[case::bak_suffix(&["-i.bak"], &["--in-place=.bak"])]
+    // Everything after the `i` is the suffix, as in GNU sed.
+    #[case::suffix_looks_like_flag(&["-iE"], &["--in-place=E"])]
+    #[case::suffix_starts_with_equals(&["-i=.bak"], &["--in-place==.bak"])]
+    // Flags clustered before `-i` are kept.
+    #[case::after_n(&["-ni.bak"], &["-n", "--in-place=.bak"])]
+    #[case::after_two_flags(&["-Esi.bak"], &["-Es", "--in-place=.bak"])]
+    #[case::after_r(&["-ri.bak"], &["-r", "--in-place=.bak"])]
+    #[case::stops_at_double_dash(
+        &["-i.bak", "--", "-i.keep"],
+        &["--in-place=.bak", "--", "-i.keep"]
+    )]
+    // Only the next argument is another option's value.
+    #[case::after_short_option_value(&["-e", "p", "-i.bak"], &["-e", "p", "--in-place=.bak"])]
+    #[case::after_long_option_with_value(
+        &["--expression=p", "-i.bak"],
+        &["--expression=p", "--in-place=.bak"]
+    )]
+    #[case::after_long_flag(&["--quiet", "-i.bak"], &["--quiet", "--in-place=.bak"])]
+    #[case::after_long_in_place(
+        &["--in-place", "-i.bak"],
+        &["--in-place", "--in-place=.bak"]
+    )]
+    // A `--` that is an option's value does not end the options.
+    #[case::double_dash_as_option_value(
+        &["-e", "--", "-i.bak"],
+        &["-e", "--", "--in-place=.bak"]
+    )]
+    fn test_in_place_args_rewrite_attached_suffix(
+        #[case] args: &[&str],
+        #[case] expected: &[&str],
+    ) {
+        assert_eq!(in_place_args(args), expected);
     }
 
-    #[test]
-    fn test_in_place_args_leave_other_arguments_alone() {
-        let cases: &[&[&str]] = &[
-            &["-i", "s/a/b/", "file"],
-            &["-Ei", "s/a/b/", "file"],
-            &["-En", "s/a/b/", "file"],
-            &["--in-place=.bak", "s/a/b/", "file"],
-            &["--in=.bak", "s/a/b/", "file"],
-            // Values attached to other options.
-            &["-fi.sed", "file"],
-            &["-nfi.sed", "file"],
-            &["-ei", "file"],
-            // Values that follow other options.
-            &["-f", "-ifoo.sed", "file"],
-            &["-nf", "-ifoo.sed", "file"],
-            &["-l", "-i5"],
-            &["--expression", "-i.bak"],
-            &["--expr", "-i.bak"],
-            // Unknown options are left for clap to report.
-            &["-xi.bak"],
-            &["--", "-i.bak"],
-        ];
-        for args in cases {
-            assert_eq!(in_place_args(args), *args, "args: {args:?}");
-        }
+    #[rstest]
+    #[case::bare_i(&["-i", "s/a/b/", "file"])]
+    #[case::clustered_bare_i(&["-Ei", "s/a/b/", "file"])]
+    #[case::no_i(&["-En", "s/a/b/", "file"])]
+    #[case::long_in_place_with_suffix(&["--in-place=.bak", "s/a/b/", "file"])]
+    #[case::abbreviated_long_in_place(&["--in=.bak", "s/a/b/", "file"])]
+    // Values attached to other options.
+    #[case::attached_to_f(&["-fi.sed", "file"])]
+    #[case::attached_to_clustered_f(&["-nfi.sed", "file"])]
+    #[case::attached_to_e(&["-ei", "file"])]
+    // Values that follow other options.
+    #[case::value_of_f(&["-f", "-ifoo.sed", "file"])]
+    #[case::value_of_clustered_f(&["-nf", "-ifoo.sed", "file"])]
+    #[case::value_of_l(&["-l", "-i5"])]
+    #[case::value_of_long_expression(&["--expression", "-i.bak"])]
+    #[case::value_of_abbreviated_expression(&["--expr", "-i.bak"])]
+    // Unknown options are left for clap to report.
+    #[case::unknown_option(&["-xi.bak"])]
+    #[case::after_double_dash(&["--", "-i.bak"])]
+    fn test_in_place_args_leave_other_arguments_alone(#[case] args: &[&str]) {
+        assert_eq!(in_place_args(args), args);
     }
 
     #[test]
@@ -653,41 +616,14 @@ mod tests {
         assert_eq!(ctx_custom.length, 120);
     }
 
-    #[test]
-    fn c_locale_selects_byte_mode() {
-        assert_eq!(character_mode_for_locale("C").unwrap(), CharacterMode::Byte);
-    }
-
-    #[test]
-    fn posix_locale_selects_byte_mode() {
-        assert_eq!(
-            character_mode_for_locale("POSIX").unwrap(),
-            CharacterMode::Byte
-        );
-    }
-
-    #[test]
-    fn c_utf8_locale_selects_utf8_mode() {
-        assert_eq!(
-            character_mode_for_locale("C.UTF-8").unwrap(),
-            CharacterMode::Utf8
-        );
-    }
-
-    #[test]
-    fn dot_utf8_locale_selects_utf8_mode() {
-        assert_eq!(
-            character_mode_for_locale("en_US.UTF-8").unwrap(),
-            CharacterMode::Utf8
-        );
-    }
-
-    #[test]
-    fn dot_utf8_locale_is_case_insensitive() {
-        assert_eq!(
-            character_mode_for_locale("el_GR.utf8").unwrap(),
-            CharacterMode::Utf8
-        );
+    #[rstest]
+    #[case::c_locale_selects_byte_mode("C", CharacterMode::Byte)]
+    #[case::posix_locale_selects_byte_mode("POSIX", CharacterMode::Byte)]
+    #[case::c_utf8_locale_selects_utf8_mode("C.UTF-8", CharacterMode::Utf8)]
+    #[case::dot_utf8_locale_selects_utf8_mode("en_US.UTF-8", CharacterMode::Utf8)]
+    #[case::dot_utf8_locale_is_case_insensitive("el_GR.utf8", CharacterMode::Utf8)]
+    fn test_character_mode_for_locale(#[case] locale: &str, #[case] expected: CharacterMode) {
+        assert_eq!(character_mode_for_locale(locale).unwrap(), expected);
     }
 
     #[test]
