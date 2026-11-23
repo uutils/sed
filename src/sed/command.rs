@@ -428,6 +428,7 @@ pub enum NextLine {
 mod tests {
     use super::*;
     use crate::sed::fast_io::IOChunk;
+    use rstest::rstest;
 
     // Return the captures for the RE applied to the specified string
     fn caps_for<'a>(re: &str, chunk: &'a mut IOChunk) -> Captures<'a> {
@@ -438,43 +439,61 @@ mod tests {
             .expect("captures")
     }
 
-    #[test]
+    #[rstest]
     // s/foo//
-    fn test_empty_template() {
-        let template = ReplacementTemplate::default();
-        let input = &mut IOChunk::new_from_str("foo");
-        let caps = caps_for("foo", input);
-        let cmd = Command::default();
-
-        let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, b"");
-    }
-
-    #[test]
+    #[case::empty_template(vec![], "foo", "foo", b"")]
     // s/abc/hello/
-    fn test_literal_only() {
-        let template = ReplacementTemplate::new(vec![ReplacementPart::Literal(b"hello".to_vec())]);
-        let input = &mut IOChunk::new_from_str("abc");
-        let caps = caps_for("abc", input);
-        let cmd = Command::default();
-
-        let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, b"hello");
-    }
-
-    #[test]
+    #[case::literal_only(
+        vec![ReplacementPart::Literal(b"hello".to_vec())],
+        "abc",
+        "abc",
+        b"hello"
+    )]
     // s/foo\d+/got: &/
-    fn test_whole_match() {
-        let template = ReplacementTemplate::new(vec![
+    #[case::whole_match(
+        vec![
             ReplacementPart::Literal(b"got: ".to_vec()),
             ReplacementPart::WholeMatch,
-        ]);
-        let input = &mut IOChunk::new_from_str("foo42");
-        let caps = caps_for(r"foo\d+", input);
+        ],
+        r"foo\d+",
+        "foo42",
+        b"got: foo42"
+    )]
+    // s/foo(\d+)/number: \1/
+    #[case::backreference(
+        vec![
+            ReplacementPart::Literal(b"number: ".to_vec()),
+            ReplacementPart::Group(1),
+        ],
+        r"foo(\d+)",
+        "foo42",
+        b"number: 42"
+    )]
+    // s/(\w+):(\d+)/key: \1, value: \2/
+    #[case::multiple_parts(
+        vec![
+            ReplacementPart::Literal(b"key: ".to_vec()),
+            ReplacementPart::Group(1),
+            ReplacementPart::Literal(b", value: ".to_vec()),
+            ReplacementPart::Group(2),
+        ],
+        r"(\w+):(\d+)",
+        "x:123",
+        b"key: x, value: 123"
+    )]
+    fn test_apply_captures(
+        #[case] parts: Vec<ReplacementPart>,
+        #[case] re: &str,
+        #[case] input: &str,
+        #[case] expected: &[u8],
+    ) {
+        let template = ReplacementTemplate::new(parts);
+        let input = &mut IOChunk::new_from_str(input);
+        let caps = caps_for(re, input);
         let cmd = Command::default();
 
         let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, b"got: foo42");
+        assert_eq!(result, expected);
     }
 
     #[test]
@@ -487,38 +506,6 @@ mod tests {
         let m = Match::from_bytes(1, 3, b"\xE9x");
 
         assert_eq!(template.apply_match(&m), b"<\xE9x>");
-    }
-
-    #[test]
-    // s/foo(\d+)/number: \1/
-    fn test_backreference() {
-        let template = ReplacementTemplate::new(vec![
-            ReplacementPart::Literal(b"number: ".to_vec()),
-            ReplacementPart::Group(1),
-        ]);
-        let input = &mut IOChunk::new_from_str("foo42");
-        let caps = caps_for(r"foo(\d+)", input);
-        let cmd = Command::default();
-
-        let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, b"number: 42");
-    }
-
-    #[test]
-    // s/(\w+):(\d+)/key: \1, value: \2/
-    fn test_multiple_parts() {
-        let template = ReplacementTemplate::new(vec![
-            ReplacementPart::Literal(b"key: ".to_vec()),
-            ReplacementPart::Group(1),
-            ReplacementPart::Literal(b", value: ".to_vec()),
-            ReplacementPart::Group(2),
-        ]);
-        let input = &mut IOChunk::new_from_str("x:123");
-        let caps = caps_for(r"(\w+):(\d+)", input);
-        let cmd = Command::default();
-
-        let result = template.apply_captures(&cmd, &caps).unwrap();
-        assert_eq!(result, b"key: x, value: 123");
     }
 
     #[test]
@@ -542,26 +529,28 @@ mod tests {
     }
 
     // max_group_number
-    #[test]
-    fn test_max_group_number_with_groups() {
-        let template = ReplacementTemplate::new(vec![
+    #[rstest]
+    #[case::with_groups(
+        vec![
             ReplacementPart::Literal(b"a".to_vec()),
             ReplacementPart::Group(2),
             ReplacementPart::WholeMatch,
             ReplacementPart::Group(5),
             ReplacementPart::Literal(b"z".to_vec()),
-        ]);
-        assert_eq!(template.max_group_number, 5);
-    }
-
-    #[test]
-    fn test_max_group_number_without_groups() {
-        let template = ReplacementTemplate::new(vec![
+        ],
+        5
+    )]
+    #[case::without_groups(
+        vec![
             ReplacementPart::Literal(b"no".to_vec()),
             ReplacementPart::WholeMatch,
             ReplacementPart::Literal(b"groups".to_vec()),
-        ]);
-        assert_eq!(template.max_group_number, 0);
+        ],
+        0
+    )]
+    fn test_max_group_number(#[case] parts: Vec<ReplacementPart>, #[case] expected: usize) {
+        let template = ReplacementTemplate::new(parts);
+        assert_eq!(template.max_group_number, expected);
     }
 
     // Transliteration
@@ -589,11 +578,19 @@ mod tests {
         assert_eq!(t.lookup_byte(b'b'), b'b');
     }
 
-    #[test]
-    fn test_is_byte_identity_tracks_non_ascii_character_mappings() {
-        assert!(Transliteration::from_strings("ab", "xy").is_byte_identity);
-        assert!(!Transliteration::from_strings("aé", "xy").is_byte_identity);
-        assert!(!Transliteration::from_strings("ab", "xé").is_byte_identity);
+    #[rstest]
+    #[case::ascii_only("ab", "xy", true)]
+    #[case::non_ascii_source("aé", "xy", false)]
+    #[case::non_ascii_target("ab", "xé", false)]
+    fn test_is_byte_identity_tracks_non_ascii_character_mappings(
+        #[case] source: &str,
+        #[case] target: &str,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(
+            Transliteration::from_strings(source, target).is_byte_identity,
+            expected
+        );
     }
 
     #[test]

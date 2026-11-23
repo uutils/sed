@@ -89,6 +89,7 @@ impl ScriptCharProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     #[test]
     fn test_basic_navigation() {
@@ -115,53 +116,36 @@ mod tests {
     }
 
     #[test]
-    fn test_eat_spaces() {
-        let mut provider = ScriptCharProvider::new("   xyz");
-        provider.eat_spaces();
-        assert_eq!(provider.current(), 'x');
-    }
-
-    #[test]
     fn test_eol_on_empty() {
         let provider = ScriptCharProvider::new("");
         assert!(provider.eol());
     }
 
-    #[test]
-    fn test_eat_spaces_mixed() {
-        let mut provider = ScriptCharProvider::new("  \t\nabc");
+    #[rstest]
+    #[case::eat_spaces("   xyz", 'x')]
+    #[case::eat_spaces_mixed("  \t\nabc", 'a')]
+    fn test_eat_spaces(#[case] input: &str, #[case] expected: char) {
+        let mut provider = ScriptCharProvider::new(input);
         provider.eat_spaces();
-        assert_eq!(provider.current(), 'a');
+        assert_eq!(provider.current(), expected);
     }
 
-    #[test]
-    fn test_retreat_normal() {
+    #[rstest]
+    #[case::normal(4, 2, 2, 'c')] // from 'e'
+    #[case::to_start(3, 5, 0, 'a')] // from 'd', retreat more than current pos
+    #[case::zero(2, 0, 2, 'c')] // at 'c', retreat by 0
+    fn test_retreat(
+        #[case] start: usize,
+        #[case] count: usize,
+        #[case] expected_pos: usize,
+        #[case] expected_char: char,
+    ) {
         let mut chars = ScriptCharProvider::new("abcdef");
-        chars.pos = 4; // simulate position at 'e'
-        chars.retreat(2);
+        chars.pos = start;
+        chars.retreat(count);
 
-        assert_eq!(chars.get_pos(), 2);
-        assert_eq!(chars.current(), 'c');
-    }
-
-    #[test]
-    fn test_retreat_to_start() {
-        let mut chars = ScriptCharProvider::new("abcdef");
-        chars.pos = 3; // simulate position at 'd'
-        chars.retreat(5); // retreat more than current pos
-
-        assert_eq!(chars.get_pos(), 0);
-        assert_eq!(chars.current(), 'a');
-    }
-
-    #[test]
-    fn test_retreat_zero() {
-        let mut chars = ScriptCharProvider::new("abcdef");
-        chars.pos = 2; // at 'c'
-        chars.retreat(0); // retreat by 0
-
-        assert_eq!(chars.get_pos(), 2);
-        assert_eq!(chars.current(), 'c');
+        assert_eq!(chars.get_pos(), expected_pos);
+        assert_eq!(chars.current(), expected_char);
     }
 
     #[test]

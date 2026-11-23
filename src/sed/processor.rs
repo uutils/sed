@@ -1088,69 +1088,55 @@ pub fn process_all_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempfile;
 
-    #[test]
-    fn test_readable_ascii_byte_named_escapes() {
-        assert_eq!(readable_ascii_byte(b'\n'), r"\n");
-        assert_eq!(readable_ascii_byte(b'\t'), r"\t");
-        assert_eq!(readable_ascii_byte(b'\\'), r"\\");
+    #[rstest]
+    #[case::named_escape_newline(b'\n', r"\n")]
+    #[case::named_escape_tab(b'\t', r"\t")]
+    #[case::named_escape_backslash(b'\\', r"\\")]
+    #[case::printable_letter(b'A', "A")]
+    #[case::printable_space(b' ', " ")]
+    #[case::non_ascii_octal(0xE9, r"\351")]
+    fn test_readable_ascii_byte(#[case] byte: u8, #[case] expected: &str) {
+        assert_eq!(readable_ascii_byte(byte), expected);
     }
 
-    #[test]
-    fn test_readable_ascii_byte_printable_and_non_ascii() {
-        assert_eq!(readable_ascii_byte(b'A'), "A");
-        assert_eq!(readable_ascii_byte(b' '), " ");
-        assert_eq!(readable_ascii_byte(0xE9), r"\351");
+    #[rstest]
+    #[case::ascii_delegates_to_byte_escape('\t', r"\t")]
+    #[case::ascii_delegates_to_byte_printable('A', "A")]
+    #[case::unicode_escape_bmp('κ', r"\u03BA")]
+    #[case::unicode_escape_astral('😀', r"\U0001F600")]
+    fn test_readable_char(#[case] ch: char, #[case] expected: &str) {
+        assert_eq!(readable_char(ch), expected);
     }
 
-    #[test]
-    fn test_readable_char_ascii_delegates_to_byte() {
-        assert_eq!(readable_char('\t'), r"\t");
-        assert_eq!(readable_char('A'), "A");
-    }
-
-    #[test]
-    fn test_readable_char_unicode_escapes() {
-        assert_eq!(readable_char('κ'), r"\u03BA");
-        assert_eq!(readable_char('😀'), r"\U0001F600");
-    }
-
-    #[test]
-    fn test_write_list_item_appends_without_fold() {
+    #[rstest]
+    #[case::appends_without_fold(10, "ab", "cd", "abcd", 4, "")]
+    #[case::folds_before_append(5, "abcd", "e", "e", 1, "abcd\\\n")]
+    fn test_write_list_item(
+        #[case] line_width: usize,
+        #[case] first: &str,
+        #[case] second: &str,
+        #[case] expected_buffer: &str,
+        #[case] expected_width: usize,
+        #[case] expected_written: &str,
+    ) {
         let mut file = tempfile().unwrap();
         let mut output = OutputBuffer::new(Box::new(file.try_clone().unwrap()));
-        let mut line = ListLine::new(10);
-        line.write_item(&mut output, "ab").unwrap();
+        let mut line = ListLine::new(line_width);
+        line.write_item(&mut output, first).unwrap();
 
-        line.write_item(&mut output, "cd").unwrap();
+        line.write_item(&mut output, second).unwrap();
         output.flush().unwrap();
 
-        assert_eq!(line.buffer, "abcd");
-        assert_eq!(line.width, 4);
+        assert_eq!(line.buffer, expected_buffer);
+        assert_eq!(line.width, expected_width);
         file.seek(SeekFrom::Start(0)).unwrap();
         let mut written = String::new();
         file.read_to_string(&mut written).unwrap();
-        assert_eq!(written, "");
-    }
-
-    #[test]
-    fn test_write_list_item_folds_before_append() {
-        let mut file = tempfile().unwrap();
-        let mut output = OutputBuffer::new(Box::new(file.try_clone().unwrap()));
-        let mut line = ListLine::new(5);
-        line.write_item(&mut output, "abcd").unwrap();
-
-        line.write_item(&mut output, "e").unwrap();
-        output.flush().unwrap();
-
-        assert_eq!(line.buffer, "e");
-        assert_eq!(line.width, 1);
-        file.seek(SeekFrom::Start(0)).unwrap();
-        let mut written = String::new();
-        file.read_to_string(&mut written).unwrap();
-        assert_eq!(written, "abcd\\\n");
+        assert_eq!(written, expected_written);
     }
 
     #[test]

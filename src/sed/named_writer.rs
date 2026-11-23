@@ -135,36 +135,24 @@ pub fn flush_all() -> UResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use std::fs;
     use tempfile::NamedTempFile;
 
-    #[test]
-    fn test_write_line_bytes_appends_newline() {
+    #[rstest]
+    #[case::appends_newline(true, b"a\xE9\n")]
+    #[case::appends_no_newline(false, b"a\xE9")]
+    fn test_write_line_bytes(#[case] add_newline: bool, #[case] expected: &[u8]) {
         let file = NamedTempFile::new().unwrap();
         let path = file.path().to_path_buf();
         let writer = NamedWriter::new(path.clone(), ScriptLocation::default()).unwrap();
 
         writer
             .borrow_mut()
-            .write_line_bytes(b"a\xE9", true)
+            .write_line_bytes(b"a\xE9", add_newline)
             .unwrap();
         writer.borrow_mut().flush().unwrap();
 
-        assert_eq!(fs::read(path).unwrap(), b"a\xE9\n");
-    }
-
-    #[test]
-    fn test_write_line_bytes_appends_no_newline() {
-        let file = NamedTempFile::new().unwrap();
-        let path = file.path().to_path_buf();
-        let writer = NamedWriter::new(path.clone(), ScriptLocation::default()).unwrap();
-
-        writer
-            .borrow_mut()
-            .write_line_bytes(b"a\xE9", false)
-            .unwrap();
-        writer.borrow_mut().flush().unwrap();
-
-        assert_eq!(fs::read(path).unwrap(), b"a\xE9");
+        assert_eq!(fs::read(path).unwrap(), expected);
     }
 }

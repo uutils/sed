@@ -731,6 +731,7 @@ pub fn parse_transliteration_for_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
 
@@ -769,389 +770,160 @@ mod tests {
         (lines, line)
     }
 
-    // parse_numeric_escape
-    #[test]
-    fn test_compile_octal_escape() {
-        let mut provider = ScriptCharProvider::new("141rest");
-        let c = parse_numeric_escape(&mut provider, is_ascii_octal_digit, 3, 8);
-        assert_eq!(c, Some('a'));
-        assert_eq!(provider.current(), 'r'); // "141" was consumed
-    }
-
-    #[test]
-    fn test_compile_octal_escape_eol() {
-        let mut provider = ScriptCharProvider::new("141");
-        let c = parse_numeric_escape(&mut provider, is_ascii_octal_digit, 3, 8);
-        assert_eq!(c, Some('a'));
-        assert!(provider.eol()); // "141" was consumed
-    }
-
-    #[test]
-    fn test_compile_decimal_escape() {
-        let mut provider = ScriptCharProvider::new("0659");
-        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
-        assert_eq!(c, Some('A'));
-        assert_eq!(provider.current(), '9'); // "65" was consumed
-    }
-
-    #[test]
-    fn test_compile_decimal_invalid() {
-        let mut provider = ScriptCharProvider::new("QR");
-        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
-        assert_eq!(c, None);
-        assert_eq!(provider.current(), 'Q');
-    }
-
-    #[test]
-    fn test_compile_hex_escape() {
-        let mut provider = ScriptCharProvider::new("3cZ");
-        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 2, 16);
-        assert_eq!(c, Some('<'));
-        assert_eq!(provider.current(), 'Z'); // "41" was consumed
-    }
-
-    #[test]
-    fn test_compile_hex_escape_truncated() {
-        let mut provider = ScriptCharProvider::new("4G");
-        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 2, 16);
-        assert_eq!(c, Some('\u{4}')); // Only '4' is valid hex
-        assert_eq!(provider.current(), 'G'); // "41" was consumed
-    }
-
-    #[test]
-    fn test_compile_unicode_escape_short() {
-        // U+2665 = '♥'
-        let mut provider = ScriptCharProvider::new("26650");
-        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 4, 16);
-        assert_eq!(c, Some('♥'));
-        assert_eq!(provider.current(), '0'); // "2665" was consumed
-    }
-
-    #[test]
-    fn test_compile_unicode_escape_short_invalid() {
-        let mut provider = ScriptCharProvider::new("123Q");
-        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 4, 16);
-        assert_eq!(c, None);
-        assert_eq!(provider.current(), '1');
-    }
-
-    #[test]
-    fn test_compile_unicode_escape_long_invalid() {
-        // U+2665 = '♥'
-        let mut provider = ScriptCharProvider::new("1234567Q");
-        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 8, 16);
-        assert_eq!(c, None);
-        assert_eq!(provider.current(), '1');
-    }
-
-    #[test]
-    fn test_compile_unicode_escape_long() {
-        // U+1F600 = 😀
-        let mut provider = ScriptCharProvider::new("0001F6009");
-        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_hexdigit(), 8, 16);
-        assert_eq!(c, Some('😀'));
-        assert_eq!(provider.current(), '9'); // "0001F600" was consumed
-    }
-
-    #[test]
-    fn test_no_valid_digits() {
-        let mut provider = ScriptCharProvider::new("xyz");
-        let c = parse_numeric_escape(&mut provider, |c| c.is_ascii_digit(), 3, 10);
-        assert_eq!(c, None);
-        assert_eq!(provider.current(), 'x'); // No advancement
-    }
-
-    // create_control_char
-    #[test]
-    fn test_lowercase_letter() {
-        assert_eq!(create_control_char('z'), Some('\u{1a}')); // 0x5A ^ 0x40 = 0x1A
-        assert_eq!(create_control_char('a'), Some('\u{01}')); // 0x41 ^ 0x40 = 0x01
-    }
-
-    #[test]
-    fn test_uppercase_letter() {
-        assert_eq!(create_control_char('Z'), Some('\u{1a}'));
-        assert_eq!(create_control_char('A'), Some('\u{01}'));
-    }
-
-    #[test]
-    fn test_symbol_characters() {
-        assert_eq!(create_control_char('{'), Some(';')); // 0x7B ^ 0x40 = 0x3B
-        assert_eq!(create_control_char(';'), Some('{')); // 0x3B ^ 0x40 = 0x7B
-    }
-
-    #[test]
-    fn test_non_ascii_char() {
-        // This will not match any transformation and may panic if it overflows
-        // But the current function only handles ASCII-safe chars
-        assert_eq!(create_control_char('é'), None); // outside ASCII
-    }
-
-    #[test]
-    fn test_edge_ascii_values() {
-        assert_eq!(create_control_char('@'), Some('\0')); // 0x40 ^ 0x40 = 0x00
-        assert_eq!(create_control_char('\x7F'), Some('\x3F')); // 0x7F ^ 0x40 = 0x3F
-    }
-
-    // parse_char_escape
-    fn escape_result_with_current(input: &str) -> (Option<char>, Option<char>) {
-        let (lines, mut provider) = make_providers(input);
-        let result = parse_char_escape(&lines, &mut provider).unwrap();
-        let current = if provider.eol() {
+    /// Return the provider's current character, or `None` at end of line.
+    fn current_or_eol(provider: &ScriptCharProvider) -> Option<char> {
+        if provider.eol() {
             None
         } else {
             Some(provider.current())
-        };
-        (result, current)
-    }
-
-    #[test]
-    fn test_control_escape_at_eol() {
-        assert_eq!(escape_result_with_current("c"), (Some('J'), None));
-    }
-
-    #[test]
-    fn test_standard_escapes_eol() {
-        assert_eq!(escape_result_with_current("a"), (Some('\x07'), None));
-        assert_eq!(escape_result_with_current("f"), (Some('\x0c'), None));
-        assert_eq!(escape_result_with_current("n"), (Some('\n'), None));
-        assert_eq!(escape_result_with_current("r"), (Some('\r'), None));
-        assert_eq!(escape_result_with_current("t"), (Some('\t'), None));
-        assert_eq!(escape_result_with_current("v"), (Some('\x0b'), None));
-    }
-
-    #[test]
-    fn test_standard_escapes_more() {
-        assert_eq!(escape_result_with_current("a."), (Some('\x07'), Some('.')));
-        assert_eq!(escape_result_with_current("f."), (Some('\x0c'), Some('.')));
-        assert_eq!(escape_result_with_current("n."), (Some('\n'), Some('.')));
-        assert_eq!(escape_result_with_current("r."), (Some('\r'), Some('.')));
-        assert_eq!(escape_result_with_current("t."), (Some('\t'), Some('.')));
-        assert_eq!(escape_result_with_current("v."), (Some('\x0b'), Some('.')));
-    }
-
-    #[test]
-    fn test_escape_invalid() {
-        assert_eq!(escape_result_with_current("zx"), (None, Some('z')));
-    }
-
-    #[test]
-    fn test_control_escape_valid() {
-        assert_eq!(escape_result_with_current("cZ"), (Some('\x1A'), None));
-    }
-
-    #[test]
-    fn test_control_backslash_escape() {
-        assert_eq!(
-            escape_result_with_current(r"c\\x"),
-            (Some('\x1c'), Some('x'))
-        );
-    }
-
-    #[test]
-    fn test_control_recursive_escape() {
-        for input in [r"c\d", r"c\"] {
-            let (lines, mut provider) = make_providers(input);
-            let err = parse_char_escape(&lines, &mut provider).unwrap_err();
-            assert!(
-                err.to_string()
-                    .contains(r"recursive escaping after \c not allowed")
-            );
         }
     }
 
-    #[test]
-    fn test_control_escape_invalid() {
-        assert_eq!(escape_result_with_current("cé"), (Some('c'), Some('Ã')));
+    // parse_numeric_escape
+    #[rstest]
+    #[case::octal_escape("141rest", is_ascii_octal_digit, 3, 8, Some('a'), Some('r'))]
+    #[case::octal_escape_eol("141", is_ascii_octal_digit, 3, 8, Some('a'), None)]
+    // "65" is consumed, leaving the '9'
+    #[case::decimal_escape("0659", |c: char| c.is_ascii_digit(), 3, 10, Some('A'), Some('9'))]
+    #[case::decimal_invalid("QR", |c: char| c.is_ascii_digit(), 3, 10, None, Some('Q'))]
+    #[case::hex_escape("3cZ", |c: char| c.is_ascii_hexdigit(), 2, 16, Some('<'), Some('Z'))]
+    // Only '4' is valid hex
+    #[case::hex_escape_truncated("4G", |c: char| c.is_ascii_hexdigit(), 2, 16, Some('\u{4}'), Some('G'))]
+    // U+2665 = '♥'
+    #[case::unicode_escape_short("26650", |c: char| c.is_ascii_hexdigit(), 4, 16, Some('♥'), Some('0'))]
+    #[case::unicode_escape_short_invalid("123Q", |c: char| c.is_ascii_hexdigit(), 4, 16, None, Some('1'))]
+    #[case::unicode_escape_long_invalid("1234567Q", |c: char| c.is_ascii_hexdigit(), 8, 16, None, Some('1'))]
+    // U+1F600 = 😀
+    #[case::unicode_escape_long("0001F6009", |c: char| c.is_ascii_hexdigit(), 8, 16, Some('😀'), Some('9'))]
+    #[case::no_valid_digits("xyz", |c: char| c.is_ascii_digit(), 3, 10, None, Some('x'))]
+    fn test_parse_numeric_escape(
+        #[case] input: &str,
+        #[case] is_allowed_char: fn(char) -> bool,
+        #[case] ndigits: usize,
+        #[case] radix: u32,
+        #[case] expected: Option<char>,
+        #[case] next: Option<char>,
+    ) {
+        let mut provider = ScriptCharProvider::new(input);
+        let c = parse_numeric_escape(&mut provider, is_allowed_char, ndigits, radix);
+        assert_eq!(c, expected);
+        assert_eq!(current_or_eol(&provider), next);
     }
 
-    #[test]
-    fn test_decimal_escape_valid() {
-        assert_eq!(escape_result_with_current("d065r"), (Some('A'), Some('r')));
+    // create_control_char
+    #[rstest]
+    #[case::lowercase_z('z', Some('\u{1a}'))] // 0x5A ^ 0x40 = 0x1A
+    #[case::lowercase_a('a', Some('\u{01}'))] // 0x41 ^ 0x40 = 0x01
+    #[case::uppercase_z('Z', Some('\u{1a}'))]
+    #[case::uppercase_a('A', Some('\u{01}'))]
+    #[case::symbol_open_brace('{', Some(';'))] // 0x7B ^ 0x40 = 0x3B
+    #[case::symbol_semicolon(';', Some('{'))] // 0x3B ^ 0x40 = 0x7B
+    #[case::non_ascii_char('é', None)] // outside ASCII
+    #[case::edge_at_sign('@', Some('\0'))] // 0x40 ^ 0x40 = 0x00
+    #[case::edge_del('\x7F', Some('\x3F'))] // 0x7F ^ 0x40 = 0x3F
+    fn test_create_control_char(#[case] input: char, #[case] expected: Option<char>) {
+        assert_eq!(create_control_char(input), expected);
     }
 
-    #[test]
-    fn test_octal_escape_valid() {
-        assert_eq!(escape_result_with_current("o141x"), (Some('a'), Some('x')));
+    // parse_char_escape
+    #[rstest]
+    #[case::control_escape_at_eol("c", Some('J'), None)]
+    #[case::standard_escape_a_eol("a", Some('\x07'), None)]
+    #[case::standard_escape_f_eol("f", Some('\x0c'), None)]
+    #[case::standard_escape_n_eol("n", Some('\n'), None)]
+    #[case::standard_escape_r_eol("r", Some('\r'), None)]
+    #[case::standard_escape_t_eol("t", Some('\t'), None)]
+    #[case::standard_escape_v_eol("v", Some('\x0b'), None)]
+    #[case::standard_escape_a_more("a.", Some('\x07'), Some('.'))]
+    #[case::standard_escape_f_more("f.", Some('\x0c'), Some('.'))]
+    #[case::standard_escape_n_more("n.", Some('\n'), Some('.'))]
+    #[case::standard_escape_r_more("r.", Some('\r'), Some('.'))]
+    #[case::standard_escape_t_more("t.", Some('\t'), Some('.'))]
+    #[case::standard_escape_v_more("v.", Some('\x0b'), Some('.'))]
+    #[case::escape_invalid("zx", None, Some('z'))]
+    #[case::control_escape_valid("cZ", Some('\x1A'), None)]
+    #[case::control_backslash_escape(r"c\\x", Some('\x1c'), Some('x'))]
+    #[case::control_escape_invalid("cé", Some('c'), Some('Ã'))]
+    #[case::decimal_escape_valid("d065r", Some('A'), Some('r'))]
+    #[case::octal_escape_valid("o141x", Some('a'), Some('x'))]
+    #[case::hex_escape_valid("x41;", Some('A'), Some(';'))]
+    #[case::short_unicode_escape_valid("u2665;", Some('♥'), Some(';'))]
+    // Surrogates and values above U+10FFFF are not escapes; the letter
+    // stands for itself and the digits are left in place.
+    #[case::unicode_escape_surrogate("ud800", Some('u'), Some('d'))]
+    #[case::unicode_escape_out_of_range("Udeadbeef", Some('U'), Some('d'))]
+    #[case::unicode_escape_above_max("U00110000", Some('U'), Some('0'))]
+    #[case::long_unicode_escape_valid("U0001F600;", Some('😀'), Some(';'))]
+    #[case::decimal_escape_fallback("d;.", Some('d'), Some(';'))]
+    #[case::octal_escape_fallback("o9x", Some('o'), Some('9'))]
+    #[case::hex_escape_fallback("xyz", Some('x'), Some('y'))]
+    #[case::unknown_escape("q", None, Some('q'))]
+    fn test_parse_char_escape(
+        #[case] input: &str,
+        #[case] expected: Option<char>,
+        #[case] next: Option<char>,
+    ) {
+        let (lines, mut provider) = make_providers(input);
+        let result = parse_char_escape(&lines, &mut provider).unwrap();
+        assert_eq!((result, current_or_eol(&provider)), (expected, next));
     }
 
-    #[test]
-    fn test_hex_escape_valid() {
-        assert_eq!(escape_result_with_current("x41;"), (Some('A'), Some(';')));
+    #[rstest]
+    #[case::escaped_letter(r"c\d")]
+    #[case::trailing_backslash(r"c\")]
+    fn test_control_recursive_escape(#[case] input: &str) {
+        let (lines, mut provider) = make_providers(input);
+        let err = parse_char_escape(&lines, &mut provider).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(r"recursive escaping after \c not allowed")
+        );
     }
 
-    #[test]
-    fn test_push_script_char_byte_mode_single_byte() {
+    #[rstest]
+    #[case::byte_mode_single_byte(CharacterMode::Byte, b"\xE9")]
+    #[case::utf8_mode_encodes_utf8(CharacterMode::Utf8, "é".as_bytes())]
+    fn test_push_script_char(#[case] mode: CharacterMode, #[case] expected: &[u8]) {
         let mut bytes = Vec::new();
-        push_script_char(&mut bytes, 'é', CharacterMode::Byte);
-        assert_eq!(bytes, b"\xE9");
-    }
-
-    #[test]
-    fn test_push_script_char_utf8_mode_encodes_utf8() {
-        let mut bytes = Vec::new();
-        push_script_char(&mut bytes, 'é', CharacterMode::Utf8);
-        assert_eq!(bytes, "é".as_bytes());
-    }
-
-    #[test]
-    fn test_short_unicode_escape_valid() {
-        assert_eq!(escape_result_with_current("u2665;"), (Some('♥'), Some(';')));
-    }
-
-    #[test]
-    fn test_unicode_escape_not_a_scalar_value() {
-        // Surrogates and values above U+10FFFF are not escapes; the letter
-        // stands for itself and the digits are left in place.
-        assert_eq!(escape_result_with_current("ud800"), (Some('u'), Some('d')));
-        assert_eq!(
-            escape_result_with_current("Udeadbeef"),
-            (Some('U'), Some('d'))
-        );
-        assert_eq!(
-            escape_result_with_current("U00110000"),
-            (Some('U'), Some('0'))
-        );
-    }
-
-    #[test]
-    fn test_long_unicode_escape_valid() {
-        assert_eq!(
-            escape_result_with_current("U0001F600;"),
-            (Some('😀'), Some(';'))
-        );
-    }
-
-    #[test]
-    fn test_decimal_escape_fallback() {
-        assert_eq!(escape_result_with_current("d;."), (Some('d'), Some(';')));
-    }
-
-    #[test]
-    fn test_octal_escape_fallback() {
-        assert_eq!(escape_result_with_current("o9x"), (Some('o'), Some('9')));
-    }
-
-    #[test]
-    fn test_hex_escape_fallback() {
-        assert_eq!(escape_result_with_current("xyz"), (Some('x'), Some('y')));
-    }
-
-    #[test]
-    fn test_unknown_escape() {
-        assert_eq!(escape_result_with_current("q"), (None, Some('q')));
+        push_script_char(&mut bytes, 'é', mode);
+        assert_eq!(bytes, expected);
     }
 
     // parse_character_class
-    fn char_provider_from(input: &str) -> ScriptCharProvider {
-        ScriptCharProvider::new(input)
-    }
-
     fn test_lines() -> ScriptLineProvider {
         ScriptLineProvider::with_active_state("test.sed", 3)
     }
 
-    #[test]
-    fn test_basic_character_class() {
-        let mut line = char_provider_from("[qr]");
+    #[rstest]
+    #[case::basic_character_class("[qr]", b"[qr]")]
+    #[case::negated_class("[^abc]", b"[^abc]")]
+    #[case::leading_close_bracket("[]abc]", b"[]abc]")]
+    #[case::leading_negated_close_bracket("[^]abc]", b"[^]abc]")]
+    #[case::escaped_character_begin("[\\nabc]", b"[\nabc]")]
+    #[case::escaped_character_middle("[a\\nbc]", b"[a\nbc]")]
+    #[case::escaped_character_end("[abc\\n]", b"[abc\n]")]
+    // A backslash does not quote the `]`, so the class ends at it and
+    // holds `a` and a literal backslash, as GNU sed does.
+    #[case::escaped_delimiter("[a\\]bc]", br"[a\\]")]
+    #[case::posix_class("[[:digit:]]", b"[[:digit:]]")]
+    #[case::colon_literal_character_class("[:]", b"[:]")]
+    #[case::equivalence_class("[[=a=]]", b"[[=a=]]")]
+    #[case::collating_symbol("[[.ch.]]", b"[[.ch.]]")]
+    #[case::malformed_posix_like_pattern_treated_as_literal("[[x]yz]", br"[\[x]")]
+    #[case::literal_open_bracket_in_character_class("[a[b]", br"[a\[b]")]
+    fn test_parse_character_class(#[case] input: &str, #[case] expected: &[u8]) {
+        let mut line = ScriptCharProvider::new(input);
         let lines = test_lines();
         let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[qr]");
+        assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_negated_class() {
-        let mut line = char_provider_from("[^abc]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[^abc]");
-    }
-
-    #[test]
-    fn test_leading_close_bracket() {
-        let mut line = char_provider_from("[]abc]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[]abc]");
-    }
-
-    #[test]
-    fn test_leading_negated_close_bracket() {
-        let mut line = char_provider_from("[^]abc]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[^]abc]");
-    }
-
-    #[test]
-    fn test_escaped_character_begin() {
-        let mut line = char_provider_from("[\\nabc]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[\nabc]");
-    }
-
-    #[test]
-    fn test_escaped_character_middle() {
-        let mut line = char_provider_from("[a\\nbc]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[a\nbc]");
-    }
-
-    #[test]
-    fn test_escaped_character_end() {
-        let mut line = char_provider_from("[abc\\n]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[abc\n]");
-    }
-
-    #[test]
-    fn test_escaped_delimiter() {
-        // A backslash does not quote the `]`, so the class ends at it and
-        // holds `a` and a literal backslash, as GNU sed does.
-        let mut line = char_provider_from("[a\\]bc]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, br"[a\\]");
-    }
-
-    #[test]
-    fn test_posix_class() {
-        let mut line = char_provider_from("[[:digit:]]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[[:digit:]]");
-    }
-
-    #[test]
-    fn test_colon_literal_character_class() {
-        let mut line = char_provider_from("[:]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[:]");
-    }
-
-    #[test]
-    fn test_equivalence_class() {
-        let mut line = char_provider_from("[[=a=]]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[[=a=]]");
-    }
-
-    #[test]
-    fn test_collating_symbol() {
-        let mut line = char_provider_from("[[.ch.]]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, b"[[.ch.]]");
-    }
-
-    #[test]
-    fn test_unterminated_class_error() {
-        let mut line = char_provider_from("[abc"); // missing closing ]
+    #[rstest]
+    #[case::unterminated_class("[abc")] // missing closing ]
+    #[case::unterminated_posix_class("[[:digit:]")]
+    #[case::unterminated_escape("[abc\\")] // missing closing ]
+    fn test_parse_character_class_error(#[case] input: &str) {
+        let mut line = ScriptCharProvider::new(input);
         let lines = test_lines();
         let err = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false);
         assert!(err.is_err());
@@ -1159,449 +931,192 @@ mod tests {
 
     #[test]
     fn test_open_bracket_at_eol_errors() {
-        let mut line = char_provider_from("[");
+        let mut line = ScriptCharProvider::new("[");
         let lines = test_lines();
         let err = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap_err();
         assert!(err.to_string().contains("Unterminated bracket expression"));
     }
 
-    #[test]
-    fn test_unterminated_posix_class_error() {
-        let mut line = char_provider_from("[[:digit:]");
-        let lines = test_lines();
-        let err = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false);
-        assert!(err.is_err());
-    }
-
-    #[test]
-    fn test_unterminated_escape_error() {
-        let mut line = char_provider_from("[abc\\"); // missing closing ]
-        let lines = test_lines();
-        let err = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false);
-        assert!(err.is_err());
-    }
-
-    #[test]
-    fn test_malformed_posix_like_pattern_treated_as_literal() {
-        let mut line = char_provider_from("[[x]yz]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, br"[\[x]");
-    }
-
-    #[test]
-    fn test_literal_open_bracket_in_character_class() {
-        let mut line = char_provider_from("[a[b]");
-        let lines = test_lines();
-        let result = parse_character_class(&lines, &mut line, CharacterMode::Utf8, false).unwrap();
-        assert_eq!(result, br"[a\[b]");
-    }
-
     // parse_regex
-    #[test]
-    fn test_simple_regex() {
-        let (lines, mut line) = make_providers("/abc/");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, b"abc");
-        assert_eq!(line.current(), '/');
+    #[rstest]
+    #[case::simple_regex("/abc/", RegexMode::Basic, b"abc", '/')]
+    #[case::escaped_delimiter("/ab\\/c/", RegexMode::Basic, b"ab/c", '/')]
+    #[case::capture(r"/\(.\)/c/", RegexMode::Basic, br"\(.\)", '/')]
+    #[case::escape_sequence("/ab\\n/", RegexMode::Basic, b"ab\n", '/')]
+    #[case::basic_regex_quantifier("/a\\{2,3\\}/p", RegexMode::Basic, br"a\{2,3\}", '/')]
+    #[case::extended_regex_quantifier("/a{2,3}/p", RegexMode::Extended, b"a{2,3}", '/')]
+    #[case::character_class("/[a-z]/", RegexMode::Basic, b"[a-z]", '/')]
+    #[case::bracket_delimiter("[abc[", RegexMode::Basic, b"abc", '[')]
+    #[case::bracket_regex_with_bracket_delimiter(
+        "[a\\[0-9]bc[",
+        RegexMode::Basic,
+        b"a[0-9]bc",
+        '['
+    )]
+    // The class ends at the `]`, leaving `z]` as literal characters.
+    #[case::escaped_bracket_in_character_class("/[a\\]z]/", RegexMode::Basic, br"[a\\]z]", '/')]
+    #[case::delimiter_inside_character_class("/[a/c]/", RegexMode::Basic, b"[a/c]", '/')]
+    #[case::escaped_paren_and_backslash("/\\(\\\\/", RegexMode::Basic, br"\(\\", '/')]
+    fn test_parse_regex(
+        #[case] input: &str,
+        #[case] mode: RegexMode,
+        #[case] expected: &[u8],
+        #[case] next: char,
+    ) {
+        let (lines, mut line) = make_providers(input);
+        let parsed = parse_regex(&lines, &mut line, mode).unwrap();
+        assert_eq!(parsed, expected);
+        assert_eq!(line.current(), next);
     }
 
-    #[test]
-    fn test_regex_with_escaped_delimiter() {
-        let (lines, mut line) = make_providers("/ab\\/c/");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, b"ab/c");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_regex_with_capture() {
-        let (lines, mut line) = make_providers(r"/\(.\)/c/");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, br"\(.\)");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_regex_with_escape_sequence() {
-        let (lines, mut line) = make_providers("/ab\\n/");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, b"ab\n");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_basic_regex_quantifier() {
-        let (lines, mut line) = make_providers("/a\\{2,3\\}/p");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, br"a\{2,3\}");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_basic_regex_with_unmatched_brace_quantifier() {
-        let (lines, mut line) = make_providers("/a\\{2,3/p");
-        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
-        assert!(err.to_string().contains("Unmatched \\{"));
-    }
-
-    #[test]
-    fn test_basic_regex_with_invalid_content() {
-        let (lines, mut line) = make_providers("/a\\{2d,3\\}/p");
-        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_extended_regex_quantifier() {
-        let (lines, mut line) = make_providers("/a{2,3}/p");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap();
-        assert_eq!(parsed, b"a{2,3}");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_extended_regex_with_unmatched_brace_quantifier() {
-        let (lines, mut line) = make_providers("/a{2,3/p");
-        let err = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Unmatched \\{"));
-    }
-
-    #[test]
-    fn test_extended_regex_with_empty_quantifier() {
-        let (lines, mut line) = make_providers("/a{}/p");
-        let err = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_extended_regex_with_whitespace_quantifier() {
-        let (lines, mut line) = make_providers("/a{}/p");
-        let err = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_extended_regex_with_invalid_m() {
-        let (lines, mut line) = make_providers("/a{2d,3}/p");
-        let err = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_extended_regex_with_invalid_n() {
-        let (lines, mut line) = make_providers("/a{2,-3}/p");
-        let err = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_extended_regex_with_m_gt_n() {
-        let (lines, mut line) = make_providers("/a{3,2}/p");
-        let err = parse_regex(&lines, &mut line, RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn errors_on_unterminated_regex() {
-        let (lines, mut line) = make_providers("/unterminated");
-        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
-        assert!(err.to_string().contains("unterminated regular expression"));
-    }
-
-    #[test]
-    fn errors_on_esc_at_re_eol() {
-        let (lines, mut line) = make_providers("/foo\\");
-        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
-        assert!(err.to_string().contains("unterminated regular expression"));
-    }
-
-    #[test]
-    fn errors_on_backslash_delimiter() {
-        let (lines, mut line) = make_providers("\\bad");
-        let err = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("\\ cannot be used as a string delimiter")
-        );
-    }
-
-    #[test]
-    fn test_regex_with_character_class() {
-        let (lines, mut line) = make_providers("/[a-z]/");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, b"[a-z]");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_regex_with_bracket_delimiter() {
-        let (lines, mut line) = make_providers("[abc[");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, b"abc");
-        assert_eq!(line.current(), '[');
-    }
-
-    #[test]
-    fn test_bracket_regex_with_bracket_delimiter() {
-        let (lines, mut line) = make_providers("[a\\[0-9]bc[");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, b"a[0-9]bc");
-        assert_eq!(line.current(), '[');
-    }
-
-    #[test]
-    fn test_regex_with_escaped_bracket_in_character_class() {
-        let (lines, mut line) = make_providers("/[a\\]z]/");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        // The class ends at the `]`, leaving `z]` as literal characters.
-        assert_eq!(parsed, br"[a\\]z]");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_regex_with_delimiter_inside_character_class() {
-        let (lines, mut line) = make_providers("/[a/c]/");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, b"[a/c]");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_regex_with_escaped_paren_and_backslash() {
-        let (lines, mut line) = make_providers("/\\(\\\\/");
-        let parsed = parse_regex(&lines, &mut line, RegexMode::Basic).unwrap();
-        assert_eq!(parsed, br"\(\\");
-        assert_eq!(line.current(), '/');
+    #[rstest]
+    #[case::basic_regex_with_unmatched_brace_quantifier(
+        "/a\\{2,3/p",
+        RegexMode::Basic,
+        "Unmatched \\{"
+    )]
+    #[case::basic_regex_with_invalid_content(
+        "/a\\{2d,3\\}/p",
+        RegexMode::Basic,
+        "Invalid content of \\{\\}"
+    )]
+    #[case::extended_regex_with_unmatched_brace_quantifier(
+        "/a{2,3/p",
+        RegexMode::Extended,
+        "Unmatched \\{"
+    )]
+    #[case::extended_regex_with_empty_quantifier(
+        "/a{}/p",
+        RegexMode::Extended,
+        "Invalid content of \\{\\}"
+    )]
+    #[case::extended_regex_with_whitespace_quantifier(
+        "/a{}/p",
+        RegexMode::Extended,
+        "Invalid content of \\{\\}"
+    )]
+    #[case::extended_regex_with_invalid_m(
+        "/a{2d,3}/p",
+        RegexMode::Extended,
+        "Invalid content of \\{\\}"
+    )]
+    #[case::extended_regex_with_invalid_n(
+        "/a{2,-3}/p",
+        RegexMode::Extended,
+        "Invalid content of \\{\\}"
+    )]
+    #[case::extended_regex_with_m_gt_n(
+        "/a{3,2}/p",
+        RegexMode::Extended,
+        "Invalid content of \\{\\}"
+    )]
+    #[case::unterminated_regex(
+        "/unterminated",
+        RegexMode::Basic,
+        "unterminated regular expression"
+    )]
+    #[case::esc_at_re_eol("/foo\\", RegexMode::Basic, "unterminated regular expression")]
+    #[case::backslash_delimiter(
+        "\\bad",
+        RegexMode::Basic,
+        "\\ cannot be used as a string delimiter"
+    )]
+    fn test_parse_regex_error(#[case] input: &str, #[case] mode: RegexMode, #[case] message: &str) {
+        let (lines, mut line) = make_providers(input);
+        let err = parse_regex(&lines, &mut line, mode).unwrap_err();
+        assert!(err.to_string().contains(message));
     }
 
     // parse_regex_for_mode: GNU extensions under --posix
-    #[test]
-    fn test_posix_bre_emits_bare_characters() {
-        // bre_to_ere() escapes the ERE metacharacters, so they are left bare.
-        let (lines, mut line) = make_providers(r"/0\?a\+b\|/");
-        let parsed = parse_regex_for_mode(
-            &lines,
-            &mut line,
-            RegexMode::Basic,
-            CharacterMode::Utf8,
-            true,
-        )
-        .unwrap();
-        assert_eq!(parsed, b"0?a+b|");
-
-        let (lines, mut line) = make_providers(r"/\w\s\b\<\`/");
-        let parsed = parse_regex_for_mode(
-            &lines,
-            &mut line,
-            RegexMode::Basic,
-            CharacterMode::Utf8,
-            true,
-        )
-        .unwrap();
-        assert_eq!(parsed, b"wsb<`");
-    }
-
-    #[test]
-    fn test_posix_ere_keeps_metacharacters_escaped() {
-        // In EREs \? \+ \| are already literals, so the backslash stays.
-        let (lines, mut line) = make_providers(r"/a\?b\+c\|/");
-        let parsed = parse_regex_for_mode(
-            &lines,
-            &mut line,
-            RegexMode::Extended,
-            CharacterMode::Utf8,
-            true,
-        )
-        .unwrap();
-        assert_eq!(parsed, br"a\?b\+c\|");
-
-        let (lines, mut line) = make_providers(r"/\w\s\b/");
-        let parsed = parse_regex_for_mode(
-            &lines,
-            &mut line,
-            RegexMode::Extended,
-            CharacterMode::Utf8,
-            true,
-        )
-        .unwrap();
-        assert_eq!(parsed, b"wsb");
+    // In BREs, bre_to_ere() escapes the ERE metacharacters, so they are left
+    // bare. In EREs \? \+ \| are already literals, so the backslash stays.
+    #[rstest]
+    #[case::posix_bre_emits_bare_metacharacters(r"/0\?a\+b\|/", RegexMode::Basic, b"0?a+b|")]
+    #[case::posix_bre_emits_bare_gnu_escapes(r"/\w\s\b\<\`/", RegexMode::Basic, b"wsb<`")]
+    #[case::posix_ere_keeps_metacharacters_escaped(
+        r"/a\?b\+c\|/",
+        RegexMode::Extended,
+        br"a\?b\+c\|"
+    )]
+    #[case::posix_ere_emits_bare_gnu_escapes(r"/\w\s\b/", RegexMode::Extended, b"wsb")]
+    fn test_parse_regex_for_mode_posix(
+        #[case] input: &str,
+        #[case] mode: RegexMode,
+        #[case] expected: &[u8],
+    ) {
+        let (lines, mut line) = make_providers(input);
+        let parsed =
+            parse_regex_for_mode(&lines, &mut line, mode, CharacterMode::Utf8, true).unwrap();
+        assert_eq!(parsed, expected);
     }
 
     // validate_quantifier_structure
-    //BRE tests
-    #[test]
-    fn test_validate_quantifier_structure_bre_valid() {
-        let (lines, mut line) = make_providers("{2,3\\}");
-        validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap();
+    #[rstest]
+    #[case::bre_valid("{2,3\\}", RegexMode::Basic)]
+    #[case::ere_valid("{2,3}", RegexMode::Extended)]
+    fn test_validate_quantifier_structure(#[case] input: &str, #[case] mode: RegexMode) {
+        let (lines, mut line) = make_providers(input);
+        validate_quantifier_structure(&lines, &mut line, '/', mode).unwrap();
         assert_eq!(line.current(), '{'); // Line should be back on the opening brace
     }
 
-    #[test]
-    fn test_validate_quantifier_structure_bre_with_unmatched_brace() {
-        let (lines, mut line) = make_providers("{2,3");
-        let err =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap_err();
-        assert!(err.to_string().contains("Unmatched \\{"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_structure_bre_with_empty_content() {
-        let (lines, mut line) = make_providers("{\\}");
-        let err =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_structure_bre_with_invalid_char() {
-        let (lines, mut line) = make_providers("{2d,3\\}");
-        let err =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_structure_bre_with_double_comma() {
-        let (lines, mut line) = make_providers("{2,3,\\}");
-        let err =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Basic).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    // ERE tests
-    #[test]
-    fn test_validate_quantifier_structure_ere_valid() {
-        let (lines, mut line) = make_providers("{2,3}");
-        validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap();
-        assert_eq!(line.current(), '{'); // Line should be back on the opening brace
-    }
-
-    #[test]
-    fn test_validate_quantifier_structure_ere_with_unmatched_brace() {
-        let (lines, mut line) = make_providers("{2,3");
-        let err =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Unmatched \\{"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_structure_ere_with_empty_content() {
-        let (lines, mut line) = make_providers("{}");
-        let err =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_structure_ere_with_invalid_char() {
-        let (lines, mut line) = make_providers("{2d,3}");
-        let err =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_structure_ere_with_double_comma() {
-        let (lines, mut line) = make_providers("{2,3,}");
-        let err =
-            validate_quantifier_structure(&lines, &mut line, '/', RegexMode::Extended).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
+    #[rstest]
+    #[case::bre_with_unmatched_brace("{2,3", RegexMode::Basic, "Unmatched \\{")]
+    #[case::bre_with_empty_content("{\\}", RegexMode::Basic, "Invalid content of \\{\\}")]
+    #[case::bre_with_invalid_char("{2d,3\\}", RegexMode::Basic, "Invalid content of \\{\\}")]
+    #[case::bre_with_double_comma("{2,3,\\}", RegexMode::Basic, "Invalid content of \\{\\}")]
+    #[case::ere_with_unmatched_brace("{2,3", RegexMode::Extended, "Unmatched \\{")]
+    #[case::ere_with_empty_content("{}", RegexMode::Extended, "Invalid content of \\{\\}")]
+    #[case::ere_with_invalid_char("{2d,3}", RegexMode::Extended, "Invalid content of \\{\\}")]
+    #[case::ere_with_double_comma("{2,3,}", RegexMode::Extended, "Invalid content of \\{\\}")]
+    fn test_validate_quantifier_structure_error(
+        #[case] input: &str,
+        #[case] mode: RegexMode,
+        #[case] message: &str,
+    ) {
+        let (lines, mut line) = make_providers(input);
+        let err = validate_quantifier_structure(&lines, &mut line, '/', mode).unwrap_err();
+        assert!(err.to_string().contains(message));
     }
 
     // validate_quantifier_numbers
-    #[test]
-    fn test_validate_quantifier_numbers_with_m() {
-        let (lines, mut line) = make_providers("{2}");
+    #[rstest]
+    #[case::with_m("{2}", "2")]
+    #[case::with_single_comma("{,}", "0,")]
+    #[case::with_comma_n("{,3}", "0,3")]
+    #[case::valid("{2,3}", "2,3")]
+    fn test_validate_quantifier_numbers(#[case] input: &str, #[case] expected: &str) {
+        let (lines, mut line) = make_providers(input);
         let result = validate_quantifier_numbers(&lines, &mut line).unwrap();
-        assert_eq!(result, "2");
+        assert_eq!(result, expected);
         assert_eq!(line.current(), '}');
     }
 
-    #[test]
-    fn test_validate_quantifier_numbers_with_single_comma() {
-        let (lines, mut line) = make_providers("{,}");
-        let result = validate_quantifier_numbers(&lines, &mut line).unwrap();
-        assert_eq!(result, "0,");
-        assert_eq!(line.current(), '}');
-    }
-
-    #[test]
-    fn test_validate_quantifier_numbers_with_comma_n() {
-        let (lines, mut line) = make_providers("{,3}");
-        let result = validate_quantifier_numbers(&lines, &mut line).unwrap();
-        assert_eq!(result, "0,3");
-        assert_eq!(line.current(), '}');
-    }
-
-    #[test]
-    fn test_validate_quantifier_numbers_valid() {
-        let (lines, mut line) = make_providers("{2,3}");
-        let result = validate_quantifier_numbers(&lines, &mut line).unwrap();
-        assert_eq!(result, "2,3");
-        assert_eq!(line.current(), '}');
-    }
-
-    #[test]
-    fn test_validate_quantifier_numbers_with_m_too_big() {
-        let (lines, mut line) = make_providers("{32768}");
+    #[rstest]
+    #[case::with_m_too_big("{32768}", "Regular expression too big")]
+    #[case::with_n_too_big("{2,32768}", "Regular expression too big")]
+    #[case::with_m_gt_n("{3,2}", "Invalid content of \\{\\}")]
+    // The {,n} form must bound n by RE_DUP_MAX just like {m,n}.
+    #[case::with_leading_comma_n_too_big("{,32768}", "Regular expression too big")]
+    // A digit run too large for usize is reported as too big, not as
+    // invalid content.
+    #[case::with_overflowing_m("{99999999999999999999999}", "Regular expression too big")]
+    fn test_validate_quantifier_numbers_error(#[case] input: &str, #[case] message: &str) {
+        let (lines, mut line) = make_providers(input);
         let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
-        assert!(err.to_string().contains("Regular expression too big"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_numbers_with_n_too_big() {
-        let (lines, mut line) = make_providers("{2,32768}");
-        let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
-        assert!(err.to_string().contains("Regular expression too big"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_numbers_with_m_gt_n() {
-        let (lines, mut line) = make_providers("{3,2}");
-        let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
-        assert!(err.to_string().contains("Invalid content of \\{\\}"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_numbers_with_leading_comma_n_too_big() {
-        // The {,n} form must bound n by RE_DUP_MAX just like {m,n}.
-        let (lines, mut line) = make_providers("{,32768}");
-        let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
-        assert!(err.to_string().contains("Regular expression too big"));
-    }
-
-    #[test]
-    fn test_validate_quantifier_numbers_with_overflowing_m() {
-        // A digit run too large for usize is reported as too big, not as
-        // invalid content.
-        let (lines, mut line) = make_providers("{99999999999999999999999}");
-        let err = validate_quantifier_numbers(&lines, &mut line).unwrap_err();
-        assert!(err.to_string().contains("Regular expression too big"));
+        assert!(err.to_string().contains(message));
     }
 
     // parse_transliteration
-    #[test]
-    fn test_simple_transliteration() {
-        let (lines, mut line) = make_providers("/abc/");
+    #[rstest]
+    #[case::simple("/abc/", b"abc")]
+    #[case::escaped_delimiter("/ab\\/c/", b"ab/c")]
+    #[case::escaped_backslash("/ab\\\\c/", br"ab\c")]
+    #[case::escape_sequence("/ab\\n/", b"ab\n")]
+    fn test_parse_transliteration(#[case] input: &str, #[case] expected: &[u8]) {
+        let (lines, mut line) = make_providers(input);
         let parsed = parse_transliteration(&lines, &mut line).unwrap();
-        assert_eq!(parsed, b"abc");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_transliteration_with_escaped_delimiter() {
-        let (lines, mut line) = make_providers("/ab\\/c/");
-        let parsed = parse_transliteration(&lines, &mut line).unwrap();
-        assert_eq!(parsed, b"ab/c");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_transliteration_with_escaped_backslash() {
-        let (lines, mut line) = make_providers("/ab\\\\c/");
-        let parsed = parse_transliteration(&lines, &mut line).unwrap();
-        assert_eq!(parsed, br"ab\c");
+        assert_eq!(parsed, expected);
         assert_eq!(line.current(), '/');
     }
 
@@ -1613,45 +1128,24 @@ mod tests {
         assert_eq!(line.current(), '/');
     }
 
-    #[test]
-    fn test_transliteration_with_escape_sequence() {
-        let (lines, mut line) = make_providers("/ab\\n/");
-        let parsed = parse_transliteration(&lines, &mut line).unwrap();
-        assert_eq!(parsed, b"ab\n");
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn test_parse_transliteration_for_mode_bytes() {
+    #[rstest]
+    #[case::bytes(CharacterMode::Byte, ParsedTransliteration::Bytes(b"a\xE9".to_vec()))]
+    #[case::utf8(CharacterMode::Utf8, ParsedTransliteration::Text("aé".to_string()))]
+    fn test_parse_transliteration_for_mode(
+        #[case] mode: CharacterMode,
+        #[case] expected: ParsedTransliteration,
+    ) {
         let (lines, mut line) = make_providers("/a\\xE9/");
-        let parsed =
-            parse_transliteration_for_mode(&lines, &mut line, CharacterMode::Byte).unwrap();
-        assert_eq!(parsed, ParsedTransliteration::Bytes(b"a\xE9".to_vec()));
+        let parsed = parse_transliteration_for_mode(&lines, &mut line, mode).unwrap();
+        assert_eq!(parsed, expected);
         assert_eq!(line.current(), '/');
     }
 
-    #[test]
-    fn test_parse_transliteration_for_mode_utf8() {
-        let (lines, mut line) = make_providers("/a\\xE9/");
-        let parsed =
-            parse_transliteration_for_mode(&lines, &mut line, CharacterMode::Utf8).unwrap();
-        assert_eq!(parsed, ParsedTransliteration::Text("aé".to_string()));
-        assert_eq!(line.current(), '/');
-    }
-
-    #[test]
-    fn errors_on_unterminated_transliteration() {
-        let (lines, mut line) = make_providers("/unterminated");
-        let err = parse_transliteration(&lines, &mut line).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("unterminated transliteration string")
-        );
-    }
-
-    #[test]
-    fn errors_on_esc_at_tr_eol() {
-        let (lines, mut line) = make_providers("/foo\\");
+    #[rstest]
+    #[case::unterminated_transliteration("/unterminated")]
+    #[case::esc_at_tr_eol("/foo\\")]
+    fn test_parse_transliteration_error(#[case] input: &str) {
+        let (lines, mut line) = make_providers(input);
         let err = parse_transliteration(&lines, &mut line).unwrap_err();
         assert!(
             err.to_string()

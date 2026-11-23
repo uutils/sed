@@ -1924,6 +1924,7 @@ fn get_cmd_spec(
 mod tests {
     use super::*;
     use crate::sed::fast_io::IOChunk;
+    use rstest::rstest;
     // Return an empty line provider and a char provider for the specified str.
     fn make_providers(input: &str) -> (ScriptLineProvider, ScriptCharProvider) {
         let lines = ScriptLineProvider::new(vec![]); // Empty for tests
@@ -1949,32 +1950,19 @@ mod tests {
     }
 
     // get_cmd_spec
-    #[test]
-    fn test_lookup_empty_command() {
+    #[rstest]
+    #[case::empty_command('d', 2)]
+    #[case::text_command('a', 2)]
+    #[case::nonselect_command('!', 2)]
+    #[case::endgroup_command('}', 0)]
+    // b, t, and T all share compile_label_command and accept 2 addresses.
+    #[case::branch_b('b', 2)]
+    #[case::branch_t('t', 2)]
+    #[case::branch_upper_t('T', 2)]
+    fn test_lookup_command_n_addr(#[case] code: char, #[case] n_addr: usize) {
         let (lines, line) = make_providers("123abc");
-        let cmd = get_cmd_spec(&lines, &line, 'd', false).unwrap();
-        assert_eq!(cmd.n_addr, 2);
-    }
-
-    #[test]
-    fn test_lookup_text_command() {
-        let (lines, line) = make_providers("123abc");
-        let cmd = get_cmd_spec(&lines, &line, 'a', false).unwrap();
-        assert_eq!(cmd.n_addr, 2);
-    }
-
-    #[test]
-    fn test_lookup_nonselect_command() {
-        let (lines, line) = make_providers("123abc");
-        let cmd = get_cmd_spec(&lines, &line, '!', false).unwrap();
-        assert_eq!(cmd.n_addr, 2);
-    }
-
-    #[test]
-    fn test_lookup_endgroup_command() {
-        let (lines, line) = make_providers("123abc");
-        let cmd = get_cmd_spec(&lines, &line, '}', false).unwrap();
-        assert_eq!(cmd.n_addr, 0);
+        let cmd = get_cmd_spec(&lines, &line, code, false).unwrap();
+        assert_eq!(cmd.n_addr, n_addr);
     }
 
     #[test]
@@ -2009,16 +1997,6 @@ mod tests {
 
         parse_command_ending(&lines, &mut chars, &mut cmd).unwrap();
         assert_eq!(chars.current(), '#');
-    }
-
-    #[test]
-    fn test_lookup_branch_commands() {
-        // b, t, and T all share compile_label_command and accept 2 addresses.
-        for code in ['b', 't', 'T'] {
-            let (lines, line) = make_providers("123abc");
-            let cmd = get_cmd_spec(&lines, &line, code, false).unwrap();
-            assert_eq!(cmd.n_addr, 2, "command `{code}` should accept 2 addresses");
-        }
     }
 
     // Utility to create a ScriptCharProvider from a &str
@@ -2065,39 +2043,55 @@ mod tests {
     }
 
     // get_verified_cmd_spec
-    #[test]
-    fn test_missing_command_character() {
-        let lines = ScriptLineProvider::with_active_state("test.sed", 1);
-        let line = char_provider_from("");
-        let result = get_verified_cmd_spec(&lines, &line, 0, ctx().posix);
+    #[rstest]
+    #[case::missing_command_character(
+        "test.sed",
+        1,
+        "",
+        0,
+        ctx().posix,
+        "test.sed:1:1: error: command expected"
+    )]
+    #[case::invalid_command_character(
+        "script.sed",
+        2,
+        "@",
+        0,
+        ctx().posix,
+        "script.sed:2:1: error: invalid command code `@'"
+    )]
+    // q takes one address
+    #[case::too_many_addresses(
+        "input.sed",
+        3,
+        "q",
+        2,
+        true,
+        "input.sed:3:1: error: command q expects up to 1 address(es), found 2"
+    )]
+    #[case::invalid_address_range_posix(
+        "input.sed",
+        1,
+        "i",
+        2,
+        true,
+        "input.sed:1:1: error: command i expects up to 1 address(es), found 2"
+    )]
+    fn test_verified_cmd_spec_error(
+        #[case] input_name: &str,
+        #[case] line_number: usize,
+        #[case] script: &str,
+        #[case] n_addr: usize,
+        #[case] posix: bool,
+        #[case] expected: &str,
+    ) {
+        let lines = ScriptLineProvider::with_active_state(input_name, line_number);
+        let line = char_provider_from(script);
+        let result = get_verified_cmd_spec(&lines, &line, n_addr, posix);
 
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("test.sed:1:1: error: command expected"));
-    }
-
-    #[test]
-    fn test_invalid_command_character() {
-        let lines = ScriptLineProvider::with_active_state("script.sed", 2);
-        let line = char_provider_from("@");
-        let result = get_verified_cmd_spec(&lines, &line, 0, ctx().posix);
-
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("script.sed:2:1: error: invalid command code `@'"));
-    }
-
-    #[test]
-    fn test_too_many_addresses() {
-        let lines = ScriptLineProvider::with_active_state("input.sed", 3);
-        let line = char_provider_from("q"); // q takes one address
-        let result = get_verified_cmd_spec(&lines, &line, 2, true);
-
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("input.sed:3:1: error: command q expects up to 1 address(es), found 2")
-        );
+        assert!(msg.contains(expected));
     }
 
     #[test]
@@ -2108,18 +2102,6 @@ mod tests {
         assert!(result.is_ok());
         let spec = result.unwrap();
         assert_eq!(spec.n_addr, 2);
-    }
-
-    #[test]
-    fn test_invalid_address_range_posix() {
-        let lines = ScriptLineProvider::with_active_state("input.sed", 1);
-        let line = char_provider_from("i"); // valid command
-        let result = get_verified_cmd_spec(&lines, &line, 2, true);
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("input.sed:1:1: error: command i expects up to 1 address(es), found 2")
-        );
     }
 
     // parse_number
@@ -2136,18 +2118,13 @@ mod tests {
         assert_eq!(parse_number(&lines, &mut chars, false).unwrap(), None);
     }
 
-    #[test]
-    fn test_parse_number_invalid() {
-        let (lines, mut chars) = make_providers("537654897563495734653453434534534534545");
+    #[rstest]
+    #[case::invalid("537654897563495734653453434534534534545", "invalid number")]
+    #[case::required_missing("", "number expected")]
+    fn test_parse_number_error(#[case] input: &str, #[case] expected: &str) {
+        let (lines, mut chars) = make_providers(input);
         let err = parse_number(&lines, &mut chars, true).unwrap_err();
-        assert!(err.to_string().contains("invalid number"));
-    }
-
-    #[test]
-    fn test_parse_required_number_missing() {
-        let (lines, mut chars) = make_providers("");
-        let err = parse_number(&lines, &mut chars, true).unwrap_err();
-        assert!(err.to_string().contains("number expected"));
+        assert!(err.to_string().contains(expected));
     }
 
     // compile_re
@@ -2198,23 +2175,12 @@ mod tests {
         assert!(result.is_err()); // Should fail due to open bracketed expression
     }
 
-    #[test]
-    fn test_compile_re_multiline_start() {
+    #[rstest]
+    #[case::start("^bar")]
+    #[case::end("foo$")]
+    fn test_compile_re_multiline(#[case] pattern: &str) {
         let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "^bar", &ctx(), false, true)
-            .unwrap()
-            .expect("regex should be present");
-        assert!(
-            regex
-                .is_match(&mut IOChunk::new_from_str("foo\nbar"))
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn test_compile_re_multiline_end() {
-        let (lines, chars) = dummy_providers();
-        let regex = compile_regex(&lines, &chars, "foo$", &ctx(), false, true)
+        let regex = compile_regex(&lines, &chars, pattern, &ctx(), false, true)
             .unwrap()
             .expect("regex should be present");
         assert!(
@@ -2232,19 +2198,17 @@ mod tests {
         assert!(matches!(addr, Address::Line(42)));
     }
 
-    #[test]
-    fn test_compile_addr_relative_line() {
-        let (lines, mut chars) = make_providers("+7");
+    #[rstest]
+    #[case::plain("+7", 7)]
+    #[case::blank("+ \t3", 3)]
+    fn test_compile_addr_relative_line(#[case] input: &str, #[case] expected: usize) {
+        let (lines, mut chars) = make_providers(input);
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
-        assert!(matches!(addr, Address::RelLine(7)));
+        assert!(matches!(addr, Address::RelLine(n) if n == expected));
     }
 
     #[test]
-    fn test_compile_addr_relative_line_blank_and_missing_number() {
-        let (lines, mut chars) = make_providers("+ \t3");
-        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
-        assert!(matches!(addr, Address::RelLine(3)));
-
+    fn test_compile_addr_relative_line_missing_number() {
         let (lines, mut chars) = make_providers("+d");
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
         assert!(matches!(addr, Address::RelLine(0)));
@@ -2258,69 +2222,25 @@ mod tests {
         assert!(matches!(addr, Address::Last));
     }
 
-    #[test]
-    fn test_compile_addr_regex() {
-        let (lines, mut chars) = make_providers("/hello/");
+    #[rstest]
+    #[case::regex("/hello/", "hello", true)]
+    #[case::regex_backref_match(r"/he\(.\)\1o/", "hello", true)]
+    #[case::regex_backref_no_match(r"/he\(.\)\1o/", "helio", false)]
+    #[case::regex_other_delimiter("\\#hello#", "hello", true)]
+    // Case-insensitive
+    #[case::regex_with_modifier("/hello/I", "HELLO", true)]
+    fn test_compile_addr_regex(#[case] script: &str, #[case] input: &str, #[case] matches: bool) {
+        let (lines, mut chars) = make_providers(script);
         let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
 
         let Address::Re(Some(re)) = addr else {
             panic!("expected Address::Re(Some(_))");
         };
 
-        assert!(re.is_match(&mut IOChunk::new_from_str("hello")).unwrap());
-    }
-
-    #[test]
-    fn test_compile_addr_regex_backref_match() {
-        let (lines, mut chars) = make_providers(r"/he\(.\)\1o/");
-        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
-
-        match addr {
-            Address::Re(Some(re)) => {
-                assert!(re.is_match(&mut IOChunk::new_from_str("hello")).unwrap());
-            }
-            _ => panic!("expected Address::Re(Some(_))"),
-        }
-    }
-
-    #[test]
-    fn test_compile_addr_regex_backref_no_match() {
-        let (lines, mut chars) = make_providers(r"/he\(.\)\1o/");
-        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
-
-        match addr {
-            Address::Re(Some(re)) => {
-                assert!(!re.is_match(&mut IOChunk::new_from_str("helio")).unwrap());
-            }
-            _ => panic!("expected Address::Re(Some(_))"),
-        }
-    }
-
-    #[test]
-    fn test_compile_addr_regex_other_delimiter() {
-        let (lines, mut chars) = make_providers("\\#hello#");
-        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
-
-        match addr {
-            Address::Re(Some(re)) => {
-                assert!(re.is_match(&mut IOChunk::new_from_str("hello")).unwrap());
-            }
-            _ => panic!("expected Address::Re(Some(_))"),
-        }
-    }
-
-    #[test]
-    fn test_compile_addr_regex_with_modifier() {
-        let (lines, mut chars) = make_providers("/hello/I");
-        let addr = compile_address(&lines, &mut chars, &ctx()).unwrap();
-
-        match addr {
-            Address::Re(Some(re)) => {
-                // Case-insensitive
-                assert!(re.is_match(&mut IOChunk::new_from_str("HELLO")).unwrap());
-            }
-            _ => panic!("expected Address::Re(Some(_))"),
-        }
+        assert_eq!(
+            re.is_match(&mut IOChunk::new_from_str(input)).unwrap(),
+            matches
+        );
     }
 
     #[test]
@@ -2492,39 +2412,26 @@ mod tests {
         ScriptCharProvider::new("")
     }
 
-    #[test]
-    fn test_zero_addr_r_accepted() {
-        for input in ["0r", "0  r"] {
-            let (lines, mut chars) = make_providers(input);
-            let mut cmd = Rc::new(RefCell::new(Command::default()));
-            let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
+    #[rstest]
+    #[case::adjacent("0r")]
+    #[case::spaced("0  r")]
+    fn test_zero_addr_r_accepted(#[case] input: &str) {
+        let (lines, mut chars) = make_providers(input);
+        let mut cmd = Rc::new(RefCell::new(Command::default()));
+        let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
-            assert_eq!(n_addr, 1);
-            assert!(matches!(cmd.borrow().addr1, Some(Address::Line(0))));
-            assert_eq!(chars.current(), 'r');
-        }
+        assert_eq!(n_addr, 1);
+        assert!(matches!(cmd.borrow().addr1, Some(Address::Line(0))));
+        assert_eq!(chars.current(), 'r');
     }
 
+    #[rstest]
     // Zero-address with no commands
-    #[test]
-    fn test_zero_addr_no_commands() {
-        let (lines, mut chars) = make_providers("0");
-        let mut cmd = Rc::new(RefCell::new(Command::default()));
-        let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
-
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains(ERR_ADDRESS_0_USAGE)
-        );
-    }
-
+    #[case::no_commands("0")]
     // Zero-address with a command other than 'r' must still be rejected.
-    #[test]
-    fn test_zero_addr_non_r_rejected() {
-        let (lines, mut chars) = make_providers("0p");
+    #[case::non_r("0p")]
+    fn test_zero_addr_rejected(#[case] input: &str) {
+        let (lines, mut chars) = make_providers(input);
         let mut cmd = Rc::new(RefCell::new(Command::default()));
         let result = compile_address_range(&lines, &mut chars, &mut cmd, &ctx());
 
@@ -2537,75 +2444,44 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_compile_sequence_empty_input() {
-        let mut provider = make_line_provider(&[]);
+    #[rstest]
+    #[case::empty_input(&[])]
+    #[case::comment_only(&["# comment", "   ", ";;"])]
+    fn test_compile_sequence_no_commands(#[case] script: &[&str]) {
+        let mut provider = make_line_provider(script);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
         assert!(result.is_none());
     }
 
-    #[test]
-    fn test_compile_sequence_comment_only() {
-        let mut provider = make_line_provider(&["# comment", "   ", ";;"]);
-        let mut opts = ctx();
-
-        let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_compile_sequence_single_command() {
-        let mut provider = make_line_provider(&["42q"]);
-        let mut opts = ctx();
-
-        let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
-        let binding = result.unwrap();
-        let cmd = binding.borrow();
-
-        assert_eq!(cmd.code, 'q');
-        assert!(!cmd.non_select);
-
-        assert!(matches!(cmd.addr1, Some(Address::Line(42))));
-        assert!(cmd.next.is_none());
-    }
-
-    #[test]
-    fn test_compile_sequence_non_selected_single_command() {
-        let mut provider = make_line_provider(&["42!p"]);
+    #[rstest]
+    #[case::single_command("42q", 'q', false)]
+    #[case::non_selected_single_command("42!p", 'p', true)]
+    fn test_compile_sequence_single_command(
+        #[case] script: &str,
+        #[case] code: char,
+        #[case] non_select: bool,
+    ) {
+        let mut provider = make_line_provider(&[script]);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
         let binding = result.unwrap();
         let cmd = binding.borrow();
 
-        assert_eq!(cmd.code, 'p');
-        assert!(cmd.non_select);
+        assert_eq!(cmd.code, code);
+        assert_eq!(cmd.non_select, non_select);
 
         assert!(matches!(cmd.addr1, Some(Address::Line(42))));
         assert!(cmd.next.is_none());
     }
 
-    #[test]
-    fn test_compile_sequence_multiple_lines() {
-        let mut provider = make_line_provider(&["1q", "2d"]);
-        let mut opts = ctx();
-
-        let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
-        let binding = result.unwrap();
-        let first = binding.borrow();
-
-        assert_eq!(first.code, 'q');
-        let binding = first.next.clone().unwrap();
-        let second = binding.borrow();
-        assert_eq!(second.code, 'd');
-        assert!(second.next.is_none());
-    }
-
-    #[test]
-    fn test_compile_sequence_single_line_multiple_commands() {
-        let mut provider = make_line_provider(&["1q;2d"]);
+    #[rstest]
+    #[case::multiple_lines(&["1q", "2d"])]
+    #[case::single_line_multiple_commands(&["1q;2d"])]
+    fn test_compile_sequence_two_commands(#[case] script: &[&str]) {
+        let mut provider = make_line_provider(script);
         let mut opts = ctx();
 
         let result = compile_sequence(&mut provider, &mut empty_line(), &mut opts).unwrap();
@@ -2674,22 +2550,27 @@ mod tests {
         compile_replacement(lines, line, CharacterMode::Utf8)
     }
 
-    #[test]
-    fn test_compile_replacement_literal() {
-        let (mut lines, mut chars) = make_providers("/hello/");
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+    #[rstest]
+    #[case::literal(b"/hello/", CharacterMode::Utf8, b"hello")]
+    #[case::escaped_delimiter(br"/hell\/o/", CharacterMode::Utf8, b"hell/o")]
+    #[case::ampersand(b"/Simon \\& Garfunkel/", CharacterMode::Utf8, b"Simon & Garfunkel")]
+    #[case::escape_sequences(b"/line\\nnewline\\tend/", CharacterMode::Utf8, b"line\nnewline\tend")]
+    #[case::escape_byte_mode(b"/\\xE9/", CharacterMode::Byte, b"\xE9")]
+    #[case::escape_utf8_mode(b"/\\xE9/", CharacterMode::Utf8, "é".as_bytes())]
+    #[case::preserves_invalid_utf8_script_byte(b"/\xC2/", CharacterMode::Utf8, b"\xC2")]
+    // GNU sed emits the bare character for an escape it does not know.
+    #[case::drops_unknown_escape(br"/a\q/", CharacterMode::Utf8, b"aq")]
+    fn test_compile_replacement_single_literal(
+        #[case] script: &[u8],
+        #[case] mode: CharacterMode,
+        #[case] expected: &[u8],
+    ) {
+        let mut lines = ScriptLineProvider::new(vec![]);
+        let mut chars = ScriptCharProvider::new(script);
+        let template = compile_replacement(&mut lines, &mut chars, mode).unwrap();
 
         assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"hello"));
-    }
-
-    #[test]
-    fn test_compile_replacement_escaped_delimiter() {
-        let (mut lines, mut chars) = make_providers(r"/hell\/o/");
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-
-        assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"hell/o"));
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == expected));
     }
 
     #[test]
@@ -2704,9 +2585,11 @@ mod tests {
         assert!(matches!(&template.parts[3], ReplacementPart::Group(2)));
     }
 
-    #[test]
-    fn test_compile_replacement_whole_match() {
-        let (mut lines, mut chars) = make_providers("/The match was: &/");
+    #[rstest]
+    #[case::whole_match("/The match was: &/")]
+    #[case::whole_match_synonym(r"/The match was: \0/")]
+    fn test_compile_replacement_whole_match(#[case] script: &str) {
+        let (mut lines, mut chars) = make_providers(script);
         let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
 
         assert_eq!(template.parts.len(), 2);
@@ -2714,62 +2597,6 @@ mod tests {
             matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"The match was: ")
         );
         assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
-    }
-
-    #[test]
-    fn test_compile_replacement_whole_match_synonym() {
-        let (mut lines, mut chars) = make_providers(r"/The match was: \0/");
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-
-        assert_eq!(template.parts.len(), 2);
-        assert!(
-            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"The match was: ")
-        );
-        assert!(matches!(&template.parts[1], ReplacementPart::WholeMatch));
-    }
-
-    #[test]
-    fn test_compile_replacement_ampersand() {
-        let (mut lines, mut chars) = make_providers("/Simon \\& Garfunkel/");
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-
-        assert_eq!(template.parts.len(), 1);
-        assert!(
-            matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"Simon & Garfunkel")
-        );
-    }
-
-    #[test]
-    fn test_compile_replacement_escape_sequences() {
-        let (mut lines, mut chars) = make_providers("/line\\nnewline\\tend/");
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-
-        assert_eq!(template.parts.len(), 1);
-        assert!(matches!(
-            &template.parts[0],
-            ReplacementPart::Literal(s) if s == b"line\nnewline\tend"
-        ));
-    }
-
-    #[test]
-    fn test_compile_replacement_escape_byte_mode() {
-        let (mut lines, mut chars) = make_providers("/\\xE9/");
-        let template = compile_replacement(&mut lines, &mut chars, CharacterMode::Byte).unwrap();
-
-        assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"\xE9"));
-    }
-
-    #[test]
-    fn test_compile_replacement_escape_utf8_mode() {
-        let (mut lines, mut chars) = make_providers("/\\xE9/");
-        let template = compile_replacement(&mut lines, &mut chars, CharacterMode::Utf8).unwrap();
-
-        assert_eq!(template.parts.len(), 1);
-        assert!(matches!(
-            &template.parts[0],
-            ReplacementPart::Literal(s) if s == "é".as_bytes()
-        ));
     }
 
     #[test]
@@ -2790,58 +2617,15 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_compile_replacement_preserves_invalid_utf8_script_byte() {
-        let mut chars = ScriptCharProvider::new(b"/\xC2/");
-        let mut lines = ScriptLineProvider::new(vec![]);
-
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-
-        assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"\xC2"));
-    }
-
-    #[test]
-    fn test_compile_replacement_drops_unknown_escape() {
-        // GNU sed emits the bare character for an escape it does not know.
-        let (mut lines, mut chars) = make_providers(r"/a\q/");
-        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
-
-        assert_eq!(template.parts.len(), 1);
-        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"aq"));
-    }
-
-    #[test]
-    fn test_compile_replacement_eof_after_backslash() {
-        let (mut lines, mut chars) = make_providers(r"/abc\");
+    #[rstest]
+    #[case::eof_after_backslash(r"/abc\", "unterminated substitute replacement (unexpected EOF)")]
+    #[case::unescaped_newline("/abc\n/", "unescaped newline inside substitute replacement")]
+    #[case::unterminated("/abc", "unterminated substitute replacement")]
+    fn test_compile_replacement_error(#[case] script: &str, #[case] expected: &str) {
+        let (mut lines, mut chars) = make_providers(script);
         let err = compile_replacement_utf8(&mut lines, &mut chars).unwrap_err();
 
-        assert!(
-            err.to_string()
-                .contains("unterminated substitute replacement (unexpected EOF)")
-        );
-    }
-
-    #[test]
-    fn test_compile_replacement_unescaped_newline() {
-        let (mut lines, mut chars) = make_providers("/abc\n/");
-        let err = compile_replacement_utf8(&mut lines, &mut chars).unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("unescaped newline inside substitute replacement")
-        );
-    }
-
-    #[test]
-    fn test_compile_replacement_unterminated() {
-        let (mut lines, mut chars) = make_providers("/abc");
-        let err = compile_replacement_utf8(&mut lines, &mut chars).unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("unterminated substitute replacement")
-        );
+        assert!(err.to_string().contains(expected));
     }
 
     // compile_subst_flags
@@ -2864,36 +2648,22 @@ mod tests {
         assert!(subst.print_flag);
     }
 
-    #[test]
-    fn test_compile_subst_flag_uppercase_i() {
-        let (lines, mut chars) = make_providers("I");
+    #[rstest]
+    #[case::uppercase_i("I")]
+    #[case::i_lowercase("i")]
+    fn test_compile_subst_flag_ignore_case(#[case] flags: &str) {
+        let (lines, mut chars) = make_providers(flags);
         let mut subst = Substitution::default();
 
         compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
         assert!(subst.ignore_case);
     }
 
-    #[test]
-    fn test_compile_subst_flag_i_lowercase() {
-        let (lines, mut chars) = make_providers("i");
-        let mut subst = Substitution::default();
-
-        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
-        assert!(subst.ignore_case);
-    }
-
-    #[test]
-    fn test_compile_subst_flag_uppercase_m() {
-        let (lines, mut chars) = make_providers("M");
-        let mut subst = Substitution::default();
-
-        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
-        assert!(subst.multiline);
-    }
-
-    #[test]
-    fn test_compile_subst_flag_m_lowercase() {
-        let (lines, mut chars) = make_providers("m");
+    #[rstest]
+    #[case::uppercase_m("M")]
+    #[case::m_lowercase("m")]
+    fn test_compile_subst_flag_multiline(#[case] flags: &str) {
+        let (lines, mut chars) = make_providers(flags);
         let mut subst = Substitution::default();
 
         compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
@@ -2909,49 +2679,29 @@ mod tests {
         assert_eq!(subst.occurrence, 3);
     }
 
-    #[test]
-    fn test_compile_subst_flag_g_and_number() {
-        for flags in ["g3", "3g"] {
-            let (lines, mut chars) = make_providers(flags);
-            let mut subst = Substitution::default();
+    #[rstest]
+    #[case::g_first("g3")]
+    #[case::number_first("3g")]
+    fn test_compile_subst_flag_g_and_number(#[case] flags: &str) {
+        let (lines, mut chars) = make_providers(flags);
+        let mut subst = Substitution::default();
 
-            compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
-            assert_eq!(subst.occurrence, 3);
-            assert!(subst.global);
-        }
+        compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap();
+        assert_eq!(subst.occurrence, 3);
+        assert!(subst.global);
     }
 
-    #[test]
-    fn test_compile_subst_flag_multiple_g_should_fail() {
-        let (lines, mut chars) = make_providers("gpg");
+    #[rstest]
+    #[case::multiple_g("gpg", ":3: error: multiple `g' options to `s' command")]
+    #[case::multiple_numbers("2g3", ":3: error: multiple number options to `s' command")]
+    #[case::w_missing_filename("w ", "missing file path")]
+    #[case::invalid_flag("z", "invalid substitute flag")]
+    fn test_compile_subst_flag_error(#[case] flags: &str, #[case] expected: &str) {
+        let (lines, mut chars) = make_providers(flags);
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains(":3: error: multiple `g' options to `s' command")
-        );
-    }
-
-    #[test]
-    fn test_compile_subst_flag_multiple_numbers_should_fail() {
-        let (lines, mut chars) = make_providers("2g3");
-        let mut subst = Substitution::default();
-
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains(":3: error: multiple number options to `s' command")
-        );
-    }
-
-    #[test]
-    fn test_compile_subst_flag_w_missing_filename() {
-        let (lines, mut chars) = make_providers("w ");
-        let mut subst = Substitution::default();
-
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
-        assert!(err.to_string().contains("missing file path"));
+        assert!(err.to_string().contains(expected));
     }
 
     #[test]
@@ -2969,24 +2719,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_subst_flag_w_rejected_under_sandbox() {
-        let (lines, mut chars) = make_providers("w out.txt");
-        let mut subst = Substitution::default();
-
-        let err = compile_subst_flags(
-            &lines,
-            &mut chars,
-            &mut subst,
-            &mut ProcessingContext {
-                sandbox: true,
-                ..ctx()
-            },
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains(ERR_SANDBOX));
-    }
-
-    #[test]
     fn test_compile_subst_flag_e() {
         let (lines, mut chars) = make_providers("e");
         let mut subst = Substitution::default();
@@ -2995,9 +2727,17 @@ mod tests {
         assert!(subst.execute);
     }
 
-    #[test]
-    fn test_compile_subst_flag_e_rejected_under_posix() {
-        let (lines, mut chars) = make_providers("e");
+    #[rstest]
+    #[case::w_rejected_under_sandbox("w out.txt", false, true, ERR_SANDBOX)]
+    #[case::e_rejected_under_posix("e", true, false, "not allowed with --posix or --sandbox")]
+    #[case::e_rejected_under_sandbox("e", false, true, "not allowed with --posix or --sandbox")]
+    fn test_compile_subst_flag_restricted(
+        #[case] flags: &str,
+        #[case] posix: bool,
+        #[case] sandbox: bool,
+        #[case] expected: &str,
+    ) {
+        let (lines, mut chars) = make_providers(flags);
         let mut subst = Substitution::default();
 
         let err = compile_subst_flags(
@@ -3005,71 +2745,32 @@ mod tests {
             &mut chars,
             &mut subst,
             &mut ProcessingContext {
-                posix: true,
+                posix,
+                sandbox,
                 ..ctx()
             },
         )
         .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("not allowed with --posix or --sandbox")
-        );
-    }
-
-    #[test]
-    fn test_compile_subst_flag_e_rejected_under_sandbox() {
-        let (lines, mut chars) = make_providers("e");
-        let mut subst = Substitution::default();
-
-        let err = compile_subst_flags(
-            &lines,
-            &mut chars,
-            &mut subst,
-            &mut ProcessingContext {
-                sandbox: true,
-                ..ctx()
-            },
-        )
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("not allowed with --posix or --sandbox")
-        );
-    }
-
-    #[test]
-    fn test_compile_subst_flag_invalid_flag() {
-        let (lines, mut chars) = make_providers("z");
-        let mut subst = Substitution::default();
-
-        let err = compile_subst_flags(&lines, &mut chars, &mut subst, &mut ctx()).unwrap_err();
-        assert!(err.to_string().contains("invalid substitute flag"));
+        assert!(err.to_string().contains(expected));
     }
 
     // compile_subst_command
-    #[test]
-    fn test_compile_subst_invalid_delimiter_backslash() {
-        let (mut lines, mut chars) = make_providers("s\\foo\\bar\\");
+    #[rstest]
+    #[case::invalid_delimiter_backslash("s\\foo\\bar\\", "substitute pattern cannot be delimited")]
+    #[case::extra_characters_at_end("s/foo/bar/x", "invalid substitute flag")]
+    #[case::invalid_group_reference(r"s/f(o)o/\2/", "invalid reference \\2")]
+    #[case::empty_re_rejects_modifiers(
+        "s//x/I",
+        "cannot specify modifiers on an empty regular expression"
+    )]
+    fn test_compile_subst_error(#[case] script: &str, #[case] expected: &str) {
+        let (mut lines, mut chars) = make_providers(script);
         let mut cmd = Command::default();
         let mut context = ctx();
 
         let err =
             compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("substitute pattern cannot be delimited")
-        );
-    }
-
-    #[test]
-    fn test_compile_subst_extra_characters_at_end() {
-        let (mut lines, mut chars) = make_providers("s/foo/bar/x");
-        let mut cmd = Command::default();
-        let mut context = ctx();
-
-        let err =
-            compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
-        assert!(err.to_string().contains("invalid substitute flag"));
+        assert!(err.to_string().contains(expected));
     }
 
     #[test]
@@ -3106,31 +2807,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_subst_invalid_group_reference() {
-        let (mut lines, mut chars) = make_providers(r"s/f(o)o/\2/");
-        let mut cmd = Command::default();
-        let mut context = ctx();
-
-        let err =
-            compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
-        assert!(err.to_string().contains("invalid reference \\2"));
-    }
-
-    #[test]
-    fn test_compile_subst_empty_re_rejects_modifiers() {
-        let (mut lines, mut chars) = make_providers("s//x/I");
-        let mut cmd = Command::default();
-        let mut context = ctx();
-
-        let err =
-            compile_subst_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("cannot specify modifiers on an empty regular expression")
-        );
-    }
-
-    #[test]
     fn test_compile_trans_command_sets_command_data() {
         let (mut lines, mut chars) = make_providers("y/ab/xy/");
         let mut cmd = Command::default();
@@ -3159,48 +2835,40 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn test_group_stacked_quantifiers() {
-        assert_eq!(group_stacked_quantifiers_string("ab+?"), "a(?:b+)?");
-        assert_eq!(group_stacked_quantifiers_string("ab*+c"), "a(?:b*)+c");
-        assert_eq!(group_stacked_quantifiers_string("a{2}??"), "(?:(?:a{2})?)?");
-        assert_eq!(group_stacked_quantifiers_string("(ab)*?"), "(?:(ab)*)?");
-        assert_eq!(group_stacked_quantifiers_string("x[ab]+?"), "x(?:[ab]+)?");
-        assert_eq!(group_stacked_quantifiers_string(r"x\.+?"), r"x(?:\.+)?");
-        assert_eq!(group_stacked_quantifiers_string("xé+?"), "x(?:é+)?");
+    #[rstest]
+    #[case::plus_then_optional("ab+?", "a(?:b+)?")]
+    #[case::star_then_plus("ab*+c", "a(?:b*)+c")]
+    #[case::brace_then_two_optionals("a{2}??", "(?:(?:a{2})?)?")]
+    #[case::group("(ab)*?", "(?:(ab)*)?")]
+    #[case::bracket("x[ab]+?", "x(?:[ab]+)?")]
+    #[case::escaped_char(r"x\.+?", r"x(?:\.+)?")]
+    #[case::multibyte_char("xé+?", "x(?:é+)?")]
+    fn test_group_stacked_quantifiers(#[case] pattern: &str, #[case] expected: &str) {
+        assert_eq!(group_stacked_quantifiers_string(pattern), expected);
     }
 
-    #[test]
-    fn test_group_stacked_quantifiers_byte_mode() {
-        // In byte mode 0xa9 is a character of its own, not part of the a.
-        assert_eq!(
-            group_stacked_quantifiers(b"a\xa9+?", CharacterMode::Byte),
-            b"a(?:\xa9+)?"
-        );
-        assert_eq!(
-            group_stacked_quantifiers(b"\xc3\xa9+?", CharacterMode::Byte),
-            b"\xc3(?:\xa9+)?"
-        );
-        assert_eq!(
-            group_stacked_quantifiers(b"\xc3\xa9+?", CharacterMode::Utf8),
-            b"(?:\xc3\xa9+)?"
-        );
+    #[rstest]
+    // In byte mode 0xa9 is a character of its own, not part of the a.
+    #[case::byte_after_ascii(b"a\xa9+?", CharacterMode::Byte, b"a(?:\xa9+)?")]
+    #[case::byte_splits_utf8(b"\xc3\xa9+?", CharacterMode::Byte, b"\xc3(?:\xa9+)?")]
+    #[case::utf8_keeps_char(b"\xc3\xa9+?", CharacterMode::Utf8, b"(?:\xc3\xa9+)?")]
+    fn test_group_stacked_quantifiers_byte_mode(
+        #[case] pattern: &[u8],
+        #[case] mode: CharacterMode,
+        #[case] expected: &[u8],
+    ) {
+        assert_eq!(group_stacked_quantifiers(pattern, mode), expected);
     }
 
-    #[test]
-    fn test_group_stacked_quantifiers_leaves_the_rest() {
-        assert_eq!(group_stacked_quantifiers_string("a+b?c{1,2}"), "a+b?c{1,2}");
-        assert_eq!(group_stacked_quantifiers_string(r"a\*?\++"), r"a\*?\++");
-        assert_eq!(group_stacked_quantifiers_string("[]+?]"), "[]+?]");
-        assert_eq!(
-            group_stacked_quantifiers_string("[[:alpha:]+?]"),
-            "[[:alpha:]+?]"
-        );
-        assert_eq!(
-            group_stacked_quantifiers_string(r"(a)(?:\1)?"),
-            r"(a)(?:\1)?"
-        );
-        assert_eq!(group_stacked_quantifiers_string("a{b}?"), "a{b}?");
+    #[rstest]
+    #[case::single_quantifiers("a+b?c{1,2}")]
+    #[case::escaped_quantifiers(r"a\*?\++")]
+    #[case::bracket_with_close("[]+?]")]
+    #[case::char_class("[[:alpha:]+?]")]
+    #[case::already_grouped(r"(a)(?:\1)?")]
+    #[case::non_numeric_brace("a{b}?")]
+    fn test_group_stacked_quantifiers_leaves_the_rest(#[case] pattern: &str) {
+        assert_eq!(group_stacked_quantifiers_string(pattern), pattern);
     }
 
     // bre_to_ere
@@ -3208,61 +2876,26 @@ mod tests {
         String::from_utf8(bre_to_ere(pattern.as_bytes())).unwrap()
     }
 
-    #[test]
-    fn test_bre_group_translation() {
-        assert_eq!(bre_to_ere_string(r"\(a\?b\+c\|\)"), "(a?b+c|)");
-        assert_eq!(bre_to_ere_string(r"a\(b\)c"), "a(b)c");
-    }
-
-    #[test]
-    fn test_bre_brace_quantifier_translation() {
-        assert_eq!(bre_to_ere_string(r"\{1,4\}"), "{1,4}");
-    }
-
-    #[test]
-    fn test_ere_metacharacters_escaped() {
-        assert_eq!(bre_to_ere_string(r"a+b?c{1}|(d)"), r"a\+b\?c\{1\}\|\(d\)");
-    }
-
-    #[test]
-    fn test_literal_backslashes_preserved() {
-        assert_eq!(bre_to_ere_string(r"foo\\bar"), r"foo\\bar");
-        assert_eq!(bre_to_ere_string(r"\."), r"\.");
-    }
-
-    #[test]
-    fn test_character_classes_unchanged() {
-        assert_eq!(bre_to_ere_string(r"[a-z]"), "[a-z]");
-        assert_eq!(bre_to_ere_string(r"[^0-9]"), "[^0-9]");
-    }
-
-    #[test]
-    fn test_anchors_and_dot_and_star() {
-        assert_eq!(bre_to_ere_string(r"^a.*b$"), "^a.*b$");
-    }
-
-    #[test]
-    fn test_trailing_backslash_is_preserved() {
-        assert_eq!(bre_to_ere_string(r"abc\"), r"abc\");
-    }
-
-    #[test]
-    fn test_caret_escaped_in_middle() {
-        assert_eq!(bre_to_ere_string(r"^a^[^x]c"), r"^a\^[^x]c");
-        assert_eq!(bre_to_ere_string(r"a\(^b\|^c\)"), "a(^b|^c)");
-        assert_eq!(bre_to_ere_string(r"\(a\)^b"), r"(a)\^b");
-    }
-
-    #[test]
-    fn test_dollar_escaped_in_middle() {
-        assert_eq!(bre_to_ere_string(r"a$c$"), r"a\$c$");
-        assert_eq!(bre_to_ere_string(r"\(a$\|b$\)c$"), "(a$|b$)c$");
-        assert_eq!(bre_to_ere_string(r"\($a\)"), r"(\$a)");
-    }
-
-    #[test]
-    fn test_bre_back_reference() {
-        assert_eq!(bre_to_ere_string(r"\(.\)\1\(.\)\2"), r"(.)(?:\1)(.)(?:\2)");
+    #[rstest]
+    #[case::bre_group_translation(r"\(a\?b\+c\|\)", "(a?b+c|)")]
+    #[case::bre_group_translation_inner(r"a\(b\)c", "a(b)c")]
+    #[case::bre_brace_quantifier_translation(r"\{1,4\}", "{1,4}")]
+    #[case::ere_metacharacters_escaped(r"a+b?c{1}|(d)", r"a\+b\?c\{1\}\|\(d\)")]
+    #[case::literal_backslashes_preserved(r"foo\\bar", r"foo\\bar")]
+    #[case::literal_backslashes_preserved_dot(r"\.", r"\.")]
+    #[case::character_classes_unchanged(r"[a-z]", "[a-z]")]
+    #[case::character_classes_unchanged_negated(r"[^0-9]", "[^0-9]")]
+    #[case::anchors_and_dot_and_star(r"^a.*b$", "^a.*b$")]
+    #[case::trailing_backslash_is_preserved(r"abc\", r"abc\")]
+    #[case::caret_escaped_in_middle(r"^a^[^x]c", r"^a\^[^x]c")]
+    #[case::caret_after_group_open_and_alternation(r"a\(^b\|^c\)", "a(^b|^c)")]
+    #[case::caret_after_group_close(r"\(a\)^b", r"(a)\^b")]
+    #[case::dollar_escaped_in_middle(r"a$c$", r"a\$c$")]
+    #[case::dollar_before_alternation_and_group_close(r"\(a$\|b$\)c$", "(a$|b$)c$")]
+    #[case::dollar_after_group_open(r"\($a\)", r"(\$a)")]
+    #[case::bre_back_reference(r"\(.\)\1\(.\)\2", r"(.)(?:\1)(.)(?:\2)")]
+    fn test_bre_to_ere(#[case] pattern: &str, #[case] expected: &str) {
+        assert_eq!(bre_to_ere_string(pattern), expected);
     }
 
     // patch_block_endings
@@ -3398,29 +3031,21 @@ mod tests {
         assert_eq!(collect_codes(inner), vec!['x', 'b']);
     }
 
-    // compile_read_file_command
-    #[test]
-    fn test_compile_read_file_command_rejected_under_sandbox() {
-        let (mut lines, mut chars) = make_providers("r input.txt");
+    // compile_read_file_command, compile_read_line_command (R), compile_write_file_command
+    #[rstest]
+    #[case::read_file_command("r input.txt", compile_read_file_command)]
+    #[case::read_line_command("R input.txt", compile_read_line_command)]
+    #[case::write_file_command("w out.txt", compile_write_file_command)]
+    fn test_file_command_rejected_under_sandbox(
+        #[case] script: &str,
+        #[case] compile_command: CommandHandler,
+    ) {
+        let (mut lines, mut chars) = make_providers(script);
         let mut cmd = Command::default();
         let mut context = ctx();
         context.sandbox = true;
 
-        let err =
-            compile_read_file_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
-        assert!(err.to_string().contains(ERR_SANDBOX));
-    }
-
-    // compile_read_line_command (R)
-    #[test]
-    fn test_compile_read_line_command_rejected_under_sandbox() {
-        let (mut lines, mut chars) = make_providers("R input.txt");
-        let mut cmd = Command::default();
-        let mut context = ctx();
-        context.sandbox = true;
-
-        let err =
-            compile_read_line_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
+        let err = compile_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
         assert!(err.to_string().contains(ERR_SANDBOX));
     }
 
@@ -3434,19 +3059,6 @@ mod tests {
             compile_read_line_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         assert!(matches!(handling, CommandHandling::Continue));
         assert!(matches!(cmd.data, CommandData::NamedReader(_)));
-    }
-
-    // compile_write_file_command
-    #[test]
-    fn test_compile_write_file_command_rejected_under_sandbox() {
-        let (mut lines, mut chars) = make_providers("w out.txt");
-        let mut cmd = Command::default();
-        let mut context = ctx();
-        context.sandbox = true;
-
-        let err =
-            compile_write_file_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap_err();
-        assert!(err.to_string().contains(ERR_SANDBOX));
     }
 
     // compile_label_command
@@ -3784,213 +3396,68 @@ mod tests {
     }
 
     // compile_text_command
-    #[test]
-    fn test_compile_single_line_text_command() {
-        let mut chars = make_char_provider("a\\");
-        let mut lines = make_line_provider(&["line1", "line2"]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b"line1\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
-    }
-
-    #[test]
-    fn test_compile_text_command_posix_space_after_backslash() {
-        // Like GNU sed, the space after the \ is the text.
-        let mut chars = make_char_provider("a \\ ");
-        let mut lines = make_line_provider(&["line1", "line2"]);
+    #[rstest]
+    #[case::single_line_text_command(b"a\\", &["line1", "line2"], false, b"line1\n")]
+    // Like GNU sed, the space after the \ is the text.
+    #[case::posix_space_after_backslash(b"a \\ ", &["line1", "line2"], true, b" \n")]
+    #[case::gnu_optional_backslash(b"athere", &["line1", "line2"], false, b"there\n")]
+    #[case::gnu_optional_backslash_spaces(b"a \t there", &["line1", "line2"], false, b"there\n")]
+    #[case::gnu_optional_backslash_escape_eof(b"a\\", &[], false, b"")]
+    #[case::gnu_no_first_escape(b"a\\tom", &[], false, b"tom\n")]
+    #[case::gnu_char_escapes(
+        b"i\\>\\h\\elll\\bo\\nto\\",
+        &["all\\a", ""],
+        false,
+        b">helllbo\nto\nall\x07\n"
+    )]
+    #[case::gnu_preserves_invalid_utf8_script_byte(b"a\\\xC2", &[], false, b"\xC2\n")]
+    #[case::two_line_text_command(b"a\\", &["line1\\", "line2"], false, b"line1\nline2\n")]
+    #[case::posix_text_on_same_line(b"a \\ foo", &["line1", "line2"], true, b" foo\n")]
+    fn test_compile_text_command(
+        #[case] script: &[u8],
+        #[case] next_lines: &[&str],
+        #[case] posix: bool,
+        #[case] expected: &[u8],
+    ) {
+        let mut chars = ScriptCharProvider::new(script);
+        let mut lines = make_line_provider(next_lines);
         let mut cmd = Command::default();
         let mut context = ProcessingContext {
-            posix: true,
+            posix,
             ..Default::default()
         };
 
         compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
         match &cmd.data {
             CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b" \n");
+                assert_eq!(text.as_ref(), expected);
             }
             _ => panic!("Expected CommandData::Text"),
         }
     }
 
-    #[test]
-    fn test_compile_text_command_posix_incomplete() {
-        let (mut lines, mut chars) = make_providers("i\\");
+    #[rstest]
+    #[case::posix_incomplete("i\\", &[], true, "incomplete command")]
+    #[case::gnu_no_text("a", &[], false, "expects \\ followed by text")]
+    #[case::posix_without_backslash("a", &["line1", "line2"], true, "expects \\ followed by text")]
+    fn test_compile_text_command_error(
+        #[case] script: &str,
+        #[case] next_lines: &[&str],
+        #[case] posix: bool,
+        #[case] expected: &str,
+    ) {
+        let mut chars = make_char_provider(script);
+        let mut lines = make_line_provider(next_lines);
         let mut cmd = Command::default();
         let mut context = ProcessingContext {
-            posix: true,
-            ..Default::default()
-        };
-        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("incomplete command"));
-    }
-
-    #[test]
-    fn test_compile_text_command_gnu_optional_backslash() {
-        let mut chars = make_char_provider("athere");
-        let mut lines = make_line_provider(&["line1", "line2"]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b"there\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
-    }
-
-    #[test]
-    fn test_compile_text_command_gnu_optional_backslash_spaces() {
-        let mut chars = make_char_provider("a \t there");
-        let mut lines = make_line_provider(&["line1", "line2"]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b"there\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
-    }
-
-    #[test]
-    fn test_compile_text_command_gnu_no_text() {
-        let mut chars = make_char_provider("a");
-        let mut lines = make_line_provider(&[]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-
-        let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("expects \\ followed by text"));
-    }
-
-    #[test]
-    fn test_compile_text_command_gnu_optional_backslash_escape_eof() {
-        let mut chars = make_char_provider("a\\");
-        let mut lines = make_line_provider(&[]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b"");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
-    }
-
-    #[test]
-    fn test_compile_text_command_gnu_no_first_escape() {
-        let mut chars = make_char_provider("a\\tom");
-        let mut lines = make_line_provider(&[]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b"tom\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
-    }
-
-    #[test]
-    fn test_compile_text_command_gnu_char_escapes() {
-        let mut chars = make_char_provider("i\\>\\h\\elll\\bo\\nto\\");
-        let mut lines = make_line_provider(&["all\\a", ""]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b">helllbo\nto\nall\x07\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
-    }
-
-    #[test]
-    fn test_compile_text_command_gnu_preserves_invalid_utf8_script_byte() {
-        let mut chars = ScriptCharProvider::new(b"a\\\xC2");
-        let mut lines = make_line_provider(&[]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b"\xC2\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
-    }
-
-    #[test]
-    fn test_compile_two_line_text_command() {
-        let mut chars = make_char_provider("a\\");
-        let mut lines = make_line_provider(&["line1\\", "line2"]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext::default();
-
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b"line1\nline2\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
-    }
-
-    #[test]
-    fn test_compile_text_command_posix_without_backslash() {
-        let mut chars = make_char_provider("a");
-        let mut lines = make_line_provider(&["line1", "line2"]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext {
-            posix: true,
+            posix,
             ..Default::default()
         };
 
         let result = compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("expects \\ followed by text"));
-    }
-
-    #[test]
-    fn test_compile_text_command_posix_text_on_same_line() {
-        let mut chars = make_char_provider("a \\ foo");
-        let mut lines = make_line_provider(&["line1", "line2"]);
-        let mut cmd = Command::default();
-        let mut context = ProcessingContext {
-            posix: true,
-            ..Default::default()
-        };
-
-        compile_text_command(&mut lines, &mut chars, &mut cmd, &mut context).unwrap();
-        match &cmd.data {
-            CommandData::Text(text) => {
-                assert_eq!(text.as_ref(), b" foo\n");
-            }
-            _ => panic!("Expected CommandData::Text"),
-        }
+        assert!(err.contains(expected));
     }
 
     // read_file_path

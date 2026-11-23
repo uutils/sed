@@ -1089,6 +1089,7 @@ pub fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use std::fs;
     #[cfg(unix)]
     use std::fs::File;
@@ -1232,14 +1233,20 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[rstest]
+    #[case::test_large_file_zero_copy("", 3)]
+    #[case::test_large_file_zero_copy_unterminated("last line (unterminated)", 4)]
     #[cfg(unix)]
-    fn test_large_file_zero_copy() -> io::Result<()> {
+    fn test_large_file_zero_copy(
+        #[case] trailer: &str,
+        #[case] expected_lines: usize,
+    ) -> io::Result<()> {
         // Create and fill the input temp file:
         let mut input = NamedTempFile::new()?;
         write!(input, "first line\nsecond line\n")?;
         let dot_line = make_dot_line_4k();
         input.write_all(&dot_line)?;
+        write!(input, "{trailer}")?;
         input.flush()?;
         let input_path = input.path().to_path_buf();
 
@@ -1258,7 +1265,7 @@ mod tests {
             out.write_chunk(&chunk)?;
             nline += 1;
         }
-        assert_eq!(nline, 3);
+        assert_eq!(nline, expected_lines);
 
         out.flush()?;
         assert_eq!(out.low_level_flushes, 1);
@@ -1270,47 +1277,12 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    #[cfg(unix)]
-    fn test_large_file_zero_copy_unterminated() -> io::Result<()> {
-        // Create and fill the input temp file:
-        let mut input = NamedTempFile::new()?;
-        write!(input, "first line\nsecond line\n")?;
-        let dot_line = make_dot_line_4k();
-        input.write_all(&dot_line)?;
-        write!(input, "last line (unterminated)")?;
-        input.flush()?;
-        let input_path = input.path().to_path_buf();
-
-        // Open reader on input file:
-        let mut reader = LineReader::open(&input_path)?;
-
-        // Create the output temp file (empty):
-        let output = NamedTempFile::new()?;
-        let output_path = output.path().to_path_buf();
-        let out_file = File::create(&output_path)?;
-
-        // Wrap it in your OutputBuffer and run the loop:
-        let mut out = OutputBuffer::new(Box::new(out_file));
-        let mut nline = 0;
-        while let Some(chunk) = reader.get_line()? {
-            out.write_chunk(&chunk)?;
-            nline += 1;
-        }
-        assert_eq!(nline, 4);
-
-        out.flush()?;
-        assert_eq!(out.low_level_flushes, 1);
-
-        // Verify that files match:
-        let expected = fs::read(&input_path)?;
-        let actual = fs::read(&output_path)?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn test_small_file_unterminated() -> io::Result<()> {
+    #[rstest]
+    #[case::test_small_file_unterminated(LineReader::open)]
+    #[case::test_small_file_unterminated_stream(LineReader::open_stream)]
+    fn test_small_file_unterminated(
+        #[case] open_reader: fn(&PathBuf) -> io::Result<LineReader>,
+    ) -> io::Result<()> {
         // Create and fill the input temp file:
         let mut input = NamedTempFile::new()?;
         write!(input, "first line\nsecond line\nlast line (unterminated)")?;
@@ -1318,42 +1290,7 @@ mod tests {
         let input_path = input.path().to_path_buf();
 
         // Open reader on input file:
-        let mut reader = LineReader::open(&input_path)?;
-
-        // Create the output temp file (empty):
-        let output = NamedTempFile::new()?;
-        let output_path = output.path().to_path_buf();
-        let out_file = File::create(&output_path)?;
-
-        // Wrap it in your OutputBuffer and run the loop:
-        let mut out = OutputBuffer::new(Box::new(out_file));
-        let mut nline = 0;
-        while let Some(chunk) = reader.get_line()? {
-            out.write_chunk(&chunk)?;
-            nline += 1;
-        }
-        assert_eq!(nline, 3);
-
-        out.flush()?;
-        assert_eq!(out.low_level_flushes, 0);
-
-        // Verify that files match:
-        let expected = fs::read(&input_path)?;
-        let actual = fs::read(&output_path)?;
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn test_small_file_unterminated_stream() -> io::Result<()> {
-        // Create and fill the input temp file:
-        let mut input = NamedTempFile::new()?;
-        write!(input, "first line\nsecond line\nlast line (unterminated)")?;
-        input.flush()?;
-        let input_path = input.path().to_path_buf();
-
-        // Open reader on input file:
-        let mut reader = LineReader::open_stream(&input_path)?;
+        let mut reader = open_reader(&input_path)?;
 
         // Create the output temp file (empty):
         let output = NamedTempFile::new()?;
@@ -1549,51 +1486,32 @@ mod tests {
     }
 
     // is_newline_terminated, is_empty
-    #[test]
-    fn test_owned_newline_terminated_non_empty() {
-        let chunk = IOChunk::from_content(IOChunkContent::new_owned(b"line".to_vec(), true));
-        assert!(chunk.is_newline_terminated());
-        assert!(!chunk.is_empty());
+    #[rstest]
+    #[case::test_owned_newline_terminated_non_empty(b"line", true, false)]
+    #[case::test_owned_newline_terminated_empty(b"", true, true)]
+    #[case::test_owned_not_newline_terminated(b"line", false, false)]
+    fn test_owned_newline_terminated(
+        #[case] content: &[u8],
+        #[case] has_newline: bool,
+        #[case] expected_empty: bool,
+    ) {
+        let chunk = IOChunk::from_content(IOChunkContent::new_owned(content.to_vec(), has_newline));
+        assert_eq!(chunk.is_newline_terminated(), has_newline);
+        assert_eq!(chunk.is_empty(), expected_empty);
     }
 
-    #[test]
-    fn test_owned_newline_terminated_empty() {
-        let chunk = IOChunk::from_content(IOChunkContent::new_owned(Vec::new(), true));
-        assert!(chunk.is_newline_terminated());
-        assert!(chunk.is_empty());
-    }
-
-    #[test]
-    fn test_owned_not_newline_terminated() {
-        let chunk = IOChunk::from_content(IOChunkContent::new_owned(b"line".to_vec(), false));
-        assert!(!chunk.is_newline_terminated());
-    }
-
+    #[rstest]
+    #[case::test_mmap_newline_terminated(b"line", b"line\n", true)]
+    #[case::test_mmap_not_newline_terminated(b"line", b"line", false)]
+    #[case::test_mmap_empty(b"", b"", false)]
     #[cfg(unix)]
-    #[test]
-    fn test_mmap_newline_terminated() {
-        let content = b"line";
-        let full_span = b"line\n";
+    fn test_mmap_newline_terminated(
+        #[case] content: &[u8],
+        #[case] full_span: &[u8],
+        #[case] expected: bool,
+    ) {
         let chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
-        assert!(chunk.is_newline_terminated());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_mmap_not_newline_terminated() {
-        let content = b"line";
-        let full_span = b"line";
-        let chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
-        assert!(!chunk.is_newline_terminated());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_mmap_empty() {
-        let content = b"";
-        let full_span = b"";
-        let chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
-        assert!(!chunk.is_newline_terminated());
+        assert_eq!(chunk.is_newline_terminated(), expected);
     }
 
     // ensure_owned()
@@ -1620,13 +1538,16 @@ mod tests {
         }
     }
 
+    #[rstest]
+    #[case::test_ensure_owned_on_mmap_valid_utf8(b"mmap string", b"mmap string\n", true)]
+    #[case::test_ensure_owned_on_mmap_valid_utf8_no_newline(b"no newline", b"no newline", false)]
     #[cfg(unix)]
-    #[test]
-    fn test_ensure_owned_on_mmap_valid_utf8() {
-        let content = b"mmap string";
-        let full_span = b"mmap string\n";
-
-        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
+    fn test_ensure_owned_on_mmap_valid_utf8(
+        #[case] input: &[u8],
+        #[case] full_span: &[u8],
+        #[case] expected_newline: bool,
+    ) {
+        let mut chunk = IOChunk::from_content(new_content_mmap_input(input, full_span));
 
         let result = chunk.ensure_owned();
         assert!(result.is_ok());
@@ -1637,32 +1558,8 @@ mod tests {
                 has_newline,
                 ..
             } => {
-                assert_eq!(content, b"mmap string");
-                assert!(*has_newline);
-            }
-            _ => panic!("Expected Owned variant after ensure_owned"),
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_ensure_owned_on_mmap_valid_utf8_no_newline() {
-        let content = b"no newline";
-        let full_span = b"no newline";
-
-        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
-
-        let result = chunk.ensure_owned();
-        assert!(result.is_ok());
-
-        match &chunk.content {
-            IOChunkContent::Owned {
-                content,
-                has_newline,
-                ..
-            } => {
-                assert_eq!(content, b"no newline");
-                assert!(!*has_newline);
+                assert_eq!(content, input);
+                assert_eq!(*has_newline, expected_newline);
             }
             _ => panic!("Expected Owned variant after ensure_owned"),
         }
@@ -1693,32 +1590,32 @@ mod tests {
         assert_eq!(chunk.as_str().unwrap(), "hello world");
     }
 
+    #[rstest]
+    #[case::test_fields_mut_on_mmap_input_valid_utf8("foo", "foo\n", "bar", "foobar")]
+    #[case::test_fields_mut_on_utf8_multibyte(
+        "Ζωντανά!",
+        "Ζωντανά!\n",
+        " Δεδομένα",
+        "Ζωντανά! Δεδομένα"
+    )]
     #[cfg(unix)]
-    #[test]
-    fn test_fields_mut_on_mmap_input_valid_utf8() {
-        let content = b"foo";
-        let full_span = b"foo\n";
-        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
+    fn test_fields_mut_on_mmap_input(
+        #[case] content: &str,
+        #[case] full_span: &str,
+        #[case] suffix: &str,
+        #[case] expected: &str,
+    ) {
+        let mut chunk = IOChunk::from_content(new_content_mmap_input(
+            content.as_bytes(),
+            full_span.as_bytes(),
+        ));
 
         {
             let (s, _) = chunk.fields_mut().unwrap();
-            s.extend_from_slice(b"bar");
+            s.extend_from_slice(suffix.as_bytes());
         }
 
-        assert_eq!(chunk.as_str().unwrap(), "foobar");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_fields_mut_on_utf8_multibyte() {
-        let content = "Ζωντανά!".as_bytes();
-        let full_span = "Ζωντανά!\n".as_bytes();
-        let mut chunk = IOChunk::from_content(new_content_mmap_input(content, full_span));
-
-        let (s, _) = chunk.fields_mut().unwrap();
-        s.extend_from_slice(" Δεδομένα".as_bytes());
-
-        assert_eq!(chunk.as_str().unwrap(), "Ζωντανά! Δεδομένα");
+        assert_eq!(chunk.as_str().unwrap(), expected);
     }
 
     #[cfg(unix)]
@@ -1817,13 +1714,16 @@ mod tests {
         unsafe { libc::close(write_fd) };
     }
 
-    #[test]
+    // Input data = 10 bytes, copied with block size 4: `Complete` copies
+    // everything, `Blocks` stops after the 2 full blocks (8 bytes).
+    #[rstest]
+    #[case::test_aligned_copy_cover_includes_tail(WriteRange::Complete, b"abcdefghij")]
+    #[case::test_aligned_copy_blocks_skips_tail(WriteRange::Blocks, b"abcdefgh")]
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    fn test_aligned_copy_cover_includes_tail() {
+    fn test_aligned_copy_tail(#[case] cover: WriteRange, #[case] expected: &[u8]) {
         let mut infile = tempfile().unwrap();
         let mut outfile = tempfile().unwrap();
 
-        // Input data = 10 bytes
         let data = b"abcdefghij";
         infile.write_all(data).unwrap();
         infile.rewind().unwrap();
@@ -1832,55 +1732,15 @@ mod tests {
         let out_fd = outfile.as_fd();
         let in_ptr = data.as_ptr();
 
-        // Copy with block size 4, cover = Complete
-        let copied = aligned_copy_file_range(
-            in_ptr,
-            in_fd,
-            0,
-            out_fd,
-            data.len(),
-            4,
-            WriteRange::Complete,
-        )
-        .unwrap();
-
-        assert_eq!(copied, data.len());
-
-        // Verify outfile contents = full input data
-        outfile.rewind().unwrap();
-        let mut buf = Vec::new();
-        outfile.read_to_end(&mut buf).unwrap();
-        assert_eq!(&buf, data);
-    }
-
-    #[test]
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    fn test_aligned_copy_blocks_skips_tail() {
-        let mut infile = tempfile().unwrap();
-        let mut outfile = tempfile().unwrap();
-
-        // Input data = 10 bytes
-        let data = b"abcdefghij";
-        infile.write_all(data).unwrap();
-        infile.rewind().unwrap();
-
-        let in_fd = infile.as_fd();
-        let out_fd = outfile.as_fd();
-        let in_ptr = data.as_ptr();
-
-        // Copy with block size 4, cover = Blocks
         let copied =
-            aligned_copy_file_range(in_ptr, in_fd, 0, out_fd, data.len(), 4, WriteRange::Blocks)
-                .unwrap();
+            aligned_copy_file_range(in_ptr, in_fd, 0, out_fd, data.len(), 4, cover).unwrap();
 
-        // Only full 8 bytes (2 blocks of 4) should be copied
-        assert_eq!(copied, 8);
+        assert_eq!(copied, expected.len());
 
-        // Verify outfile contents = only the first 8 bytes
         outfile.rewind().unwrap();
         let mut buf = Vec::new();
         outfile.read_to_end(&mut buf).unwrap();
-        assert_eq!(&buf, b"abcdefgh");
+        assert_eq!(buf, expected);
     }
 
     #[test]
@@ -1923,52 +1783,50 @@ mod tests {
         assert_eq!(&buf, b"HEADERabcdefghijkl");
     }
 
-    #[test]
+    #[rstest]
+    #[case::subrange(
+        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        b"",
+        10,
+        16,
+        b"ABCDEFGHIJKLMNOP"
+    )]
+    #[case::appends_after_existing_data(
+        b"abcdefghijklmnopqrstuvwxyz",
+        b"PRE:",
+        5,
+        10,
+        b"PRE:fghijklmno"
+    )]
     #[cfg(target_os = "linux")]
-    fn test_reliable_copy_file_range_rustix_path() {
+    fn test_reliable_copy_file_range_rustix_path(
+        #[case] data: &[u8],
+        #[case] prefix: &[u8],
+        #[case] offset: libc::off_t,
+        #[case] len: usize,
+        #[case] expected: &[u8],
+    ) {
         let mut infile = tempfile().unwrap();
         let mut outfile = tempfile().unwrap();
 
-        let data = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         infile.write_all(data).unwrap();
         infile.rewind().unwrap();
+
+        outfile.write_all(prefix).unwrap();
+        outfile.flush().unwrap();
 
         let in_fd = infile.as_fd();
         let out_fd = outfile.as_fd();
         let in_ptr = data.as_ptr();
 
-        // Copy a subrange starting at offset 10.
-        let copied = reliable_copy_file_range(in_ptr, in_fd, 10, out_fd, 16).unwrap();
+        let copied = reliable_copy_file_range(in_ptr, in_fd, offset, out_fd, len).unwrap();
 
-        assert_eq!(copied, 16);
+        assert_eq!(copied, len);
 
         outfile.rewind().unwrap();
         let mut buf = Vec::new();
         outfile.read_to_end(&mut buf).unwrap();
-        assert_eq!(&buf, b"ABCDEFGHIJKLMNOP");
-
-        // Now verify that copying into a file with existing data appends correctly.
-        let mut infile2 = tempfile().unwrap();
-        let mut outfile2 = tempfile().unwrap();
-        let input_data = b"abcdefghijklmnopqrstuvwxyz";
-        infile2.write_all(input_data).unwrap();
-        infile2.rewind().unwrap();
-
-        outfile2.write_all(b"PRE:").unwrap();
-        outfile2.flush().unwrap();
-
-        let in_fd2 = infile2.as_fd();
-        let out_fd2 = outfile2.as_fd();
-        let in_ptr2 = input_data.as_ptr();
-
-        let copied2 = reliable_copy_file_range(in_ptr2, in_fd2, 5, out_fd2, 10).unwrap();
-
-        assert_eq!(copied2, 10);
-
-        outfile2.rewind().unwrap();
-        let mut buf2 = Vec::new();
-        outfile2.read_to_end(&mut buf2).unwrap();
-        assert_eq!(&buf2, b"PRE:fghijklmno");
+        assert_eq!(buf, expected);
     }
 
     ///////////////////////////////
@@ -2083,10 +1941,12 @@ mod tests {
         assert_eq!(buf.mmap_chunk.as_ref().unwrap().len, 0);
     }
 
-    #[test]
-    fn owned_without_newline() {
+    #[rstest]
+    #[case::owned_without_newline("hello", false, "hello")]
+    #[case::owned_with_newline("world", true, "world\n")]
+    fn owned_chunk_output(#[case] text: &str, #[case] has_nl: bool, #[case] expected: &str) {
         let (mut buf, mut file) = new_for_test();
-        let chunk = make_owned_chunk("hello", false);
+        let chunk = make_owned_chunk(text, has_nl);
         buf.write_chunk(&chunk).unwrap();
 
         buf.out.flush().unwrap();
@@ -2094,21 +1954,7 @@ mod tests {
         let mut out = String::new();
         file.read_to_string(&mut out).unwrap();
 
-        assert_eq!(out, "hello");
-    }
-
-    #[test]
-    fn owned_with_newline() {
-        let (mut buf, mut file) = new_for_test();
-        let chunk = make_owned_chunk("world", true);
-        buf.write_chunk(&chunk).unwrap();
-
-        buf.out.flush().unwrap();
-        file.seek(SeekFrom::Start(0)).unwrap();
-        let mut out = String::new();
-        file.read_to_string(&mut out).unwrap();
-
-        assert_eq!(out, "world\n");
+        assert_eq!(out, expected);
     }
 
     // pending_newline is injected between two no-newline chunks
