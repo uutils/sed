@@ -599,6 +599,24 @@ fn ere_closing_brace_delimiter() {
         .stdout_is("a-b-c\n");
 }
 
+// An unescaped & used as the s delimiter ends the replacement instead of
+// meaning "the matched text". Autoconf's config.status writes s&@VAR@&value&.
+#[test]
+fn ampersand_delimiter() {
+    new_ucmd!()
+        .args(&[
+            "-e",
+            ":t",
+            "-e",
+            r"s&@srcdir@&.&;t t",
+            "-e",
+            r"s&@abs&a\&b&g",
+        ])
+        .pipe_in("x @srcdir@ @abs\n")
+        .succeeds()
+        .stdout_is("x . a&b\n");
+}
+
 #[test]
 fn ere_opening_brace_delimiter() {
     new_ucmd!()

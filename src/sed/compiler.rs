@@ -996,6 +996,18 @@ pub fn compile_replacement(
                     }
                 }
 
+                // This must come before the `&` arm: an unescaped `&` that
+                // is also the delimiter ends the replacement.
+                c if c == delimiter => {
+                    line.advance(); // skip closing delimiter
+                    if !literal.is_empty() {
+                        parts.push(ReplacementPart::Literal(literal));
+                    }
+                    let mut template = ReplacementTemplate::new(parts);
+                    template.max_group_location = max_group.map(|(_, location)| location);
+                    return Ok(template);
+                }
+
                 '&' => {
                     if !literal.is_empty() {
                         parts.push(ReplacementPart::Literal(std::mem::take(&mut literal)));
@@ -1010,16 +1022,6 @@ pub fn compile_replacement(
                         line,
                         "unescaped newline inside substitute replacement",
                     );
-                }
-
-                c if c == delimiter => {
-                    line.advance(); // skip closing delimiter
-                    if !literal.is_empty() {
-                        parts.push(ReplacementPart::Literal(literal));
-                    }
-                    let mut template = ReplacementTemplate::new(parts);
-                    template.max_group_location = max_group.map(|(_, location)| location);
-                    return Ok(template);
                 }
 
                 _ => {
@@ -2737,6 +2739,18 @@ mod tests {
         assert!(
             matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"Simon & Garfunkel")
         );
+    }
+
+    #[test]
+    fn test_compile_replacement_ampersand_delimiter() {
+        // With & as the delimiter, an unescaped & ends the replacement and
+        // an escaped one is a literal &.
+        let (mut lines, mut chars) = make_providers(r"&a\&b&g");
+        let template = compile_replacement_utf8(&mut lines, &mut chars).unwrap();
+
+        assert_eq!(template.parts.len(), 1);
+        assert!(matches!(&template.parts[0], ReplacementPart::Literal(s) if s == b"a&b"));
+        assert_eq!(chars.current(), 'g');
     }
 
     #[test]
