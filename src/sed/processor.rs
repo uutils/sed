@@ -80,14 +80,14 @@ fn applies(
     context: &mut ProcessingContext,
 ) -> UResult<bool> {
     let linenum = context.line_number;
-    // Set below when this line closes the command's range.
-    context.last_address = false;
 
     let result = if command.addr1.is_none() && command.addr2.is_none() {
         // No address
         Ok(true)
     } else if let Some(addr2) = &command.addr2 {
-        // Two addresses
+        // Two addresses. Set below when this line closes the range; only a
+        // two-address `c` reads it.
+        context.last_address = false;
         if let Some(start) = command.start_line {
             // Range is already latched active.
             match addr2 {
