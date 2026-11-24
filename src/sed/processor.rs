@@ -80,6 +80,8 @@ fn applies(
     context: &mut ProcessingContext,
 ) -> UResult<bool> {
     let linenum = context.line_number;
+    // Set below when this line closes the command's range.
+    context.last_address = false;
 
     let result = if command.addr1.is_none() && command.addr2.is_none() {
         // No address
@@ -94,6 +96,10 @@ fn applies(
                         command.start_line = None;
                         Ok(false)
                     } else {
+                        if linenum - start == *n {
+                            command.start_line = None;
+                            context.last_address = true;
+                        }
                         Ok(true)
                     }
                 }
@@ -103,6 +109,10 @@ fn applies(
                         command.start_line = None;
                         Ok(false)
                     } else {
+                        if linenum == *n {
+                            command.start_line = None;
+                            context.last_address = true;
+                        }
                         Ok(true)
                     }
                 }
@@ -738,9 +748,14 @@ fn process_file(
                 }
                 'c' => {
                     // At range end replace pattern space with text and
-                    // start the next cycle.
+                    // start the next cycle. A negated range selects lines
+                    // outside it, so each selected line gets the text.
                     pattern.clear();
-                    if command.addr2.is_none() || context.last_address || reader.last_line()? {
+                    if command.addr2.is_none()
+                        || command.non_select
+                        || context.last_address
+                        || reader.last_line()?
+                    {
                         let text = extract_variant!(command, Text);
                         output.write_bytes(text.as_ref())?;
                     }

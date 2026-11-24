@@ -2289,6 +2289,55 @@ fn test_change_command_prevents_automatic_printing() {
 }
 
 #[test]
+fn test_change_range_with_line_number_end() {
+    // The text is written once, on the line that ends the range.
+    for script in ["2,3c\\new", "2,+1c\\new", "/2/,3c\\new", "/2/,+1c\\new"] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("1\n2\n3\n4\n5\n")
+            .succeeds()
+            .stdout_is("1\nnew\n4\n5\n");
+    }
+}
+
+#[test]
+fn test_change_range_text_only_at_end_of_each_range() {
+    // Once a range had closed, a later range wrote the text on every line.
+    new_ucmd!()
+        .args(&["/1/,/2/c\\A"])
+        .pipe_in("1\n2\n3\n1\n9\n2\n")
+        .succeeds()
+        .stdout_is("A\n3\nA\n");
+}
+
+#[test]
+fn test_change_range_restarts_after_line_number_end() {
+    // The line after the end can start the range again.
+    new_ucmd!()
+        .args(&["-n", "/x/,3p"])
+        .pipe_in("x\n2\n3\nx\n5\n")
+        .succeeds()
+        .stdout_is("x\n2\n3\nx\n");
+    new_ucmd!()
+        .args(&["/x/,3c\\new"])
+        .pipe_in("x\n2\n3\nx\n5\n")
+        .succeeds()
+        .stdout_is("new\nnew\n5\n");
+}
+
+#[test]
+fn test_change_negated_range() {
+    // `!` selects the lines outside the range, and each one is changed.
+    for script in ["2,3!c\\new", "/2/,/3/!c\\new"] {
+        new_ucmd!()
+            .args(&[script])
+            .pipe_in("1\n2\n3\n4\n5\n")
+            .succeeds()
+            .stdout_is("new\n2\n3\nnew\nnew\n");
+    }
+}
+
+#[test]
 fn test_uppercase_delete_prevents_automatic_printing() {
     // Test 'D' command - delete up to newline and restart
     new_ucmd!()
