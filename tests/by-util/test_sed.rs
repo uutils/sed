@@ -4425,4 +4425,3 @@ fn test_bre_star_without_preceding_atom() {
         .succeeds()
         .stdout_is("*a*x\nax*\n");
 }
-
