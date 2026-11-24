@@ -13,7 +13,7 @@ use crate::sed::command::{
     ProcessingContext, Transliteration,
 };
 use crate::sed::delimited_parser::os_string_from_bytes;
-use crate::sed::error_handling::{ScriptLocation, input_runtime_error};
+use crate::sed::error_handling::{ScriptLocation, input_runtime_error, semantic_error};
 use crate::sed::fast_io::{IOChunk, LineReader, OutputBuffer};
 use crate::sed::fast_regex::Regex;
 use crate::sed::in_place::InPlace;
@@ -108,9 +108,10 @@ fn applies(
                 }
                 Address::StepMatch(step) => Ok((linenum - start).is_multiple_of(*step)),
                 Address::StepEnd(step) => {
-                    // Inclusive end on multiple of step
-                    if linenum.is_multiple_of(*step) {
+                    let target = (start / step + 1) * step;
+                    if linenum >= target {
                         command.start_line = None;
+                        context.last_address = true;
                     }
                     Ok(true)
                 }
@@ -129,12 +130,23 @@ fn applies(
                 Address::Line(n) if linenum > *n => {
                     !command.range_started && !matches!(addr2, Address::Line(m) if *m < linenum)
                 }
+                // Numeric start on this line: a backward branch or `D` can
+                // re-evaluate the command on the same line, but a range with a
+                // line-number start is entered only once.
+                Address::Line(n) if linenum == *n => !command.range_started,
                 _ => match_address(addr1, reader, pattern, context, &command.location)?,
             };
             if starts {
                 command.range_started = true;
                 match addr2 {
                     Address::Line(n) if linenum >= *n => {
+                        context.last_address = true;
+                    }
+                    // A `$` end on the last line closes the range where it
+                    // starts, so revisiting the line can't select it again.
+                    Address::Last
+                        if match_address(addr2, reader, pattern, context, &command.location)? =>
+                    {
                         context.last_address = true;
                     }
                     Address::RelLine(0) | Address::StepMatch(0) | Address::StepEnd(0) => {
@@ -224,7 +236,7 @@ fn re_or_saved_re<'a>(
         // We already have one: just borrow it.
         Ok(saved_re)
     } else {
-        input_runtime_error(location, context, "no previous regular expression")
+        semantic_error(location, "no previous regular expression")
     }
 }
 
@@ -986,6 +998,7 @@ fn process_file(
 
     // Handle any n or N command remains.
     // Take them even with -n, so that they do not carry over to the next file.
+    // POSIX `N` with no next line quits without printing; GNU prints.
     if context.separate
         && let Some(action) = context.input_action.take()
         && let NextLine::Append {
@@ -993,6 +1006,7 @@ fn process_file(
             has_newline,
         } = action.next_line
         && !context.quiet
+        && !context.posix
     {
         output.write_line(&pending, has_newline)?;
         if context.unbuffered {
@@ -1048,6 +1062,7 @@ pub fn process_all_files(
         if context.last_file
             && !context.separate
             && !context.quiet
+            && !context.posix
             && let Some(action) = context.input_action.take()
             && let NextLine::Append {
                 contents: pending,

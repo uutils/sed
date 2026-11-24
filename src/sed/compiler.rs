@@ -472,6 +472,7 @@ fn compile_address(
             if line.current() == '\\' {
                 // The next character is an arbitrary delimiter
                 line.advance();
+                reject_multibyte_delimiter(lines, line, context.character_mode)?;
             }
             let regex_mode = if context.regex_extended {
                 RegexMode::Extended
@@ -516,25 +517,25 @@ fn compile_address(
             // missing number as 0 (`2,+ 1` and `2,+`).
             line.advance();
             line.eat_spaces();
-            let number = parse_number(lines, line, false)?.unwrap_or(0);
+            let number = parse_line_number(lines, line, false)?.unwrap_or(0);
             Ok(Address::RelLine(number))
         }
         c if c.is_ascii_digit() => {
-            let number = parse_number(lines, line, true)?.unwrap();
+            let number = parse_line_number(lines, line, true)?.unwrap();
             Ok(Address::Line(number))
         }
         _ => compilation_error(lines, line, "expected context address"),
     }
 }
 
-/// Parse and return the decimal number at the current line position.
+/// Read the decimal digits at the current line position.
 /// Advance the line to first non-digit or EOL.
 /// Issue an error if the number is required.
-fn parse_number(
+fn read_digits(
     lines: &ScriptLineProvider,
     line: &mut ScriptCharProvider,
     required: bool,
-) -> UResult<Option<usize>> {
+) -> UResult<Option<String>> {
     let mut num_str = String::new();
 
     while !line.eol() && line.current().is_ascii_digit() {
@@ -548,12 +549,36 @@ fn parse_number(
         }
         return Ok(None);
     }
+    Ok(Some(num_str))
+}
 
+/// Parse and return the decimal number at the current line position.
+/// Advance the line to first non-digit or EOL.
+/// Issue an error if the number is required.
+fn parse_number(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    required: bool,
+) -> UResult<Option<usize>> {
+    let Some(num_str) = read_digits(lines, line, required)? else {
+        return Ok(None);
+    };
     num_str
         .parse::<usize>()
         .map_err(|_| format!("invalid number '{num_str}'"))
         .map_err(|msg| compilation_error::<usize>(lines, line, msg).unwrap_err())
         .map(Some)
+}
+
+/// Like [`parse_number`], for a line number or count in an address.
+/// Like GNU sed, accept a number too large for `usize`: no input line can
+/// reach it, so read it as `usize::MAX`.
+fn parse_line_number(
+    lines: &ScriptLineProvider,
+    line: &mut ScriptCharProvider,
+    required: bool,
+) -> UResult<Option<usize>> {
+    Ok(read_digits(lines, line, required)?.map(|n| n.parse().unwrap_or(usize::MAX)))
 }
 
 /// Parse the end of a command, failing with an error on extra characters.
@@ -840,6 +865,14 @@ fn compile_regex(
 ) -> UResult<Option<Regex>> {
     let pattern = pattern.as_ref();
     if pattern.is_empty() {
+        // An empty regex reuses the last one, so it can't take modifiers.
+        if icase || multiline {
+            return compilation_error(
+                lines,
+                line,
+                "cannot specify modifiers on an empty regular expression",
+            );
+        }
         return Ok(None);
     }
 
@@ -1005,6 +1038,23 @@ pub fn compile_replacement(
     }
 }
 
+/// In UTF-8 mode, reject a delimiter that is not a single-byte character,
+/// including a byte that only starts a multibyte sequence.
+fn reject_multibyte_delimiter(
+    lines: &ScriptLineProvider,
+    line: &ScriptCharProvider,
+    character_mode: CharacterMode,
+) -> UResult<()> {
+    if character_mode == CharacterMode::Utf8 && !line.eol() && !line.current_byte().is_ascii() {
+        return compilation_error(
+            lines,
+            line,
+            "delimiter character is not a single-byte character",
+        );
+    }
+    Ok(())
+}
+
 // Handles s
 fn compile_subst_command(
     lines: &mut ScriptLineProvider,
@@ -1026,6 +1076,7 @@ fn compile_subst_command(
             "substitute pattern cannot be delimited by newline or backslash",
         );
     }
+    reject_multibyte_delimiter(lines, line, context.character_mode)?;
 
     let regex_mode = if context.regex_extended {
         RegexMode::Extended
@@ -1044,14 +1095,6 @@ fn compile_subst_command(
     subst.replacement = compile_replacement(lines, line, context.character_mode)?;
     compile_subst_flags(lines, line, &mut subst, context)?;
 
-    if pattern.is_empty() && (subst.ignore_case || subst.multiline) {
-        return compilation_error(
-            lines,
-            line,
-            "cannot specify modifiers on an empty regular expression",
-        );
-    }
-
     // Compile regex with now known modifier flags.
     subst.regex = compile_regex(
         lines,
@@ -1063,10 +1106,13 @@ fn compile_subst_command(
     )?
     .map(Rc::new);
 
+    subst.replacement.missing_groups_are_empty = context.posix;
+
     // Catch invalid group references at compile time, if possible.
     // `compile_replacement` records a location for every `\N` it reads,
     // so the location is only absent when there is no group reference.
     if let Some(regex) = &subst.regex
+        && !subst.replacement.missing_groups_are_empty
         && let Some(location) = &subst.replacement.max_group_location
         && subst.replacement.max_group_number > regex.captures_len() - 1
     {
@@ -1105,6 +1151,7 @@ fn compile_trans_command(
             "transliteration string cannot be delimited by newline or backslash",
         );
     }
+    reject_multibyte_delimiter(lines, line, context.character_mode)?;
 
     let source = parse_transliteration_for_mode(lines, line, context.character_mode)?;
     let target = parse_transliteration_for_mode(lines, line, context.character_mode)?;
@@ -1126,6 +1173,7 @@ fn compile_trans_command(
     cmd.data = CommandData::Transliteration(transliteration);
 
     line.advance(); // move past last delimiter
+    line.eat_spaces();
     parse_command_ending(lines, line, cmd)?;
     Ok(CommandHandling::Continue)
 }
@@ -1547,6 +1595,16 @@ fn compile_text_command_gnu(
                 continue 'text_content;
             }
 
+            // A \c at the end of the line takes the newline that would end the
+            // text, which ends there. As in GNU sed, `a` is left with
+            // control-newline ('J') and no trailing newline, while `i` and `c`
+            // still end their text with a newline.
+            if line.current() == 'c' && line.get_pos() + 1 == line.get_line().len() {
+                line.advance();
+                text.push(if cmd.code == 'a' { b'J' } else { b'\n' });
+                break 'text_content;
+            }
+
             if let Some(decoded) = parse_char_escape(lines, line)? {
                 push_script_char(&mut text, decoded, context.character_mode);
             } else {
@@ -1805,11 +1863,11 @@ fn get_cmd_spec(
             handler: compile_empty_command,
         }),
         'l' => Ok(CommandSpec {
-            n_addr: 2,
+            n_addr: if posix { 1 } else { 2 },
             handler: compile_number_command,
         }),
         'q' => Ok(CommandSpec {
-            n_addr: if posix { 1 } else { 2 },
+            n_addr: 1,
             handler: compile_number_command,
         }),
         // Q is a GNU extension

@@ -16,7 +16,7 @@ Below is a list of these extensions and incompatibilities.
 * The `a`, `c`, and `i` commands do not require an initial backslash,
   allow text to appear on the same line, and support escape sequences
   in the specified text.
-* The `a`, `i`, `=`, `l`, `q` and `r` commands support address range as an extension to POSIX.
+* The `a`, `i`, `=`, `l` and `r` commands support address range as an extension to POSIX.
 * The substitution command replacement group `\0` is a synonym for &.
 * An `F` command outputs the name of the file currently being processed.
 * A `Q` command (optionally followed by an exit code) quits immediately.

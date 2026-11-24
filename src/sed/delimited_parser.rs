@@ -163,7 +163,12 @@ pub fn parse_char_escape(
         'c' => {
             // Control character escape: \cC
             line.advance(); // move past 'c'
-            if !line.eol() && line.current() == '\\' {
+            if line.eol() {
+                // A \c at the end of a script line takes the newline that
+                // ends it, as GNU sed does: control-newline is 'J'.
+                return Ok(create_control_char('\n'));
+            }
+            if line.current() == '\\' {
                 // Control-backslash has to be written as \c\\
                 line.advance();
                 if line.eol() || line.current() != '\\' {
@@ -466,9 +471,19 @@ pub fn parse_regex_for_mode(
                 if let Some(decoded) = parse_char_escape(lines, line)? {
                     push_script_char(&mut result, decoded, character_mode);
                 } else {
-                    // Pass through \<any> to RE engine for further treatment
-                    result.push(b'\\');
-                    result.push(line.current_byte());
+                    // Unknown letter and zero escapes are literal in sed;
+                    // buffer anchors still need their regex-engine spelling.
+                    let c = line.current();
+                    let literal = c == '0'
+                        || (c.is_ascii_alphabetic() && !is_gnu_regex_escape(c, regex_mode));
+                    if !literal {
+                        result.push(b'\\');
+                    }
+                    result.push(match line.current_byte() {
+                        b'`' => b'A',
+                        b'\'' => b'z',
+                        c => c,
+                    });
                     line.advance();
                 }
                 continue;
@@ -888,6 +903,11 @@ mod tests {
             Some(provider.current())
         };
         (result, current)
+    }
+
+    #[test]
+    fn test_control_escape_at_eol() {
+        assert_eq!(escape_result_with_current("c"), (Some('J'), None));
     }
 
     #[test]
