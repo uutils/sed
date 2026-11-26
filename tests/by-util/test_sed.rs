@@ -4414,6 +4414,15 @@ fn test_empty_last_line_without_newline_is_still_a_line() {
         ("s/x//;p", "a\nx", "a\na\n\n"),
         ("s/x//", "x", ""),
         ("$!d;s/x//", "a\nx", ""),
+        // q prints the empty line too.
+        ("s/x//;q", "x", "\n"),
+        ("$s/x//;$q", "a\nx", "a\n\n"),
+        ("s/x//p;q", "x", "\n\n"),
+        // c and D end the cycle without printing it.
+        ("s/x//;c\\\nfoo", "x", "foo\n"),
+        ("s/x//;$c\\\nfoo", "a\nx", "a\nfoo\n"),
+        ("$!N;s/x$//;D", "a\nx", ""),
+        ("p;$!N;s/x$//;D", "a\nx", "a\n"),
     ] {
         new_ucmd!()
             .arg(script)
