@@ -692,6 +692,29 @@ fn test_bracket_literal_open_bracket(#[values(r"s/[\[]/X/g", r"s/[[]/X/g")] scri
         .stdout_is("aXb\n");
 }
 
+// Inside a class the regex crate reads &&, ~~ and -- as set operations, but in a
+// bracket expression they are ordinary members, and so are a \ or [ written as
+// an escape.
+#[rstest]
+#[case::double_ampersand(r"s/[a&&b]/X/g", "a&b\n", "XXX\n")]
+#[case::double_tilde(r"s/[~~]/X/g", "c~d\n", "cXd\n")]
+#[case::range_ending_in_dash(r"s/[!--]/X/g", "d-e&\n", "dXeX\n")]
+#[case::range_starting_with_dash(r"s/[--x]/X/g", "-x.\n", "XXX\n")]
+#[case::escaped_backslash(r"s/[\x5c]/\//g", "C:\\Users\\me\n", "C:/Users/me\n")]
+#[case::escaped_open_bracket(r"s/[\x5b]/X/g", "a[b\n", "aXb\n")]
+#[case::escaped_ampersands(r"s/[\x26\x26]/X/g", "a&b\n", "aXb\n")]
+fn test_bracket_set_operators_are_literal(
+    #[case] script: &str,
+    #[case] input: &str,
+    #[case] expected: &str,
+) {
+    new_ucmd!()
+        .args(&["-e", script])
+        .pipe_in(input)
+        .succeeds()
+        .stdout_is(expected);
+}
+
 #[test]
 fn test_bracket_backslash_b_is_not_backspace() {
     // sed has no \b character escape, so [\b] holds a backslash and a b.

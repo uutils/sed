@@ -241,6 +241,35 @@ pub fn parse_char_escape(
     Ok(decoded)
 }
 
+/// Add an ordinary member to a bracket expression.  Inside a class the regex crate
+/// reads `\`, `[`, `&&`, `~~` and `--` as syntax, while POSIX sees ordinary
+/// characters, so they are escaped.  For two dashes in a row the one escaped is the
+/// range end: the second in `[!--]`, or the first in `[--x]`, where it opens the class.
+fn push_class_byte(
+    result: &mut Vec<u8>,
+    byte: u8,
+    members_start: usize,
+    raw_dash_end: &mut Option<usize>,
+) {
+    match byte {
+        b'\\' | b'[' | b'&' | b'~' => result.extend_from_slice(&[b'\\', byte]),
+        b'-' if *raw_dash_end == Some(result.len()) => {
+            if result.len() == members_start + 1 {
+                result.insert(members_start, b'\\');
+                result.push(b'-');
+                *raw_dash_end = Some(result.len());
+            } else {
+                result.extend_from_slice(br"\-");
+            }
+        }
+        b'-' => {
+            result.push(b'-');
+            *raw_dash_end = Some(result.len());
+        }
+        _ => result.push(byte),
+    }
+}
+
 /// Parse a POSIX RE character class returning it as bytes.
 /// This functionality is needed to avoid terminating delimited
 /// sequences when a delimiter appears within a character class.
@@ -268,6 +297,9 @@ fn parse_character_class(
         result.push(b'^');
         line.advance();
     }
+
+    let members_start = result.len();
+    let mut raw_dash_end = None;
 
     // Optional leading ']' inside the class
     if !line.eol() && line.current() == ']' {
@@ -348,7 +380,13 @@ fn parse_character_class(
                 parse_char_escape(lines, line)?
             };
             if let Some(decoded) = decoded {
-                push_script_char(&mut result, decoded, character_mode);
+                // A decoded character is a member like a typed one: GNU sed reads
+                // `[\x5c]` as a backslash and `[\x26\x26]` as an ampersand.
+                if decoded.is_ascii() {
+                    push_class_byte(&mut result, decoded as u8, members_start, &mut raw_dash_end);
+                } else {
+                    push_script_char(&mut result, decoded, character_mode);
+                }
             } else {
                 // Outside the character escapes a \ is an ordinary member of the set,
                 // so the next character is left for the loop to handle.  This is what
@@ -356,7 +394,12 @@ fn parse_character_class(
                 result.extend_from_slice(br"\\");
             }
         } else {
-            result.push(line.current_byte());
+            push_class_byte(
+                &mut result,
+                line.current_byte(),
+                members_start,
+                &mut raw_dash_end,
+            );
             line.advance();
         }
     }
@@ -918,6 +961,12 @@ mod tests {
     #[case::collating_symbol("[[.ch.]]", b"[[.ch.]]")]
     #[case::malformed_posix_like_pattern_treated_as_literal("[[x]yz]", br"[\[x]")]
     #[case::literal_open_bracket_in_character_class("[a[b]", br"[a\[b]")]
+    #[case::ampersand_and_tilde_are_escaped("[a&&~~]", br"[a\&\&\~\~]")]
+    #[case::range_ending_in_dash("[!--]", br"[!-\-]")]
+    #[case::range_starting_with_dash("[--x]", br"[\--x]")]
+    #[case::range_from_dash_to_dash("[---]", br"[\--\-]")]
+    #[case::negated_range_starting_with_dash("[^--x]", br"[^\--x]")]
+    #[case::escaped_backslash("[\\x5c]", br"[\\]")]
     fn test_parse_character_class(#[case] input: &str, #[case] expected: &[u8]) {
         let mut line = ScriptCharProvider::new(input);
         let lines = test_lines();
