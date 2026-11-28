@@ -361,21 +361,24 @@ fn compile_address_range(
         let (mut is_step_match, mut is_step_end, mut addr2, mut step_n) =
             compile_second_address(lines, line, context)?;
 
-        // first~step,addr2: the lines first~step selects start the range.
         line.eat_spaces();
+        let starts_range = !line.eol() && line.current() == ',';
         if is_step_match
-            && !line.eol()
-            && line.current() == ','
             && let Some(Address::Line(first)) = cmd.addr1
             && (first, step_n) != (0, 0)
         {
-            // A step of 0 selects line first alone, like a plain line number.
+            // first~step depends on the line number alone, so it is a single
+            // address: a step of 0 selects line first, like a plain line number.
             cmd.addr1 = Some(if step_n == 0 {
                 Address::Line(first)
             } else {
                 Address::StepStart(first, step_n)
             });
             is_line0 = false;
+            if !starts_range {
+                return Ok(n_addr);
+            }
+            // first~step,addr2: the lines first~step selects start the range.
             (is_step_match, is_step_end, addr2, step_n) =
                 compile_second_address(lines, line, context)?;
         }
@@ -2329,9 +2332,10 @@ mod tests {
         let mut cmd = Rc::new(RefCell::new(Command::default()));
         let n_addr = compile_address_range(&lines, &mut chars, &mut cmd, &ctx()).unwrap();
 
-        assert_eq!(n_addr, 2);
-        assert!(matches!(cmd.borrow().addr1, Some(Address::Line(0))));
-        assert!(matches!(cmd.borrow().addr2, Some(Address::StepMatch(2))));
+        // first~step is a single address.
+        assert_eq!(n_addr, 1);
+        assert!(matches!(cmd.borrow().addr1, Some(Address::StepStart(0, 2))));
+        assert!(cmd.borrow().addr2.is_none());
     }
 
     #[test]
