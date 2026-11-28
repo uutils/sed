@@ -693,6 +693,32 @@ fn test_bracket_literal_open_bracket(#[values(r"s/[\[]/X/g", r"s/[[]/X/g")] scri
 }
 
 #[test]
+fn test_bracket_rejects_unknown_posix_class_name() {
+    // GNU sed accepts only the POSIX class names inside [: :];
+    // names only the Rust regex engine knows, and misspelt ones,
+    // are a compile-time error.
+    for script in [r"s/[[:foo:]]/X/", r"s/[[:word:]]/X/", r"s/[[:ascii:]]/X/"] {
+        new_ucmd!()
+            .args(&["-e", script])
+            .fails()
+            .code_is(1)
+            .stderr_contains("Invalid character class name");
+    }
+
+    // The POSIX class names still work, in a substitute and an address.
+    new_ucmd!()
+        .args(&["-e", "s/[[:digit:][:upper:]]/X/g"])
+        .pipe_in("a1B\n")
+        .succeeds()
+        .stdout_is("aXX\n");
+    new_ucmd!()
+        .args(&["-n", "-e", "/[[:space:]]/p"])
+        .pipe_in("ab\na b\n")
+        .succeeds()
+        .stdout_is("a b\n");
+}
+
+#[test]
 fn test_bracket_backslash_b_is_not_backspace() {
     // sed has no \b character escape, so [\b] holds a backslash and a b.
     new_ucmd!()
