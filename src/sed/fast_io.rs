@@ -735,6 +735,11 @@ impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output
     pub fn write_chunk(&mut self, new_chunk: &IOChunk) -> io::Result<()> {
         if new_chunk.is_empty() && !new_chunk.is_newline_terminated() {
+            // An empty last line without its newline writes no bytes, but it is
+            // still a line: it ends the previous output's line, and any later
+            // output starts on a new one.
+            self.flush_pending_newline()?;
+            self.pending_newline = true;
             return Ok(());
         }
 
@@ -873,6 +878,9 @@ impl OutputBuffer {
     /// Schedule the specified output chunk for eventual output
     pub fn write_chunk(&mut self, chunk: &IOChunk) -> io::Result<()> {
         if chunk.is_empty() && !chunk.is_newline_terminated() {
+            // See the unix version: an empty unterminated line is still a line.
+            self.flush_pending_newline()?;
+            self.pending_newline = true;
             return Ok(());
         }
 
